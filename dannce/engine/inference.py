@@ -702,11 +702,15 @@ def infer_dannce(
             sil_ims = sil_generator.__getitem__(i)
             sil_ims = processing.extract_3d_sil(sil_ims[0][0], 18)
             ims[0][0] = [np.concatenate((ims[0][0], sil_ims, sil_ims, sil_ims), axis=-1)]
-        pred = model.predict(ims[0])
 
+        pred = model(
+            torch.from_numpy(ims[0][0]).permute(0, 4, 1, 2, 3).to(device), 
+            torch.from_numpy(ims[0][1]).to(device)
+        )
+        # breakpoint()
         if params["expval"]:
-            probmap = pred[1]
-            pred = pred[0]
+            probmap = pred[1].detach().cpu().numpy()
+            pred = pred[0].detach().cpu().numpy()
             for j in range(pred.shape[0]):
                 pred_max = probmap[j]
                 sampleID = partition["valid_sampleIDs"][i * pred.shape[0] + j]

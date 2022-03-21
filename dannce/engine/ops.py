@@ -12,6 +12,7 @@ import cv2
 import time
 from typing import Text, List, Dict, Tuple, Union
 import torch
+import torch.nn.functional as F
 
 
 def camera_matrix(K: np.ndarray, R: np.ndarray, t: np.ndarray) -> np.ndarray:
@@ -1127,6 +1128,15 @@ def expected_value_3d(prob_map, grid_centers):
     weighted_centers = tf.reduce_sum(weighted_centers, axis=1)
     return weighted_centers
 
+def expected_value_3d_torch(prob_map, grid_centers):
+    bs, channels, h, w, d = prob_map.shape
+
+    prob_map = prob_map.permute(0, 2, 3, 4, 1).reshape(-1, channels)
+    grid_centers = grid_centers.reshape(-1, 3)
+    weighted_centers = prob_map.unsqueeze(1) * grid_centers.unsqueeze(-1)
+    weighted_centers = weighted_centers.reshape(-1, h*w*d, 3, channels).sum(1)
+
+    return weighted_centers # [bs, 3, channels]
 
 def spatial_softmax(feats):
     """Normalize acros channels.
@@ -1142,6 +1152,12 @@ def spatial_softmax(feats):
     feats = tf.nn.softmax(feats, axis=1)
     feats = tf.reshape(feats, [-1, h, w, d, channels])
     return feats
+
+def spatial_softmax_torch(feats):
+    bs, channels, h, w, d = feats.shape
+    feats = feats.reshape(bs, channels, -1)
+    feats = F.softmax(feats, dim=-1)
+    return feats.reshape(bs, channels, h, w, d)
 
 
 def var_3d(prob_map, grid_centers, markerlocs):

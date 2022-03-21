@@ -3,19 +3,22 @@
 from contextlib import suppress
 import os
 import numpy as np
-from tensorflow import keras
+# from tensorflow import keras
 from dannce.engine import processing as processing
 from dannce.engine import ops as ops
 from dannce.engine.video import LoadVideoFrame
-import imageio
+# import imageio
 import warnings
 import time
 import scipy.ndimage.interpolation
-import tensorflow as tf
+# import tensorflow as tf
 
 # from tensorflow_graphics.geometry.transformation.axis_angle import rotate
 from multiprocessing.dummy import Pool as ThreadPool
 from typing import List, Dict, Tuple, Text
+
+import torch
+import torchvision.transforms.functional as TF
 
 MISSING_KEYPOINTS_MSG = (
     "If mirror augmentation is used, the right_keypoints indices and left_keypoints "
@@ -27,7 +30,7 @@ MISSING_KEYPOINTS_MSG = (
 TF_GPU_MEMORY_FRACTION = 0.9
 
 
-class DataGenerator(keras.utils.Sequence):
+class DataGenerator(torch.utils.data.Dataset):
     """Generate data for Keras.
 
     Attributes:
@@ -97,7 +100,7 @@ class DataGenerator(keras.utils.Sequence):
         self.mono = mono
         self.mirror = mirror
         self.predict_flag = predict_flag
-        self.on_epoch_end()
+        # self.on_epoch_end()
 
         if self.vidreaders is not None:
             self.extension = (
@@ -117,13 +120,14 @@ class DataGenerator(keras.utils.Sequence):
             int: Batches per epoch
         """
         return int(np.floor(len(self.list_IDs) / self.batch_size))
+        #return len(self.list_IDs)
 
-    def on_epoch_end(self):
-        """Update indexes after each epoch."""
-        self.indexes = np.arange(len(self.list_IDs))
+    # def on_epoch_end(self):
+    #     """Update indexes after each epoch."""
+    #     self.indexes = np.arange(len(self.list_IDs))
 
-        if self.shuffle:
-            np.random.shuffle(self.indexes)
+    #     if self.shuffle:
+    #         np.random.shuffle(self.indexes)
 
 
 class DataGenerator_3Dconv(DataGenerator):
@@ -288,18 +292,17 @@ class DataGenerator_3Dconv(DataGenerator):
         self.norm_im = norm_im
 
         # importing torch here allows other modes to run without pytorch installed
-        self.torch = __import__("torch")
-        self.device = self.torch.device("cuda:" + self.gpu_id)
+        self.device = torch.device("cuda:" + self.gpu_id)
 
         self.threadpool = ThreadPool(len(self.camnames[0]))
 
         ts = time.time()
         # Limit GPU memory usage by Tensorflow to leave memory for PyTorch
-        config = tf.compat.v1.ConfigProto()
-        config.gpu_options.per_process_gpu_memory_fraction = TF_GPU_MEMORY_FRACTION
-        config.gpu_options.allow_growth = True
-        self.session = tf.compat.v1.Session(config=config, graph=tf.Graph())
-        print("Executing eagerly: ", tf.executing_eagerly(), flush=True)
+        # config = tf.compat.v1.ConfigProto()
+        # config.gpu_options.per_process_gpu_memory_fraction = TF_GPU_MEMORY_FRACTION
+        # config.gpu_options.allow_growth = True
+        # self.session = tf.compat.v1.Session(config=config, graph=tf.Graph())
+        # print("Executing eagerly: ", tf.executing_eagerly(), flush=True)
         for i, ID in enumerate(list_IDs):
             experimentID = int(ID.split("_")[0])
             for camname in self.camnames[experimentID]:
@@ -307,8 +310,8 @@ class DataGenerator_3Dconv(DataGenerator):
                 K = self.camera_params[experimentID][camname]["K"]
                 R = self.camera_params[experimentID][camname]["R"]
                 t = self.camera_params[experimentID][camname]["t"]
-                M = self.torch.as_tensor(
-                    ops.camera_matrix(K, R, t), dtype=self.torch.float32
+                M = torch.as_tensor(
+                    ops.camera_matrix(K, R, t), dtype=torch.float32
                 )
                 self.camera_params[experimentID][camname]["M"] = M
 
@@ -326,11 +329,12 @@ class DataGenerator_3Dconv(DataGenerator):
                 (np.ndarray): Target
         """
         # Generate indexes of the batch
-        indexes = self.indexes[index * self.batch_size : (index + 1) * self.batch_size]
+        # indexes = self.indexes[index * self.batch_size : (index + 1) * self.batch_size]
 
         # Find list of IDs
-        list_IDs_temp = [self.list_IDs[k] for k in indexes]
-
+        # list_IDs_temp = [self.list_IDs[k] for k in indexes]
+        list_IDs_temp = self.list_IDs[index*self.batch_size : (index+1)*self.batch_size]
+        # list_ID = self.list_IDs[index]
         # Generate data
         X, y = self.__data_generation(list_IDs_temp)
 
@@ -350,22 +354,22 @@ class DataGenerator_3Dconv(DataGenerator):
         """
         ts = time.time()
         # Need this copy so that this_y does not change
-        this_y = self.torch.as_tensor(
+        this_y = torch.as_tensor(
             self.labels[ID]["data"][camname],
-            dtype=self.torch.float32,
+            dtype=torch.float32,
             device=self.device,
         ).round()
 
-        if self.torch.all(self.torch.isnan(this_y)):
-            #com_precrop = self.torch.zeros_like(this_y[:, 0]) * self.torch.nan
-            com_precrop = self.torch.zeros_like(this_y[:, 0])*float("nan")
+        if torch.all(torch.isnan(this_y)):
+            #com_precrop = torch.zeros_like(this_y[:, 0]) * torch.nan
+            com_precrop = torch.zeros_like(this_y[:, 0])*float("nan")
         else:
             # For projecting points, we should not use this offset
-            com_precrop = self.torch.mean(this_y, axis=1)
+            com_precrop = torch.mean(this_y, axis=1)
 
         this_y[0, :] = this_y[0, :] - self.crop_width[0]
         this_y[1, :] = this_y[1, :] - self.crop_height[0]
-        com = self.torch.mean(this_y, axis=1)
+        com = torch.mean(this_y, axis=1)
 
         thisim = self.load_frame.load_vid_frame(
             self.labels[ID]["frames"][camname],
@@ -380,21 +384,21 @@ class DataGenerator_3Dconv(DataGenerator):
         )
 
     def pj_grid_mirror(self, X_grid, camname, ID, experimentID, thisim):
-        this_y = self.torch.as_tensor(
+        this_y = torch.as_tensor(
             self.labels[ID]["data"][camname],
-            dtype=self.torch.float32,
+            dtype=torch.float32,
             device=self.device,
         ).round()
 
-        if self.torch.all(self.torch.isnan(this_y)):
-            com_precrop = self.torch.zeros_like(this_y[:, 0]) * float("nan")
+        if torch.all(torch.isnan(this_y)):
+            com_precrop = torch.zeros_like(this_y[:, 0]) * float("nan")
         else:
             # For projecting points, we should not use this offset
-            com_precrop = self.torch.mean(this_y, axis=1)
+            com_precrop = torch.mean(this_y, axis=1)
 
         this_y[0, :] = this_y[0, :] - self.crop_width[0]
         this_y[1, :] = this_y[1, :] - self.crop_height[0]
-        com = self.torch.mean(this_y, axis=1)
+        com = torch.mean(this_y, axis=1)
 
         if not self.mirror:
             raise Exception(
@@ -416,10 +420,10 @@ class DataGenerator_3Dconv(DataGenerator):
         # separate the porjection and sampling into its own function so that
         # when mirror == True, this can be called directly
         if self.crop_im:
-            if self.torch.all(self.torch.isnan(com)):
-                thisim = self.torch.zeros(
+            if torch.all(torch.isnan(com)):
+                thisim = torch.zeros(
                     (self.dim_in[1], self.dim_in[0], self.n_channels_in),
-                    dtype=self.torch.uint8,
+                    dtype=torch.uint8,
                     device=self.device,
                 )
             else:
@@ -458,7 +462,7 @@ class DataGenerator_3Dconv(DataGenerator):
         # print('Sample grid {} sec.'.format(time.time() - ts))
 
         if (
-            ~self.torch.any(self.torch.isnan(com_precrop))
+            ~torch.any(torch.isnan(com_precrop))
             or (self.channel_combo == "avg")
             or not self.crop_im
         ):
@@ -486,35 +490,35 @@ class DataGenerator_3Dconv(DataGenerator):
         # Initialization
         first_exp = int(self.list_IDs[0].split("_")[0])
 
-        X = self.torch.zeros(
+        X = torch.zeros(
             (
                 self.batch_size * len(self.camnames[first_exp]),
                 *self.dim_out_3d,
                 self.n_channels_in + self.depth,
             ),
-            dtype=self.torch.uint8,
+            dtype=torch.uint8,
             device=self.device,
         )
 
         if self.mode == "3dprob":
-            y_3d = self.torch.zeros(
+            y_3d = torch.zeros(
                 (self.batch_size, self.n_channels_out, *self.dim_out_3d),
-                dtype=self.torch.float32,
+                dtype=torch.float32,
                 device=self.device,
             )
         elif self.mode == "coordinates":
-            y_3d = self.torch.zeros(
+            y_3d = torch.zeros(
                 (self.batch_size, 3, self.n_channels_out),
-                dtype=self.torch.float32,
+                dtype=torch.float32,
                 device=self.device,
             )
         else:
             raise Exception("not a valid generator mode")
 
         sz = self.dim_out_3d[0] * self.dim_out_3d[1] * self.dim_out_3d[2]
-        X_grid = self.torch.zeros(
+        X_grid = torch.zeros(
             (self.batch_size, sz, 3),
-            dtype=self.torch.float32,
+            dtype=torch.float32,
             device=self.device,
         )
 
@@ -524,39 +528,39 @@ class DataGenerator_3Dconv(DataGenerator):
             experimentID = int(ID.split("_")[0])
 
             # For 3D ground truth
-            this_y_3d = self.torch.as_tensor(
+            this_y_3d = torch.as_tensor(
                 self.labels_3d[ID],
-                dtype=self.torch.float32,
+                dtype=torch.float32,
                 device=self.device,
             )
-            this_COM_3d = self.torch.as_tensor(
-                self.com3d[ID], dtype=self.torch.float32, device=self.device
+            this_COM_3d = torch.as_tensor(
+                self.com3d[ID], dtype=torch.float32, device=self.device
             )
 
             # Create and project the grid here,
 
-            xgrid = self.torch.arange(
+            xgrid = torch.arange(
                 self.vmin + this_COM_3d[0] + self.vsize / 2,
                 this_COM_3d[0] + self.vmax,
                 self.vsize,
-                dtype=self.torch.float32,
+                dtype=torch.float32,
                 device=self.device,
             )
-            ygrid = self.torch.arange(
+            ygrid = torch.arange(
                 self.vmin + this_COM_3d[1] + self.vsize / 2,
                 this_COM_3d[1] + self.vmax,
                 self.vsize,
-                dtype=self.torch.float32,
+                dtype=torch.float32,
                 device=self.device,
             )
-            zgrid = self.torch.arange(
+            zgrid = torch.arange(
                 self.vmin + this_COM_3d[2] + self.vsize / 2,
                 this_COM_3d[2] + self.vmax,
                 self.vsize,
-                dtype=self.torch.float32,
+                dtype=torch.float32,
                 device=self.device,
             )
-            (x_coord_3d, y_coord_3d, z_coord_3d) = self.torch.meshgrid(
+            (x_coord_3d, y_coord_3d, z_coord_3d) = torch.meshgrid(
                 xgrid, ygrid, zgrid
             )
 
@@ -567,13 +571,13 @@ class DataGenerator_3Dconv(DataGenerator):
                     msg = "Note: ignoring dimension mismatch in 3D labels"
                     warnings.warn(msg)
 
-            X_grid[i] = self.torch.stack(
-                (
+            X_grid[i] = torch.stack(
+                    (
                     x_coord_3d.transpose(0, 1).flatten(),
                     y_coord_3d.transpose(0, 1).flatten(),
                     z_coord_3d.transpose(0, 1).flatten(),
-                ),
-                axis=1,
+                    ),
+                    dim=1,
             )
 
             # Compute projected images in parallel using multithreading
@@ -626,14 +630,14 @@ class DataGenerator_3Dconv(DataGenerator):
                     X.shape[4],
                 )
             )
-            X = X.permute((0, 2, 3, 4, 5, 1))
+            X = X.permute(0, 2, 3, 4, 5, 1)
 
             if self.channel_combo == "avg":
-                X = self.torch.mean(X, axis=-1)
+                X = torch.mean(X, dim=-1)
 
             # Randomly reorder the cameras fed into the first layer
             elif self.channel_combo == "random":
-                X = X[:, :, :, :, :, self.torch.randperm(X.shape[-1])]
+                X = X[..., torch.randperm(X.shape[-1])]
                 X = X.transpose(4, 5).reshape(*X.shape[:4], -1)
             else:
                 X = X.transpose(4, 5).reshape(*X.shape[:4], -1)
@@ -653,19 +657,19 @@ class DataGenerator_3Dconv(DataGenerator):
 
         # Convert pytorch tensors back to numpy array
         ts = time.time()
-        if self.torch.is_tensor(X):
+        if torch.is_tensor(X):
             X = X.float().cpu().numpy()
-        if self.torch.is_tensor(y_3d):
+        if torch.is_tensor(y_3d):
             y_3d = y_3d.cpu().numpy()
         # print('Numpy took {} sec'.format(time.time() - ts))
 
         if self.expval:
-            if self.torch.is_tensor(X_grid):
+            if torch.is_tensor(X_grid):
                 X_grid = X_grid.cpu().numpy()
             if self.var_reg:
                 return (
                     [processing.preprocess_3d(X), X_grid],
-                    [y_3d, self.torch.zeros((self.batch_size, 1))],
+                    [y_3d, torch.zeros((self.batch_size, 1))],
                 )
 
             if self.norm_im:
@@ -692,41 +696,48 @@ def random_continuous_rotation(X, y_3d, max_delta=5):
         np.ndarray: rotated grid coordimates
     """
     rotangle = np.random.rand() * (2 * max_delta) - max_delta
-    X = tf.reshape(X, [X.shape[0], X.shape[1], X.shape[2], -1]).numpy()
-    y_3d = tf.reshape(y_3d, [y_3d.shape[0], y_3d.shape[1], y_3d.shape[2], -1]).numpy()
+    X = torch.as_tensor(X).reshape(*X.shape[:3], -1).permute(0, 3, 1, 2) # dimension [B, D*C, H, W]
+    y_3d = torch.as_tensor(y_3d).reshape(y_3d.shape[:3], -1).permute(0, 3, 1, 2)
+    # X = tf.reshape(X, [X.shape[0], X.shape[1], X.shape[2], -1]).numpy()
+    # y_3d = tf.reshape(y_3d, [y_3d.shape[0], y_3d.shape[1], y_3d.shape[2], -1]).numpy()
     for i in range(X.shape[0]):
-        X[i] = tf.keras.preprocessing.image.apply_affine_transform(
-            X[i],
-            theta=rotangle,
-            row_axis=0,
-            col_axis=1,
-            channel_axis=2,
-            fill_mode="nearest",
-            cval=0.0,
-            order=1,
-        )
-        y_3d[i] = tf.keras.preprocessing.image.apply_affine_transform(
-            y_3d[i],
-            theta=rotangle,
-            row_axis=0,
-            col_axis=1,
-            channel_axis=2,
-            fill_mode="nearest",
-            cval=0.0,
-            order=1,
-        )
+        # X[i] = tf.keras.preprocessing.image.apply_affine_transform(
+        #     X[i],
+        #     theta=rotangle,
+        #     row_axis=0,
+        #     col_axis=1,
+        #     channel_axis=2,
+        #     fill_mode="nearest",
+        #     cval=0.0,
+        #     order=1,
+        # )
+        # y_3d[i] = tf.keras.preprocessing.image.apply_affine_transform(
+        #     y_3d[i],
+        #     theta=rotangle,
+        #     row_axis=0,
+        #     col_axis=1,
+        #     channel_axis=2,
+        #     fill_mode="nearest",
+        #     cval=0.0,
+        #     order=1,
+        # )
+        X[i] = TF.affine(X[i], angle=rotangle)
+        y_3d[i] = TF.affine(y_3d[i], angle=rotangle)
 
-    X = tf.reshape(X, [X.shape[0], X.shape[1], X.shape[2], X.shape[2], -1]).numpy()
-    y_3d = tf.reshape(
-        y_3d,
-        [y_3d.shape[0], y_3d.shape[1], y_3d.shape[2], y_3d.shape[2], -1],
-    ).numpy()
+    X = X.permute(0, 2, 3, 1).reshape(*X.shape[:3], X.shape[2], -1).numpy()
+    y_3d = y_3d.permute(0, 2, 3, 1).reshape(*X.shape[:3], X.shape[2], -1).numpy()
+
+    # X = tf.reshape(X, [X.shape[0], X.shape[1], X.shape[2], X.shape[2], -1]).numpy()
+    # y_3d = tf.reshape(
+    #     y_3d,
+    #     [y_3d.shape[0], y_3d.shape[1], y_3d.shape[2], y_3d.shape[2], -1],
+    # ).numpy()
 
     return X, y_3d
 
 
 # TODO(inherit): Several methods are repeated, consider inheriting from parent
-class DataGenerator_3Dconv_frommem(keras.utils.Sequence):
+class DataGenerator_3Dconv_frommem(torch.utils.data.Dataset):
     """Generate 3d conv data from memory.
 
     Attributes:
@@ -821,11 +832,11 @@ class DataGenerator_3Dconv_frommem(keras.utils.Sequence):
         self.aux_labels = aux_labels
         self.temporal_chunk_list = temporal_chunk_list
         self.temporal_chunk_size = 1
-        self.temporal_batch_size = batch_size
-        self.separation_loss=separation_loss
-        self.symmetry_loss = symmetry_loss
+        # self.temporal_batch_size = batch_size
+        # self.separation_loss=separation_loss
+        # self.symmetry_loss = symmetry_loss
         self._update_temporal_batch_size()
-        self.on_epoch_end()
+        # self.on_epoch_end()
 
     def __len__(self):
         """Denote the number of batches per epoch.
@@ -834,14 +845,14 @@ class DataGenerator_3Dconv_frommem(keras.utils.Sequence):
             int: Batches per epoch
         """
         if self.temporal_chunk_list is not None:
-           return len(self.temporal_chunk_list) // self.temporal_batch_size
+           return len(self.temporal_chunk_list)
 
-        return len(self.list_IDs) // self.batch_size
+        return len(self.list_IDs)
     
     def _update_temporal_batch_size(self):
         if self.temporal_chunk_list is not None:
             self.temporal_chunk_size = len(self.temporal_chunk_list[0])
-            self.temporal_batch_size = self.batch_size // self.temporal_chunk_size
+            # self.temporal_batch_size = self.batch_size // self.temporal_chunk_size
 
     def __getitem__(self, index):
         """Generate one batch of data.
@@ -855,26 +866,25 @@ class DataGenerator_3Dconv_frommem(keras.utils.Sequence):
                 y (np.ndarray): Target
         """
         if self.temporal_chunk_list is not None:
-            i = index * self.temporal_batch_size
-            indexes = self.indexes[i : i + self.temporal_batch_size]
-            list_IDs_temp = list(np.concatenate([self.temporal_chunk_list[k] for k in indexes], axis=0))
-            
-        else: 
-            indexes = self.indexes[index * self.batch_size : (index + 1) * self.batch_size]
-            list_IDs_temp = [self.list_IDs[k] for k in indexes]
+            list_IDs_temp = self.temporal_chunk_list[index]
+        else:
+            list_IDs_temp = [self.list_IDs[index]]
+        # else: 
+        #     indexes = self.indexes[index * self.batch_size : (index + 1) * self.batch_size]
+        #     list_IDs_temp = [self.list_IDs[k] for k in indexes]
         # Generate data
-        X, y = self.__data_generation(list_IDs_temp)
-        return X, y
+        X, X_grid, y_3d, aux = self.__data_generation(list_IDs_temp)
+        return X, X_grid, y_3d, aux
 
-    def on_epoch_end(self):
-        """Update indexes after each epoch."""
-        if self.temporal_chunk_list is not None:
-            self.indexes = np.arange(len(self.temporal_chunk_list))
-        else:    
-            self.indexes = np.arange(len(self.list_IDs))
+    # def on_epoch_end(self):
+    #     """Update indexes after each epoch."""
+    #     if self.temporal_chunk_list is not None:
+    #         self.indexes = np.arange(len(self.temporal_chunk_list))
+    #     else:    
+    #         self.indexes = np.arange(len(self.list_IDs))
             
-        if self.shuffle:
-            np.random.shuffle(self.indexes)
+    #     if self.shuffle:
+    #         np.random.shuffle(self.indexes)
 
     def rot90(self, X):
         """Rotate X by 90 degrees CCW.
@@ -926,28 +936,28 @@ class DataGenerator_3Dconv_frommem(keras.utils.Sequence):
         # if use temporal, rotation augmentations have to be consistent within each temporal chunks
         # for example, assume the temporal chunk size to be 2, each batch contains exactly 2 chunks
         # then, only 2 different rotation schemes need to be generated
-        rots = np.random.choice(np.arange(4), self.temporal_batch_size)
-        for i in range(0, self.temporal_chunk_size, self.batch_size):
-            if rots[i] == 0:
+        rots = np.random.choice(np.arange(4), self.temporal_chunk_size)
+        for j in range(0, self.temporal_chunk_size):
+            if rots[j] == 0:
                 pass
-            elif rots[i] == 1:
+            elif rots[j] == 1:
                 # Rotate180
-                for j in range(i, i+self.temporal_chunk_size):
-                    X[j], y_3d[j] = self.rot180(X[j]), self.rot180(y_3d[j])
-                    if aux is not None:
-                        aux[j] = self.rot180(aux[j])
-            elif rots[i] == 2:
+                # for j in range(i, i+self.temporal_chunk_size):
+                X[j], y_3d[j] = self.rot180(X[j]), self.rot180(y_3d[j])
+                if aux is not None:
+                    aux[j] = self.rot180(aux[j])
+            elif rots[j] == 2:
                 # Rotate90
-                for j in range(i, i+self.temporal_chunk_size):
-                    X[j], y_3d[j] = self.rot90(X[j]), self.rot90(y_3d[j])
-                    if aux is not None:
-                        aux[j] = self.rot90(aux[j])
-            elif rots[i] == 3:
+                # for j in range(i, i+self.temporal_chunk_size):
+                X[j], y_3d[j] = self.rot90(X[j]), self.rot90(y_3d[j])
+                if aux is not None:
+                    aux[j] = self.rot90(aux[j])
+            elif rots[j] == 3:
                 # Rotate -90/270
-                for j in range(i, i+self.temporal_chunk_size):
-                    X[j], y_3d[j] = self.rot180(self.rot90(X[j])), self.rot180(self.rot90(y_3d[j]))
-                    if aux is not None:
-                        aux[j] = self.rot180(self.rot90(aux[j]))
+                # for j in range(i, i+self.temporal_chunk_size):
+                X[j], y_3d[j] = self.rot180(self.rot90(X[j])), self.rot180(self.rot90(y_3d[j]))
+                if aux is not None:
+                    aux[j] = self.rot180(self.rot90(aux[j]))
         if aux is not None:
             return X, y_3d, aux
         return X, y_3d
@@ -991,14 +1001,14 @@ class DataGenerator_3Dconv_frommem(keras.utils.Sequence):
                 # First make X_grid 3d
                 X_grid = np.reshape(
                     X_grid,
-                    (self.batch_size, self.nvox, self.nvox, self.nvox, 3),
+                    (self.temporal_chunk_size, self.nvox, self.nvox, self.nvox, 3),
                 )
                 if aux is not None:
                     X, X_grid, aux = self.random_rotate(X.copy(), X_grid.copy(), aux.copy())
                 else:
                     X, X_grid = self.random_rotate(X.copy(), X_grid.copy())
                 # Need to reshape back to raveled version
-                X_grid = np.reshape(X_grid, (self.batch_size, -1, 3))
+                X_grid = np.reshape(X_grid, (self.temporal_chunk_size, -1, 3))
             else:
                 X, y_3d = self.random_rotate(X.copy(), y_3d.copy())
 
@@ -1007,13 +1017,13 @@ class DataGenerator_3Dconv_frommem(keras.utils.Sequence):
                 # First make X_grid 3d
                 X_grid = np.reshape(
                     X_grid,
-                    (self.batch_size, self.nvox, self.nvox, self.nvox, 3),
+                    (self.temporal_chunk_size, self.nvox, self.nvox, self.nvox, 3),
                 )
                 X, X_grid = random_continuous_rotation(
                     X.copy(), X_grid.copy(), self.rotation_val
                 )
                 # Need to reshape back to raveled version
-                X_grid = np.reshape(X_grid, (self.batch_size, -1, 3))
+                X_grid = np.reshape(X_grid, (self.temporal_chunk_size, -1, 3))
             else:
                 X, y_3d = random_continuous_rotation(
                     X.copy(), y_3d.copy(), self.rotation_val
@@ -1025,9 +1035,13 @@ class DataGenerator_3Dconv_frommem(keras.utils.Sequence):
                     n_cam * self.chan_num,
                     n_cam * self.chan_num + self.chan_num,
                 )
-                X[..., channel_ids] = tf.image.random_hue(
-                    X[..., channel_ids], self.hue_val
-                )
+                # X[..., channel_ids] = tf.image.random_hue(
+                #     X[..., channel_ids], self.hue_val
+                # )
+                X_temp = torch.as_tensor(X[..., channel_ids]).permute(0, 3, 4, 1, 2)
+                X_temp = TF.adjust_hue(X_temp, self.hue_val)
+                X[..., channel_ids] = X_temp.permute(0, 3, 4, 1, 2).numpy()
+
         elif self.augment_hue:
             warnings.warn(
                 "Trying to augment hue with an image that is not RGB. Skipping."
@@ -1039,19 +1053,22 @@ class DataGenerator_3Dconv_frommem(keras.utils.Sequence):
                     n_cam * self.chan_num,
                     n_cam * self.chan_num + self.chan_num,
                 )
-                X[..., channel_ids] = tf.image.random_brightness(
-                    X[..., channel_ids], self.bright_val
-                )
+                # X[..., channel_ids] = tf.image.random_brightness(
+                #     X[..., channel_ids], self.bright_val
+                # )
+                X_temp = torch.as_tensor(X[..., channel_ids]).permute(0, 3, 4, 1, 2)
+                X_temp = TF.adjust_brightness(X_temp, self.bright_val)
+                X[..., channel_ids] = X_temp.permute(0, 3, 4, 1, 2).numpy()
 
         if self.mirror_augmentation and self.expval and aux is None:
             if np.random.rand() > 0.5:
                 X_grid = np.reshape(
                     X_grid,
-                    (self.batch_size, self.nvox, self.nvox, self.nvox, 3),
+                    (self.temporal_batch_size, self.nvox, self.nvox, self.nvox, 3),
                 )
                 # Flip the image and the symmetric keypoints
                 X, y_3d, X_grid = self.mirror(X.copy(), y_3d.copy(), X_grid.copy())
-                X_grid = np.reshape(X_grid, (self.batch_size, -1, 3))
+                X_grid = np.reshape(X_grid, (self.temporal_chunk_size, -1, 3))
         else:
             pass
             ##TODO: implement mirror augmentation for max and avg+max modes
@@ -1101,34 +1118,34 @@ class DataGenerator_3Dconv_frommem(keras.utils.Sequence):
         inds = np.unravel_index(inds, (grid_d, grid_d, grid_d))
         return np.stack(inds, axis=1)
 
-    def return_multi_inputs_targets(self, X, X_grid, y_3d, aux):
-        # # adjust inputs & outputs according to targeted losses
-        return_input, return_target = [X], {'final_output': y_3d}
-        if not self.expval:
-            return return_input, return_target
+    # def return_multi_inputs_targets(self, X, X_grid, y_3d, aux):
+    #     # # adjust inputs & outputs according to targeted losses
+    #     return_input, return_target = [X], {'final_output': y_3d}
+    #     if not self.expval:
+    #         return return_input, return_target
 
-        return_input.append(X_grid)
-        final_output_count = 1
-        if self.heatmap_reg:
-            return_input.append(self.get_max_gt_ind(X_grid, y_3d))
-            return_target['heatmap_output'] = self.heatmap_reg_coeff*np.ones((self.batch_size, y_3d.shape[-1]), dtype='float32')
+    #     return_input.append(X_grid)
+    #     final_output_count = 1
+    #     if self.heatmap_reg:
+    #         return_input.append(self.get_max_gt_ind(X_grid, y_3d))
+    #         return_target['heatmap_output'] = self.heatmap_reg_coeff*np.ones((self.batch_size, y_3d.shape[-1]), dtype='float32')
         
-        if self.temporal_chunk_list is not None:
-            return_target[f'final_output_{final_output_count}'] = y_3d
-            final_output_count += 1
+    #     if self.temporal_chunk_list is not None:
+    #         return_target[f'final_output_{final_output_count}'] = y_3d
+    #         final_output_count += 1
         
-        if self.separation_loss:
-            return_target[f'final_output_{final_output_count}'] = y_3d
-            final_output_count += 1
+    #     if self.separation_loss:
+    #         return_target[f'final_output_{final_output_count}'] = y_3d
+    #         final_output_count += 1
         
-        if self.symmetry_loss:
-            return_target[f'final_output_{final_output_count}'] = y_3d
-            final_output_count += 1
+    #     if self.symmetry_loss:
+    #         return_target[f'final_output_{final_output_count}'] = y_3d
+    #         final_output_count += 1
         
-        if aux is not None:
-            return_target['normed_map'] = aux 
+    #     if aux is not None:
+    #         return_target['normed_map'] = aux 
         
-        return return_input, return_target
+    #     return return_input, return_target
 
     def __data_generation(self, list_IDs_temp):
         """Generate data containing batch_size samples.
@@ -1146,12 +1163,12 @@ class DataGenerator_3Dconv_frommem(keras.utils.Sequence):
         """
         # Initialization
 
-        X = np.zeros((self.batch_size, *self.data.shape[1:]))
-        y_3d = np.zeros((self.batch_size, *self.labels.shape[1:]))
+        X = np.zeros((self.temporal_chunk_size, *self.data.shape[1:]))
+        y_3d = np.zeros((self.temporal_chunk_size, *self.labels.shape[1:]))
 
         # Only used for AVG mode
         if self.expval:
-            X_grid = np.zeros((self.batch_size, *self.xgrid.shape[1:]))
+            X_grid = np.zeros((self.temporal_chunk_size, *self.xgrid.shape[1:]))
         else:
             X_grid = None
 
@@ -1172,8 +1189,16 @@ class DataGenerator_3Dconv_frommem(keras.utils.Sequence):
         # Randomly re-order, if desired
         X = self.do_random(X)
         
+        # shape of outputs:
+        # X: [temporal_chunk_size, H, W, D, n_cam*chan_num]
+        if X_grid is not None:
+            X_grid = torch.from_numpy(X_grid)
+        if aux is not None:
+            aux = torch.from_numpy(aux)
+
+        return torch.from_numpy(X).permute(0, 4, 1, 2, 3), X_grid, torch.from_numpy(y_3d), aux 
         # # adjust inputs & outputs according to targeted losses        
-        return self.return_multi_inputs_targets(X, X_grid, y_3d, aux)
+        # return self.return_multi_inputs_targets(X, X_grid, y_3d, aux)
 
 
 class DataGenerator_3Dconv_npy(DataGenerator_3Dconv_frommem):
@@ -1265,17 +1290,21 @@ class DataGenerator_3Dconv_npy(DataGenerator_3Dconv_frommem):
                 X (np.ndarray): Input volume
                 y (np.ndarray): Target
         """
+        # if self.temporal_chunk_list is not None:
+        #     i = index * self.temporal_batch_size
+        #     indexes = self.indexes[i : i + self.temporal_batch_size]
+        #     indexes = list(np.concatenate([self.temporal_chunk_list[k] for k in indexes], axis=0))
+        #     list_IDs_temp = [self.list_IDs[k] for k in indexes]
+        # else: 
+        #     indexes = self.indexes[index * self.batch_size : (index + 1) * self.batch_size]
+        #     list_IDs_temp = [self.list_IDs[k] for k in indexes]
         if self.temporal_chunk_list is not None:
-            i = index * self.temporal_batch_size
-            indexes = self.indexes[i : i + self.temporal_batch_size]
-            indexes = list(np.concatenate([self.temporal_chunk_list[k] for k in indexes], axis=0))
-            list_IDs_temp = [self.list_IDs[k] for k in indexes]
-        else: 
-            indexes = self.indexes[index * self.batch_size : (index + 1) * self.batch_size]
-            list_IDs_temp = [self.list_IDs[k] for k in indexes]
+            list_IDs_temp = self.temporal_chunk_list[index]
+        else:
+            list_IDs_temp = [self.list_IDs[index]]
         # Generate data
-        X, y = self.__data_generation(list_IDs_temp)
-        return X, y
+        X, X_grid, y_3d, aux = self.__data_generation(list_IDs_temp)
+        return X, X_grid, y_3d, aux
 
     def __data_generation(self, list_IDs_temp):
         """Generate data containing batch_size samples.
@@ -1323,7 +1352,7 @@ class DataGenerator_3Dconv_npy(DataGenerator_3Dconv_frommem):
         X_grid = np.stack(X_grid)
         if not self.expval:
             y_3d_max = np.zeros(
-                (self.batch_size, self.nvox, self.nvox, self.nvox, y_3d.shape[-1])
+                (self.temporal_chunk_size, self.nvox, self.nvox, self.nvox, y_3d.shape[-1])
             )
 
         if not self.expval:
@@ -1389,4 +1418,5 @@ class DataGenerator_3Dconv_npy(DataGenerator_3Dconv_frommem):
         # X = processing.preprocess_3d(X) 
 
         # # adjust inputs & outputs according to targeted losses
-        return self.return_multi_inputs_targets(X, X_grid, y_3d, aux)
+        # return self.return_multi_inputs_targets(X, X_grid, y_3d, aux)
+        return X, X_grid, y_3d, aux
