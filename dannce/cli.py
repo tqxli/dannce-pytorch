@@ -1,7 +1,7 @@
 """Entrypoints for dannce training and prediction."""
 from dannce.interface import (
-    com_predict,
-    com_train,
+    # com_predict,
+    # com_train,
     dannce_predict,
     dannce_train,
     build_params,
@@ -74,52 +74,52 @@ def sbatch_dannce_train_cli():
     os.system(cmd)
 
 
-def sbatch_com_predict_cli():
-    """CLI to submit com predition through sbatch using the slurm config specified in the base config."""
-    base_config = parse_sbatch()
-    slurm_config = load_params(load_params(base_config)["slurm_config"])
-    cmd = 'sbatch %s --wrap="%s com-predict %s"' % (
-        slurm_config["com_predict"],
-        slurm_config["setup"],
-        base_config,
-    )
-    os.system(cmd)
+# def sbatch_com_predict_cli():
+#     """CLI to submit com predition through sbatch using the slurm config specified in the base config."""
+#     base_config = parse_sbatch()
+#     slurm_config = load_params(load_params(base_config)["slurm_config"])
+#     cmd = 'sbatch %s --wrap="%s com-predict %s"' % (
+#         slurm_config["com_predict"],
+#         slurm_config["setup"],
+#         base_config,
+#     )
+#     os.system(cmd)
 
 
-def sbatch_com_train_cli():
-    """CLI to submit com training through sbatch using the slurm config specified in the base config."""
-    base_config = parse_sbatch()
-    slurm_config = load_params(load_params(base_config)["slurm_config"])
-    cmd = 'sbatch %s --wrap="%s com-train %s"' % (
-        slurm_config["com_train"],
-        slurm_config["setup"],
-        base_config,
-    )
-    os.system(cmd)
+# def sbatch_com_train_cli():
+#     """CLI to submit com training through sbatch using the slurm config specified in the base config."""
+#     base_config = parse_sbatch()
+#     slurm_config = load_params(load_params(base_config)["slurm_config"])
+#     cmd = 'sbatch %s --wrap="%s com-train %s"' % (
+#         slurm_config["com_train"],
+#         slurm_config["setup"],
+#         base_config,
+#     )
+#     os.system(cmd)
 
 
-def com_predict_cli():
-    """Entrypoint for com prediction."""
-    parser = argparse.ArgumentParser(
-        description="Com predict CLI",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    parser.set_defaults(**{**_param_defaults_shared, **_param_defaults_com})
-    args = parse_clargs(parser, model_type="com", prediction=True)
-    params = build_clarg_params(args, dannce_net=False, prediction=True)
-    com_predict(params)
+# def com_predict_cli():
+#     """Entrypoint for com prediction."""
+#     parser = argparse.ArgumentParser(
+#         description="Com predict CLI",
+#         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+#     )
+#     parser.set_defaults(**{**_param_defaults_shared, **_param_defaults_com})
+#     args = parse_clargs(parser, model_type="com", prediction=True)
+#     params = build_clarg_params(args, dannce_net=False, prediction=True)
+#     com_predict(params)
 
 
-def com_train_cli():
-    """Entrypoint for com training."""
-    parser = argparse.ArgumentParser(
-        description="Com train CLI",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    parser.set_defaults(**{**_param_defaults_shared, **_param_defaults_com})
-    args = parse_clargs(parser, model_type="com", prediction=False)
-    params = build_clarg_params(args, dannce_net=False, prediction=False)
-    com_train(params)
+# def com_train_cli():
+#     """Entrypoint for com training."""
+#     parser = argparse.ArgumentParser(
+#         description="Com train CLI",
+#         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+#     )
+#     parser.set_defaults(**{**_param_defaults_shared, **_param_defaults_com})
+#     args = parse_clargs(parser, model_type="com", prediction=False)
+#     params = build_clarg_params(args, dannce_net=False, prediction=False)
+#     com_train(params)
 
 
 def dannce_predict_cli():

@@ -10,15 +10,7 @@ import imageio
 import time
 import gc
 from datetime import datetime
-import tensorflow as tf
-import tensorflow.keras as keras
-import tensorflow.keras.losses as keras_losses
-from tensorflow.keras import backend as K
-from tensorflow.keras.models import load_model, Model
-from tensorflow.keras.layers import GlobalMaxPooling3D
-from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.callbacks import ModelCheckpoint, CSVLogger, TensorBoard
-import dannce.callbacks as cb
+
 import dannce.engine.serve_data_DANNCE as serve_data_DANNCE
 import dannce.engine.generator as generator
 import dannce.engine.generator_aux as generator_aux
@@ -36,7 +28,7 @@ import os, psutil, csv
 
 from torch.utils.tensorboard import SummaryWriter
 import torch
-from dannce.engine.models_pytorch.nets import DANNCE
+from dannce.engine.models_pytorch.nets import DANNCE, initialize_model
 import dannce.engine.models_pytorch.metrics as custom_metrics
 import dannce.engine.models_pytorch.loss as custom_losses
 
@@ -116,542 +108,6 @@ def make_folder(key: Text, params: Dict):
     #     os.makedirs(new_dir)
     #     params[key] = new_dir
 
-
-def com_predict(params: Dict):
-    """Predict the COM for a given parameters dictionary.
-
-    Args:
-        params (Dict): Parameters dictionary.
-    """
-    params = setup_com_predict(params)
-
-    # Get the model
-    model = build_com_network(params)
-
-    (
-        samples,
-        datadict,
-        datadict_3d,
-        cameras,
-        camera_mats,
-    ) = serve_data_DANNCE.prepare_data(
-        params,
-        prediction=True,
-        return_cammat=True,
-    )
-
-    # Zero any negative frames
-    for key in datadict.keys():
-        for key_ in datadict[key]["frames"].keys():
-            if datadict[key]["frames"][key_] < 0:
-                datadict[key]["frames"][key_] = 0
-
-    # The generator expects an experimentID in front of each sample key
-    samples = ["0_" + str(f) for f in samples]
-    datadict = {"0_" + str(key): val for key, val in datadict.items()}
-
-    # Initialize video dictionary. paths to videos only.
-    vids = {}
-    vids = processing.initialize_vids(params, datadict, 0, vids, pathonly=True)
-
-    # Parameters
-    predict_params = get_com_predict_params(params)
-    partition = {"valid_sampleIDs": samples}
-
-    save_data = {}
-
-    # If multi-instance mode is on, use the correct generator
-    # and eval function.
-    if params["n_instances"] > 1:
-        predict_generator = generator_aux.DataGenerator_downsample_multi_instance(
-            params["n_instances"],
-            partition["valid_sampleIDs"],
-            datadict,
-            vids,
-            **predict_params
-        )
-    else:
-        predict_generator = generator_aux.DataGenerator_downsample(
-            partition["valid_sampleIDs"], datadict, vids, **predict_params
-        )
-
-    # If we just want to analyze a chunk of video...
-    if params["max_num_samples"] == "max":
-        save_data = inference.infer_com(
-            params["start_sample"],
-            len(predict_generator),
-            predict_generator,
-            params,
-            model,
-            partition,
-            save_data,
-            camera_mats,
-            cameras,
-        )
-        processing.save_COM_checkpoint(
-            save_data, params["com_predict_dir"], datadict, cameras, params
-        )
-    else:
-        end_idx = np.min(
-            [
-                params["start_sample"] + params["max_num_samples"],
-                len(predict_generator),
-            ]
-        )
-        save_data = inference.infer_com(
-            params["start_sample"],
-            end_idx,
-            predict_generator,
-            params,
-            model,
-            partition,
-            save_data,
-            camera_mats,
-            cameras,
-        )
-        processing.save_COM_checkpoint(
-            save_data,
-            params["com_predict_dir"],
-            datadict,
-            cameras,
-            params,
-            file_name="com3d%d" % (params["start_sample"]),
-        )
-
-    print("done!")
-
-
-def setup_com_predict(params: Dict):
-    """Sets up the parameters dictionary for com prediction
-
-    Args:
-        params (Dict): Parameters dictionary
-    """
-
-    # Make the prediction directory if it does not exist.
-    make_folder("com_predict_dir", params)
-
-    # Load the appropriate loss function and network
-    try:
-        params["loss"] = getattr(losses, params["loss"])
-    except AttributeError:
-        params["loss"] = getattr(keras_losses, params["loss"])
-    params["net"] = getattr(nets, params["net"])
-
-    os.environ["CUDA_VISIBLE_DEVICES"] = params["gpu_id"]
-
-    # If params['n_channels_out'] is greater than one, we enter a mode in
-    # which we predict all available labels + the COM
-    params["multi_mode"] = params["n_channels_out"] > 1 & params["n_instances"] == 1
-    params["n_channels_out"] = params["n_channels_out"] + int(params["multi_mode"])
-
-    # Grab the input file for prediction
-    params["label3d_file"] = processing.grab_predict_label3d_file()
-
-    print("Using camnames: {}".format(params["camnames"]))
-
-    # Also add parent params under the 'experiment' key for compatibility
-    # with DANNCE's video loading function
-    params["experiment"] = {}
-    params["experiment"][0] = params
-
-    # For real mono training
-    params["chan_num"] = 1 if params["mono"] else params["n_channels_in"]
-    return params
-
-
-def build_com_network(params: Dict) -> Model:
-    """Builds a com network for prediciton
-
-    Args:
-        params (Dict): Parameters dictionary
-
-    Returns:
-        Model: com network
-    """
-    # channels out is equal to the number of views when using a single video stream with mirrors
-    eff_n_channels_out = (
-        int(params["n_views"]) if params["mirror"] else params["n_channels_out"]
-    )
-    print("Initializing Network...")
-    # Build net
-    model = params["net"](
-        params["loss"],
-        float(params["lr"]),
-        params["chan_num"],
-        eff_n_channels_out,
-        norm_method=params["norm_method"],
-        metric=["mse"],
-    )
-
-    # If the weights are not specified, use the train directory.
-    if params["com_predict_weights"] is None:
-        weights = os.listdir(params["com_train_dir"])
-        weights = [f for f in weights if ".hdf5" in f]
-        weights = sorted(weights, key=lambda x: int(x.split(".")[1].split("-")[0]))
-        weights = weights[-1]
-        params["com_predict_weights"] = os.path.join(params["com_train_dir"], weights)
-
-    print("Loading weights from " + params["com_predict_weights"])
-    model.load_weights(params["com_predict_weights"])
-
-    print("COMPLETE\n")
-    return model
-
-
-def get_com_predict_params(params: Dict) -> Dict:
-    """Helper to get com prediction parameters.
-
-    Args:
-        params (Dict): Parameters dictionary.
-
-    Returns:
-        Dict: Prediction parameters dictionary.
-    """
-    predict_params = {
-        "dim_in": (
-            params["crop_height"][1] - params["crop_height"][0],
-            params["crop_width"][1] - params["crop_width"][0],
-        ),
-        "n_channels_in": params["n_channels_in"],
-        "batch_size": 1,
-        "n_channels_out": params["n_channels_out"],
-        "out_scale": params["sigma"],
-        "camnames": {0: params["camnames"]},
-        "crop_width": params["crop_width"],
-        "crop_height": params["crop_height"],
-        "downsample": params["downfac"],
-        "labelmode": "coord",
-        "chunks": params["chunks"],
-        "shuffle": False,
-        "dsmode": params["dsmode"],
-        "mono": params["mono"],
-        "mirror": params["mirror"],
-        "predict_flag": True,
-    }
-    return predict_params
-
-
-def com_train(params: Dict):
-    """Train COM network
-
-    Args:
-        params (Dict): Parameters dictionary.
-    """
-    params = setup_com_train(params)
-
-    # Use the same label files and experiment settings as DANNCE unless
-    # indicated otherwise by using a 'com_exp' block in io.yaml.
-    #
-    # This can be useful for introducing additional COM-only label files.
-    if params["com_exp"] is not None:
-        exps = params["com_exp"]
-    else:
-        exps = params["exp"]
-    num_experiments = len(exps)
-
-    params["experiment"] = {}
-    total_chunks = {}
-    cameras = {}
-    camnames = {}
-    datadict = {}
-    datadict_3d = {}
-    samples = []
-    for e, expdict in enumerate(exps):
-
-        exp = processing.load_expdict(params, 
-                                      e, 
-                                      expdict, 
-                                      _DEFAULT_VIDDIR, 
-                                      _DEFAULT_VIDDIR_SIL)
-
-        params["experiment"][e] = exp
-        (samples_, datadict_, datadict_3d_, cameras_,) = serve_data_DANNCE.prepare_data(
-            params["experiment"][e],
-            com_flag=not params["multi_mode"],
-        )
-
-        # No need to prepare any COM file (they don't exist yet).
-        # We call this because we want to support multiple experiments,
-        # which requires appending the experiment ID to each data object and key
-        samples, datadict, datadict_3d, ddd = serve_data_DANNCE.add_experiment(
-            e,
-            samples,
-            datadict,
-            datadict_3d,
-            {},
-            samples_,
-            datadict_,
-            datadict_3d_,
-            {},
-        )
-        cameras[e] = cameras_
-        camnames[e] = params["experiment"][e]["camnames"]
-        for name, chunk in exp["chunks"].items():
-            total_chunks[name] = chunk
-
-    # Dump the params into file for reproducibility
-    processing.save_params(params["com_train_dir"], params)
-
-    # Additionally, to keep videos unique across experiments, need to add
-    # experiment labels in other places. E.g. experiment 0 CameraE's "camname"
-    # Becomes 0_CameraE.
-    cameras, datadict, params = serve_data_DANNCE.prepend_experiment(
-        params, datadict, num_experiments, camnames, cameras
-    )
-
-    samples = np.array(samples)
-
-    e = 0
-
-    # Initialize video objects
-    vids = {}
-    for e in range(num_experiments):
-        vids = processing.initialize_vids(params, datadict, e, vids, pathonly=True)
-
-    print("Using {} downsampling".format(params["dsmode"]))
-
-    train_params = {
-        "dim_in": (
-            params["crop_height"][1] - params["crop_height"][0],
-            params["crop_width"][1] - params["crop_width"][0],
-        ),
-        "n_channels_in": params["n_channels_in"],
-        "batch_size": 1,
-        "n_channels_out": params["n_channels_out"],
-        "out_scale": params["sigma"],
-        "camnames": camnames,
-        "crop_width": params["crop_width"],
-        "crop_height": params["crop_height"],
-        "downsample": params["downfac"],
-        "shuffle": False,
-        "chunks": total_chunks,
-        "dsmode": params["dsmode"],
-        "mono": params["mono"],
-        "mirror": params["mirror"],
-    }
-
-    valid_params = deepcopy(train_params)
-    valid_params["shuffle"] = False
-
-    partition = processing.make_data_splits(
-        samples, params, params["com_train_dir"], num_experiments
-    )
-
-    labels = datadict
-
-    # For real mono training
-    params["chan_num"] = 1 if params["mono"] else params["n_channels_in"]
-
-    # effective n_channels, which is different if using a mirror arena configuration
-    eff_n_channels_out = (
-        len(camnames[0]) if params["mirror"] else params["n_channels_out"]
-    )
-
-    # Build net
-    print("Initializing Network...")
-
-    model = params["net"](
-        params["loss"],
-        float(params["lr"]),
-        params["chan_num"],
-        eff_n_channels_out,
-        norm_method=params["norm_method"],
-        metric=["mse"],
-    )
-    print("COMPLETE\n")
-
-    if params["com_finetune_weights"] is not None:
-        weights = os.listdir(params["com_finetune_weights"])
-        weights = [f for f in weights if ".hdf5" in f]
-        weights = weights[0]
-
-        try:
-            model.load_weights(os.path.join(params["com_finetune_weights"], weights))
-        except:
-            print(
-                "Note: model weights could not be loaded due to a mismatch in dimensions.\
-                   Assuming that this is a fine-tune with a different number of outputs and removing \
-                  the top of the net accordingly"
-            )
-            model.layers[-1]._name = "top_conv"
-            model.load_weights(
-                os.path.join(params["com_finetune_weights"], weights),
-                by_name=True,
-            )
-
-    if params["lockfirst"]:
-        for layer in model.layers[:2]:
-            layer.trainable = False
-
-    model.compile(
-        optimizer=Adam(lr=float(params["lr"])),
-        loss=params["loss"],
-    )
-
-    # Create checkpoint and logging callbacks
-    kkey = "weights.hdf5"
-    mon = "val_loss" if params["num_validation_per_exp"] > 0 else "loss"
-
-    # Create checkpoint and logging callbacks
-    model_checkpoint = ModelCheckpoint(
-        os.path.join(params["com_train_dir"], kkey),
-        monitor=mon,
-        save_best_only=True,
-        save_weights_only=True,
-    )
-    csvlog = CSVLogger(os.path.join(params["com_train_dir"], "training.csv"))
-    tboard = TensorBoard(
-        log_dir=os.path.join(params["com_train_dir"], "logs"),
-        write_graph=False,
-        update_freq=100,
-    )
-
-    # Initialize data structures
-    if params["mirror"]:
-        ncams = 1  # Effectively, for the purpose of batch indexing
-    else:
-        ncams = len(camnames[0])
-
-    dh = (params["crop_height"][1] - params["crop_height"][0]) // params["downfac"]
-    dw = (params["crop_width"][1] - params["crop_width"][0]) // params["downfac"]
-
-    ims_train = np.zeros(
-        (
-            ncams * len(partition["train_sampleIDs"]),
-            dh,
-            dw,
-            params["chan_num"],
-        ),
-        dtype="float32",
-    )
-    y_train = np.zeros(
-        (ncams * len(partition["train_sampleIDs"]), dh, dw, eff_n_channels_out),
-        dtype="float32",
-    )
-    ims_valid = np.zeros(
-        (
-            ncams * len(partition["valid_sampleIDs"]),
-            dh,
-            dw,
-            params["chan_num"],
-        ),
-        dtype="float32",
-    )
-    y_valid = np.zeros(
-        (ncams * len(partition["valid_sampleIDs"]), dh, dw, eff_n_channels_out),
-        dtype="float32",
-    )
-
-    # Set up generators
-    if params["n_instances"] > 1:
-        train_generator = generator_aux.DataGenerator_downsample_multi_instance(
-            params["n_instances"],
-            partition["train_sampleIDs"],
-            labels,
-            vids,
-            **train_params
-        )
-        valid_generator = generator_aux.DataGenerator_downsample_multi_instance(
-            params["n_instances"],
-            partition["valid_sampleIDs"],
-            labels,
-            vids,
-            **valid_params
-        )
-    else:
-        train_generator = generator_aux.DataGenerator_downsample(
-            partition["train_sampleIDs"], labels, vids, **train_params
-        )
-        valid_generator = generator_aux.DataGenerator_downsample(
-            partition["valid_sampleIDs"], labels, vids, **valid_params
-        )
-
-    print("Loading data")
-    for i in range(len(partition["train_sampleIDs"])):
-        print(i, end="\r")
-        ims = train_generator.__getitem__(i)
-        ims_train[i * ncams : (i + 1) * ncams] = ims[0]
-        y_train[i * ncams : (i + 1) * ncams] = ims[1]
-
-    for i in range(len(partition["valid_sampleIDs"])):
-        print(i, end="\r")
-        ims = valid_generator.__getitem__(i)
-        ims_valid[i * ncams : (i + 1) * ncams] = ims[0]
-        y_valid[i * ncams : (i + 1) * ncams] = ims[1]
-
-    train_generator = generator_aux.DataGenerator_downsample_frommem(
-        np.arange(ims_train.shape[0]),
-        ims_train,
-        y_train,
-        batch_size=params["batch_size"] * ncams,
-        augment_hue=params["augment_hue"],
-        augment_brightness=params["augment_brightness"],
-        augment_rotation=params["augment_rotation"],
-        augment_shear=params["augment_hue"],
-        augment_shift=params["augment_brightness"],
-        augment_zoom=params["augment_rotation"],
-        bright_val=params["augment_bright_val"],
-        hue_val=params["augment_hue_val"],
-        shift_val=params["augment_shift_val"],
-        rotation_val=params["augment_rotation_val"],
-        shear_val=params["augment_shear_val"],
-        zoom_val=params["augment_zoom_val"],
-        chan_num=params["chan_num"],
-    )
-
-    valid_generator = generator_aux.DataGenerator_downsample_frommem(
-        np.arange(ims_valid.shape[0]),
-        ims_valid,
-        y_valid,
-        batch_size=ncams,
-        shuffle=False,
-        chan_num=params["chan_num"],
-    )
-
-    processing.write_debug(params, ims_train, ims_valid, y_train, model)
-
-    model.fit(
-        x=train_generator,
-        steps_per_epoch=len(train_generator),
-        validation_data=valid_generator,
-        validation_steps=len(valid_generator),
-        verbose=params["verbose"],
-        epochs=params["epochs"],
-        # workers=6,
-        callbacks=[csvlog, model_checkpoint, tboard],
-    )
-
-    processing.write_debug(
-        params, ims_train, ims_valid, y_train, model, trainData=False
-    )
-
-    print("Renaming weights file with best epoch description")
-    processing.rename_weights(params["com_train_dir"], kkey, mon)
-
-    print("Saving full model at end of training")
-    sdir = os.path.join(params["com_train_dir"], "fullmodel_weights")
-    if not os.path.exists(sdir):
-        os.makedirs(sdir)
-    model.save(os.path.join(sdir, "fullmodel_end.hdf5"))
-
-
-def setup_com_train(params: Dict) -> Dict:
-    # Make the train directory if it does not exist.
-    make_folder("com_train_dir", params)
-
-    params["loss"] = getattr(losses, params["loss"])
-    params["net"] = getattr(nets, params["net"])
-
-    os.environ["CUDA_VISIBLE_DEVICES"] = params["gpu_id"]
-
-    # MULTI_MODE is where the full set of markers is trained on, rather than
-    # the COM only. In some cases, this can help improve COMfinder performance.
-    params["multi_mode"] = params["n_channels_out"] > 1 & params["n_instances"] == 1
-    params["n_channels_out"] = params["n_channels_out"] + int(params["multi_mode"])
-    return params
-
-
 def dannce_train(params: Dict):
     """Train dannce network.
 
@@ -678,19 +134,11 @@ def dannce_train(params: Dict):
 
     # nets.get_losses(params)
     params["loss"] = getattr(custom_losses, params["loss"])
-    # params["net"] = getattr(nets, params["net"])
-    # Convert all metric strings to objects
-    # metrics = nets.get_metrics(params)
 
     # set GPU ID
     # Temporarily commented out to test on dsplus gpu
     # if not params["multi_gpu_train"]:
     # os.environ["CUDA_VISIBLE_DEVICES"] = params["gpu_id"]
-
-    # find the weights given config path
-    # if params["dannce_finetune_weights"] is not None:
-    #     params["dannce_finetune_weights"] = processing.get_ft_wt(params)
-    #     print("Fine-tuning from {}".format(params["dannce_finetune_weights"]))
 
     samples = []
     datadict = {}
@@ -1076,19 +524,27 @@ def dannce_train(params: Dict):
     
     # Build net
     print("Initializing Network...")
-    model = DANNCE(
-        input_channels=(params["chan_num"] + params["depth"])*len(camnames[0]),
-        output_channels=params["n_channels_out"],
-        norm_method=params["norm_method"],
-        return_coords=params["expval"],
-        input_shape=params["nvox"]
-    )
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
-    model = model.to(device)
 
-    # optimization
-    model_params = [p for p in model.parameters() if p.requires_grad]
-    optimizer = torch.optim.Adam(model_params, lr=params["lr"])
+    # TODO: initialize optimizer in a getattr way
+    # TODO: lr scheduler
+    if params["train_mode"] == "new":
+        model = initialize_model(params, device)
+        model_params = [p for p in model.parameters() if p.requires_grad]
+        optimizer = torch.optim.Adam(model_params, lr=params["lr"])
+
+    elif params["train_mode"] == "finetune" or params["train_mode"] == "continued":
+        checkpoints = torch.load(params["dannce_finetune_weights"])
+        model = initialize_model(checkpoints["params"], device)
+        model.load_state_dict(checkpoints["model"])
+
+        model_params = [p for p in model.parameters() if p.requires_grad]
+        
+        if params["train_mode"] == "continued":
+            optimizer = torch.optim.Adam()
+            optimizer.load_state_dict(checkpoints["optimizer"])
+        else:
+            optimizer = torch.optim.Adam(model_params, lr=params["lr"])
 
     # metrics
     metrics = {}
@@ -1101,100 +557,13 @@ def dannce_train(params: Dict):
         os.makedirs(logdir)
     writer = SummaryWriter(log_dir=logdir)
 
-    # Currently, we expect four modes of use:
-    # 1) Training a new network from scratch
-    # 2) Fine-tuning a network trained on a diff. dataset (transfer learning)
-    # 3) Continuing to train 1) or 2) from a full model checkpoint (including optimizer state)
-
-    # if params["multi_gpu_train"]:
-    # strategy = tf.distribute.MirroredStrategy()
-    # print("Number of devices: {}".format(strategy.num_replicas_in_sync))
-    # scoping = strategy.scope()
-
-    # print("NUM CAMERAS: {}".format(len(camnames[0])))
-    # with scoping:
-    #     if params["train_mode"] == "new":
-    #         model = params["net"](
-    #             lossfunc=params["loss"],
-    #             lr=float(params["lr"]),
-    #             input_dim=params["chan_num"] + params["depth"],
-    #             feature_num=params["n_channels_out"],
-    #             num_cams=len(camnames[0]) + int(params["use_silhouette_in_volume"]),
-    #             norm_method=params["norm_method"],
-    #             include_top=True,
-    #             gridsize=gridsize,
-    #         )
-    #     elif params["train_mode"] == "finetune":
-    #         fargs = [
-    #             params["loss"],
-    #             float(params["lr"]),
-    #             params["chan_num"] + params["depth"],
-    #             params["n_channels_out"],
-    #             len(camnames[0]) + int(params["use_silhouette_in_volume"]),
-    #             params["new_last_kernel_size"],
-    #             params["new_n_channels_out"],
-    #             params["dannce_finetune_weights"],
-    #             params["n_layers_locked"],
-    #             params["norm_method"],
-    #             gridsize,
-    #         ]
-    #         try:
-    #             model = params["net"](*fargs)
-    #         except:
-    #             if params["expval"]:
-    #                 print(
-    #                     "Could not load weights for finetune (likely because you are finetuning a previously finetuned network). Attempting to finetune from a full finetune model file."
-    #                 )
-    #                 model = nets.finetune_fullmodel_AVG(*fargs)
-    #             else:
-    #                 raise Exception(
-    #                     "Finetuning from a previously finetuned model is currently possible only for AVG models"
-    #                 )
-    #     elif params["train_mode"] == "continued":
-    #         model = load_model(
-    #             params["dannce_finetune_weights"],
-    #             custom_objects={
-    #                 "ops": ops,
-    #                 "slice_input": nets.slice_input,
-    #                 "mask_nan_keep_loss": losses.mask_nan_keep_loss,
-    #                 "mask_nan_l1_loss": losses.mask_nan_l1_loss,
-    #                 "euclidean_distance_3D": losses.euclidean_distance_3D,
-    #                 "centered_euclidean_distance_3D": losses.centered_euclidean_distance_3D,
-    #                 "temporal_loss": losses.temporal_loss,
-    #                 "silhouette_loss": losses.silhouette_loss,
-    #             },
-    #         )
-    #     elif params["train_mode"] == "continued_weights_only":
-    #         # This does not work with models created in 'finetune' mode, but will work with models
-    #         # started from scratch ('new' train_mode)
-    #         model = params["net"](
-    #             params["loss"],
-    #             float(params["lr"]),
-    #             params["chan_num"] + params["depth"],
-    #             params["n_channels_out"],
-    #             3 if cam3_train else len(camnames[0]) + int(params["use_silhouette_in_volume"]),
-    #             norm_method=params["norm_method"],
-    #             include_top=True,
-    #             gridsize=gridsize,
-    #         )
-    #         model.load_weights(params["dannce_finetune_weights"])
-    #     else:
-    #         raise Exception("Invalid training mode")
-
-    #     model = nets.update_model_multi_losses(params, metrics, model)
-
-        # if params["lr"] != model.optimizer.learning_rate:
-        #     print("Changing learning rate to {}".format(params["lr"]))
-        #     K.set_value(model.optimizer.learning_rate, params["lr"])
-        #     print(
-        #         "Confirming new learning rate: {}".format(model.optimizer.learning_rate)
-        #     )
-
     print("COMPLETE\n")
     # set up a csv logger
     # csv_logger = open(os.path.join(params["dannce_train_dir"], "training.csv"), "wb", newline='')
     # csv_logger.write("Epoch, Train supervised loss, Train unsupervised loss, Val loss, Val metric")
     # start train
+    # TODO: add a trainer class which takes in the model, optimizer, metrics, dataloaders
+    # contain function: do one epoch, validation, save ...
     step = 0
     n_epochs = params["epochs"]
     for epoch in range(n_epochs):
@@ -1261,7 +630,7 @@ def dannce_train(params: Dict):
         if epoch % 100 == 0:
             model_stat_dict = {
                 "params": params,
-                "checkpoints": model.state_dict(),
+                "model": model.state_dict(),
                 "optimizer": optimizer.state_dict(),
             }
             torch.save(
@@ -1282,83 +651,6 @@ def dannce_train(params: Dict):
             if not os.path.exists(sdir):
                 os.makedirs(sdir)
             torch.save(model_stat_dict, os.path.join(sdir, "fullmodel_end.pth"))
-
-        # model = nets.remove_heatmap_output(model, params)
-            # model.save(os.path.join(sdir, "fullmodel_end.hdf5"))
-    # mon = "val_loss" if params["num_validation_per_exp"] > 0 else "loss"
-
-    # model_checkpoint = ModelCheckpoint(
-    #     os.path.join(dannce_train_dir, kkey),
-    #     monitor=mon,
-    #     save_best_only=True,
-    #     save_weights_only=False,
-    # )
-
-    # csvlog = CSVLogger(os.path.join(dannce_train_dir, "training.csv"))
-    # tboard = TensorBoard(
-    #     log_dir=os.path.join(dannce_train_dir, "logs"),
-    #     write_graph=False,
-    #     update_freq=100,
-    # )
-
-    # callbacks = [
-    #     csvlog,
-    #     model_checkpoint,
-    #     tboard,
-    #     cb.saveCheckPoint(params["dannce_train_dir"], params["epochs"]),
-    # ]
-
-    # if params["lr_scheduler"] is not None:
-    #     if params["lr_scheduler"] in ["step_lr", "warmup_lr"]:
-    #         lr_scheduler = getattr(nets, params["lr_scheduler"])
-    #         callbacks.append(lr_scheduler())
-    #     elif params["lr_scheduler"] == "reduce_on_plateau":
-    #         reduce_lr = keras.callbacks.ReduceLROnPlateau(
-    #             monitor='val_final_output_euclidean_distance_3D', 
-    #             factor=0.5, patience=30, min_lr=0.00001, verbose=1)
-    #         callbacks.append(reduce_lr)
-    # if (
-    #     params["expval"]
-    #     and not params["use_npy"]
-    #     and not params["heatmap_reg"]
-    #     and params["save_pred_targets"]
-    # ):
-    #     save_callback = cb.savePredTargets(
-    #         params["epochs"],
-    #         X_train,
-    #         X_train_grid,
-    #         X_valid,
-    #         X_valid_grid,
-    #         partition["train_sampleIDs"],
-    #         partition["valid_sampleIDs"],
-    #         params["dannce_train_dir"],
-    #         y_train,
-    #         y_valid,
-    #     )
-    #     callbacks = callbacks + [save_callback]
-    # elif not params["expval"] and not params["use_npy"] and not params["heatmap_reg"]:
-    #     max_save_callback = cb.saveMaxPreds(
-    #         partition["train_sampleIDs"],
-    #         X_train,
-    #         datadict_3d,
-    #         params["dannce_train_dir"],
-    #         com3d_dict,
-    #         params,
-    #     )
-    #     callbacks = callbacks + [max_save_callback]
-
-    # model.fit(
-    #     x=train_generator,
-    #     steps_per_epoch=len(train_generator),
-    #     validation_data=valid_generator,
-    #     validation_steps=len(valid_generator),
-    #     verbose=params["verbose"],
-    #     epochs=params["epochs"],
-    #     callbacks=callbacks,
-    # )
-
-
-
 
 def dannce_predict(params: Dict):
     """Predict with dannce network
@@ -1594,10 +886,10 @@ def setup_dannce_predict(params):
     # Make the prediction directory if it does not exist.
 
     # Load the appropriate loss function and network 
-    try:
-        params["loss"] = getattr(losses, params["loss"])
-    except AttributeError:
-        params["loss"] = getattr(keras_losses, params["loss"])
+    # try:
+    #     params["loss"] = getattr(losses, params["loss"])
+    # except AttributeError:
+    #     params["loss"] = getattr(keras_losses, params["loss"])
     
     params["net_name"] = params["net"]
     params["net"] = getattr(nets, params["net_name"])
@@ -1652,97 +944,6 @@ def write_com_file(params, samples_, com3d_dict_):
     for i in range(len(samples_)):
         c3d[i] = com3d_dict_[samples_[i]]
     sio.savemat(cfilename, {"sampleID": samples_, "com": c3d})
-
-
-def build_model(params: Dict, camnames: List) -> Model:
-    """Build model for dannce prediction.
-
-    Args:
-        params (Dict): Parameters dictionary.
-        camnames (List): Camera names.
-
-    Returns:
-        (Model): Dannce model
-    """
-    # Build net
-    print("Initializing Network...")
-
-    # This requires that the network be saved as a full model, not just weights.
-    # As a precaution, we import all possible custom objects that could be used
-    # by a model and thus need declarations
-
-    if params["dannce_predict_model"] is not None:
-        mdl_file = params["dannce_predict_model"]
-    else:
-        wdir = params["dannce_train_dir"]
-        weights = os.listdir(wdir)
-        weights = [f for f in weights if ".hdf5" in f and "checkpoint" not in f]
-        weights = sorted(weights, key=lambda x: int(x.split(".")[1].split("-")[0]))
-        weights = weights[-1]
-
-        mdl_file = os.path.join(wdir, weights)
-        # if not using dannce_predict model (thus taking the final weights in train_results),
-        # set this file to dannce_predict_model so that it will still get saved with metadata
-        params["dannce_predict_model"] = mdl_file
-
-    print("Loading model from " + mdl_file)
-
-    if (
-        params["net_name"] == "unet3d_big_tiedfirstlayer_expectedvalue"
-        or params["from_weights"] is not None
-    ):
-        gridsize = tuple([params["nvox"]] * 3)
-        params["dannce_finetune_weights"] = processing.get_ft_wt(params)
-
-        if params["train_mode"] == "finetune":
-            print(
-                "Initializing a finetune network from {}, into which weights from {} will be loaded.".format(
-                    params["dannce_finetune_weights"], mdl_file
-                )
-            )
-            model = params["net"](
-                params["loss"],
-                float(params["lr"]),
-                params["chan_num"] + params["depth"],
-                params["n_channels_out"],
-                len(camnames[0]),
-                params["new_last_kernel_size"],
-                params["new_n_channels_out"],
-                params["dannce_finetune_weights"],
-                params["n_layers_locked"],
-                norm_method=params["norm_method"],
-                gridsize=gridsize,
-            )
-        else:
-            # This network is too "custom" to be loaded in as a full model, until I
-            # figure out how to unroll the first tied weights layer
-            model = params["net"](
-                params["loss"],
-                float(params["lr"]),
-                params["chan_num"] + params["depth"],
-                params["n_channels_out"],
-                len(camnames[0]),
-                norm_method=params["norm_method"],
-                include_top=True,
-                gridsize=gridsize,
-            )
-        model.load_weights(mdl_file)
-    else:
-        model = load_model(mdl_file, compile=False)
-
-    model = nets.keep_model_single_output(model)
-
-    # To speed up expval prediction, rather than doing two forward passes: one for the 3d coordinate
-    # and one for the probability map, here we splice on a new output layer after
-    # the softmax on the last convolutional layer
-    if params["expval"]:
-        o2 = GlobalMaxPooling3D()(model.layers[-3].output)
-        model = Model(
-            inputs=[model.layers[0].input, model.layers[-2].input],
-            outputs=[model.layers[-1].output, o2],
-        )
-
-    return model
 
 
 def do_COM_load(exp: Dict, expdict: Dict, e, params: Dict, training=True):

@@ -64,14 +64,16 @@ def temporal_loss(kpts_pred):
     loss_temp = torch.abs(diff).mean()
     return loss_temp
 
-def body_symmetry_loss(kpts_pred):
-    """
-    Unsupervised body symmetry loss.
-    kpts_pred: tensor [batch_size, n_joints, 3]
-    """
-    loss_symmetry = torch.zeros(())
-    for limbL, limbR in SYMMETRY["mouse22"]:
-        len_L = ((kpts_pred[:, limbL[0]] - kpts_pred[:, limbL[1]]) ** 2).mean().sqrt()
-        len_R = ((kpts_pred[:, limbR[0]] - kpts_pred[:, limbR[1]]) ** 2).mean().sqrt()
-        loss_symmetry += torch.abs(len_L - len_R)
-    return loss_symmetry
+def body_symmetry_loss(animal):
+    limbL = torch.as_tensor([limbs[0] for limbs in SYMMETRY[animal]])
+    limbR = torch.as_tensor([limbs[1] for limbs in SYMMETRY[animal]])
+    def _body_symmetry_loss(kpts_pred):
+        """
+        Unsupervised body symmetry loss.
+        kpts_pred: tensor [batch_size, n_joints, 3]
+        """
+        len_L = torch.diff(kpts_pred[:, limbL, :] ** 2, dim=2).mean(-1).mean(-1).sqrt()
+        len_R = torch.diff(kpts_pred[:, limbR, :] ** 2, dim=2).mean(-1).mean(-1).sqrt()
+        loss = (len_L - len_R).abs().mean()
+        return loss
+    return _body_symmetry_loss

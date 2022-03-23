@@ -1,19 +1,12 @@
 """Generator module for dannce training.
 """
-from contextlib import suppress
 import os
 import numpy as np
-# from tensorflow import keras
 from dannce.engine import processing as processing
 from dannce.engine import ops as ops
 from dannce.engine.video import LoadVideoFrame
-# import imageio
 import warnings
 import time
-import scipy.ndimage.interpolation
-# import tensorflow as tf
-
-# from tensorflow_graphics.geometry.transformation.axis_angle import rotate
 from multiprocessing.dummy import Pool as ThreadPool
 from typing import List, Dict, Tuple, Text
 
@@ -27,8 +20,13 @@ MISSING_KEYPOINTS_MSG = (
     + "set right_keypoints: [0, 2] and left_keypoints: [1, 3] in the config file"
 )
 
-TF_GPU_MEMORY_FRACTION = 0.9
+"""
+Notes: 
+DataGenerator_3Dconv: returns BATCHED volumes without augmentation.
+    Without use of data loaders and custom collate function during inference.
 
+DataGenerator_3Dconv_frommem and its children: return chunked (minimum 1), augmented volumes.
+"""
 
 class DataGenerator(torch.utils.data.Dataset):
     """Generate data for Keras.
@@ -100,7 +98,6 @@ class DataGenerator(torch.utils.data.Dataset):
         self.mono = mono
         self.mirror = mirror
         self.predict_flag = predict_flag
-        # self.on_epoch_end()
 
         if self.vidreaders is not None:
             self.extension = (
@@ -120,15 +117,6 @@ class DataGenerator(torch.utils.data.Dataset):
             int: Batches per epoch
         """
         return int(np.floor(len(self.list_IDs) / self.batch_size))
-        #return len(self.list_IDs)
-
-    # def on_epoch_end(self):
-    #     """Update indexes after each epoch."""
-    #     self.indexes = np.arange(len(self.list_IDs))
-
-    #     if self.shuffle:
-    #         np.random.shuffle(self.indexes)
-
 
 class DataGenerator_3Dconv(DataGenerator):
     """Update generator class to handle multiple experiments.
@@ -297,12 +285,7 @@ class DataGenerator_3Dconv(DataGenerator):
         self.threadpool = ThreadPool(len(self.camnames[0]))
 
         ts = time.time()
-        # Limit GPU memory usage by Tensorflow to leave memory for PyTorch
-        # config = tf.compat.v1.ConfigProto()
-        # config.gpu_options.per_process_gpu_memory_fraction = TF_GPU_MEMORY_FRACTION
-        # config.gpu_options.allow_growth = True
-        # self.session = tf.compat.v1.Session(config=config, graph=tf.Graph())
-        # print("Executing eagerly: ", tf.executing_eagerly(), flush=True)
+
         for i, ID in enumerate(list_IDs):
             experimentID = int(ID.split("_")[0])
             for camname in self.camnames[experimentID]:
@@ -328,13 +311,8 @@ class DataGenerator_3Dconv(DataGenerator):
                 (np.ndarray): Input volume y
                 (np.ndarray): Target
         """
-        # Generate indexes of the batch
-        # indexes = self.indexes[index * self.batch_size : (index + 1) * self.batch_size]
-
         # Find list of IDs
-        # list_IDs_temp = [self.list_IDs[k] for k in indexes]
         list_IDs_temp = self.list_IDs[index*self.batch_size : (index+1)*self.batch_size]
-        # list_ID = self.list_IDs[index]
         # Generate data
         X, y = self.__data_generation(list_IDs_temp)
 
@@ -394,11 +372,11 @@ class DataGenerator_3Dconv(DataGenerator):
             com_precrop = torch.zeros_like(this_y[:, 0]) * float("nan")
         else:
             # For projecting points, we should not use this offset
-            com_precrop = torch.mean(this_y, axis=1)
+            com_precrop = torch.mean(this_y, dim=1)
 
         this_y[0, :] = this_y[0, :] - self.crop_width[0]
         this_y[1, :] = this_y[1, :] - self.crop_height[0]
-        com = torch.mean(this_y, axis=1)
+        com = torch.mean(this_y, dim=1)
 
         if not self.mirror:
             raise Exception(
@@ -431,14 +409,14 @@ class DataGenerator_3Dconv(DataGenerator):
         # print('Frame loading took {} sec.'.format(time.time() - ts))
 
         ts = time.time()
-        proj_grid = ops.project_to2d_torch(
+        proj_grid = ops.project_to2d(
             X_grid, self.camera_params[experimentID][camname]["M"], self.device
         )
         # print('Project2d took {} sec.'.format(time.time() - ts))
 
         ts = time.time()
         if self.distort:
-            proj_grid = ops.distortPoints_torch(
+            proj_grid = ops.distortPoints(
                 proj_grid[:, :2],
                 self.camera_params[experimentID][camname]["K"],
                 np.squeeze(self.camera_params[experimentID][camname]["RDistort"]),
@@ -458,7 +436,7 @@ class DataGenerator_3Dconv(DataGenerator):
             proj_grid[:, 0] = proj_grid[:, 0] - self.crop_width[0]
             proj_grid[:, 1] = proj_grid[:, 1] - self.crop_height[0]
 
-        rgb = ops.sample_grid_torch(thisim, proj_grid, self.device, method=self.interp)
+        rgb = ops.sample_grid(thisim, proj_grid, self.device, method=self.interp)
         # print('Sample grid {} sec.'.format(time.time() - ts))
 
         if (
@@ -683,60 +661,6 @@ class DataGenerator_3Dconv(DataGenerator):
             else:
                 return X, y_3d
 
-def random_continuous_rotation(X, y_3d, max_delta=5):
-    """Rotates X and y_3d a random amount around z-axis.
-
-    Args:
-        X (np.ndarray): input image volume
-        y_3d (np.ndarray): 3d target (for MAX network) or voxel center grid (for AVG network)
-        max_delta (int, optional): maximum range for rotation angle.
-
-    Returns:
-        np.ndarray: rotated image volumes
-        np.ndarray: rotated grid coordimates
-    """
-    rotangle = np.random.rand() * (2 * max_delta) - max_delta
-    X = torch.as_tensor(X).reshape(*X.shape[:3], -1).permute(0, 3, 1, 2) # dimension [B, D*C, H, W]
-    y_3d = torch.as_tensor(y_3d).reshape(y_3d.shape[:3], -1).permute(0, 3, 1, 2)
-    # X = tf.reshape(X, [X.shape[0], X.shape[1], X.shape[2], -1]).numpy()
-    # y_3d = tf.reshape(y_3d, [y_3d.shape[0], y_3d.shape[1], y_3d.shape[2], -1]).numpy()
-    for i in range(X.shape[0]):
-        # X[i] = tf.keras.preprocessing.image.apply_affine_transform(
-        #     X[i],
-        #     theta=rotangle,
-        #     row_axis=0,
-        #     col_axis=1,
-        #     channel_axis=2,
-        #     fill_mode="nearest",
-        #     cval=0.0,
-        #     order=1,
-        # )
-        # y_3d[i] = tf.keras.preprocessing.image.apply_affine_transform(
-        #     y_3d[i],
-        #     theta=rotangle,
-        #     row_axis=0,
-        #     col_axis=1,
-        #     channel_axis=2,
-        #     fill_mode="nearest",
-        #     cval=0.0,
-        #     order=1,
-        # )
-        X[i] = TF.affine(X[i], angle=rotangle)
-        y_3d[i] = TF.affine(y_3d[i], angle=rotangle)
-
-    X = X.permute(0, 2, 3, 1).reshape(*X.shape[:3], X.shape[2], -1).numpy()
-    y_3d = y_3d.permute(0, 2, 3, 1).reshape(*X.shape[:3], X.shape[2], -1).numpy()
-
-    # X = tf.reshape(X, [X.shape[0], X.shape[1], X.shape[2], X.shape[2], -1]).numpy()
-    # y_3d = tf.reshape(
-    #     y_3d,
-    #     [y_3d.shape[0], y_3d.shape[1], y_3d.shape[2], y_3d.shape[2], -1],
-    # ).numpy()
-
-    return X, y_3d
-
-
-# TODO(inherit): Several methods are repeated, consider inheriting from parent
 class DataGenerator_3Dconv_frommem(torch.utils.data.Dataset):
     """Generate 3d conv data from memory.
 
@@ -771,7 +695,7 @@ class DataGenerator_3Dconv_frommem(torch.utils.data.Dataset):
         list_IDs,
         data,
         labels,
-        batch_size,
+        # batch_size,
         rotation=True,
         random=True,
         chan_num=3,
@@ -795,8 +719,8 @@ class DataGenerator_3Dconv_frommem(torch.utils.data.Dataset):
         heatmap_reg_coeff=0.01,
         aux_labels=None,
         temporal_chunk_list=None,
-        separation_loss=False,
-        symmetry_loss=False
+        # separation_loss=False,
+        # symmetry_loss=False
     ):
         """Initialize data generator.
         """
@@ -804,7 +728,7 @@ class DataGenerator_3Dconv_frommem(torch.utils.data.Dataset):
         self.data = data
         self.labels = labels
         self.rotation = rotation
-        self.batch_size = batch_size
+        # self.batch_size = batch_size
         self.random = random
         self.chan_num = chan_num
         self.shuffle = shuffle
@@ -832,11 +756,8 @@ class DataGenerator_3Dconv_frommem(torch.utils.data.Dataset):
         self.aux_labels = aux_labels
         self.temporal_chunk_list = temporal_chunk_list
         self.temporal_chunk_size = 1
-        # self.temporal_batch_size = batch_size
-        # self.separation_loss=separation_loss
-        # self.symmetry_loss = symmetry_loss
+
         self._update_temporal_batch_size()
-        # self.on_epoch_end()
 
     def __len__(self):
         """Denote the number of batches per epoch.
@@ -869,22 +790,8 @@ class DataGenerator_3Dconv_frommem(torch.utils.data.Dataset):
             list_IDs_temp = self.temporal_chunk_list[index]
         else:
             list_IDs_temp = [self.list_IDs[index]]
-        # else: 
-        #     indexes = self.indexes[index * self.batch_size : (index + 1) * self.batch_size]
-        #     list_IDs_temp = [self.list_IDs[k] for k in indexes]
-        # Generate data
         X, X_grid, y_3d, aux = self.__data_generation(list_IDs_temp)
         return X, X_grid, y_3d, aux
-
-    # def on_epoch_end(self):
-    #     """Update indexes after each epoch."""
-    #     if self.temporal_chunk_list is not None:
-    #         self.indexes = np.arange(len(self.temporal_chunk_list))
-    #     else:    
-    #         self.indexes = np.arange(len(self.list_IDs))
-            
-    #     if self.shuffle:
-    #         np.random.shuffle(self.indexes)
 
     def rot90(self, X):
         """Rotate X by 90 degrees CCW.
@@ -961,6 +868,31 @@ class DataGenerator_3Dconv_frommem(torch.utils.data.Dataset):
         if aux is not None:
             return X, y_3d, aux
         return X, y_3d
+    
+    def random_continuous_rotation(self, X, y_3d, max_delta=5):
+        """Rotates X and y_3d a random amount around z-axis.
+
+        Args:
+            X (np.ndarray): input image volume
+            y_3d (np.ndarray): 3d target (for MAX network) or voxel center grid (for AVG network)
+            max_delta (int, optional): maximum range for rotation angle.
+
+        Returns:
+            np.ndarray: rotated image volumes
+            np.ndarray: rotated grid coordimates
+        """
+        rotangle = np.random.rand() * (2 * max_delta) - max_delta
+        X = torch.as_tensor(X).reshape(*X.shape[:3], -1).permute(0, 3, 1, 2) # dimension [B, D*C, H, W]
+        y_3d = torch.as_tensor(y_3d).reshape(y_3d.shape[:3], -1).permute(0, 3, 1, 2)
+        for i in range(X.shape[0]):
+            X[i] = TF.affine(X[i], angle=rotangle)
+            y_3d[i] = TF.affine(y_3d[i], angle=rotangle)
+
+        X = X.permute(0, 2, 3, 1).reshape(*X.shape[:3], X.shape[2], -1).numpy()
+        y_3d = y_3d.permute(0, 2, 3, 1).reshape(*X.shape[:3], X.shape[2], -1).numpy()
+
+
+        return X, y_3d
 
     def visualize(self, original, augmented):
         """Plots example image after augmentation
@@ -1019,13 +951,13 @@ class DataGenerator_3Dconv_frommem(torch.utils.data.Dataset):
                     X_grid,
                     (self.temporal_chunk_size, self.nvox, self.nvox, self.nvox, 3),
                 )
-                X, X_grid = random_continuous_rotation(
+                X, X_grid = self.random_continuous_rotation(
                     X.copy(), X_grid.copy(), self.rotation_val
                 )
                 # Need to reshape back to raveled version
                 X_grid = np.reshape(X_grid, (self.temporal_chunk_size, -1, 3))
             else:
-                X, y_3d = random_continuous_rotation(
+                X, y_3d = self.random_continuous_rotation(
                     X.copy(), y_3d.copy(), self.rotation_val
                 )
 
@@ -1118,51 +1050,21 @@ class DataGenerator_3Dconv_frommem(torch.utils.data.Dataset):
         inds = np.unravel_index(inds, (grid_d, grid_d, grid_d))
         return np.stack(inds, axis=1)
 
-    # def return_multi_inputs_targets(self, X, X_grid, y_3d, aux):
-    #     # # adjust inputs & outputs according to targeted losses
-    #     return_input, return_target = [X], {'final_output': y_3d}
-    #     if not self.expval:
-    #         return return_input, return_target
-
-    #     return_input.append(X_grid)
-    #     final_output_count = 1
-    #     if self.heatmap_reg:
-    #         return_input.append(self.get_max_gt_ind(X_grid, y_3d))
-    #         return_target['heatmap_output'] = self.heatmap_reg_coeff*np.ones((self.batch_size, y_3d.shape[-1]), dtype='float32')
-        
-    #     if self.temporal_chunk_list is not None:
-    #         return_target[f'final_output_{final_output_count}'] = y_3d
-    #         final_output_count += 1
-        
-    #     if self.separation_loss:
-    #         return_target[f'final_output_{final_output_count}'] = y_3d
-    #         final_output_count += 1
-        
-    #     if self.symmetry_loss:
-    #         return_target[f'final_output_{final_output_count}'] = y_3d
-    #         final_output_count += 1
-        
-    #     if aux is not None:
-    #         return_target['normed_map'] = aux 
-        
-    #     return return_input, return_target
-
     def __data_generation(self, list_IDs_temp):
-        """Generate data containing batch_size samples.
-        X : (n_samples, *dim, n_channels)
+        """
+        X : (chunk_size, *dim, n_channels)
 
         Args:
             list_IDs_temp (List): List of experiment Ids
 
         Returns:
-            Tuple: Batch_size training samples
+            Tuple: Chunked training samples
                 X: Input volumes
                 y_3d: Targets
         Raises:
             Exception: For replace=False for n_rand_views, random must be turned on.
         """
         # Initialization
-
         X = np.zeros((self.temporal_chunk_size, *self.data.shape[1:]))
         y_3d = np.zeros((self.temporal_chunk_size, *self.labels.shape[1:]))
 
@@ -1197,9 +1099,6 @@ class DataGenerator_3Dconv_frommem(torch.utils.data.Dataset):
             aux = torch.from_numpy(aux)
 
         return torch.from_numpy(X).permute(0, 4, 1, 2, 3), X_grid, torch.from_numpy(y_3d), aux 
-        # # adjust inputs & outputs according to targeted losses        
-        # return self.return_multi_inputs_targets(X, X_grid, y_3d, aux)
-
 
 class DataGenerator_3Dconv_npy(DataGenerator_3Dconv_frommem):
     """Generates 3d conv data from npy files.
@@ -1238,7 +1137,7 @@ class DataGenerator_3Dconv_npy(DataGenerator_3Dconv_frommem):
         list_IDs,
         labels_3d,
         npydir,
-        batch_size,
+        # batch_size,
         imdir="image_volumes",
         griddir="grid_volumes",
         prefeat=False,        
@@ -1265,7 +1164,7 @@ class DataGenerator_3Dconv_npy(DataGenerator_3Dconv_frommem):
             list_IDs=list_IDs,
             data=None,
             labels=None,
-            batch_size=batch_size,
+            # batch_size=batch_size,
             **kwargs
         )
         # self.list_IDs = list_IDs
@@ -1415,8 +1314,21 @@ class DataGenerator_3Dconv_npy(DataGenerator_3Dconv_frommem):
                 y_3d = np.tile(y_3d, [ncam, 1, 1, 1, 1])
 
         # TODO: confirm that this line is redundant
-        # X = processing.preprocess_3d(X) 
+        X = processing.preprocess_3d(X) 
 
-        # # adjust inputs & outputs according to targeted losses
-        # return self.return_multi_inputs_targets(X, X_grid, y_3d, aux)
         return X, X_grid, y_3d, aux
+
+class DataGenerator_Social(DataGenerator_3Dconv_frommem):
+    def __init__(
+        self, 
+
+        **kwargs):
+        super().__init__(**kwargs)
+
+    def __getitem__(self, index):
+
+        """
+        Return:
+        
+        """
+        return 

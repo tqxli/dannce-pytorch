@@ -85,10 +85,9 @@ class DANNCE(nn.Module):
         volumes = self.output_layer(volumes)
 
         heatmaps = spatial_softmax_torch(volumes)
-        # if self.return_coords:
         coords = expected_value_3d_torch(heatmaps, grid_centers)
 
-        return coords, torch.amax(heatmaps, dim=(2, 3, 4)).squeeze(0)
+        return coords, torch.amax(heatmaps, dim=(2, 3, 4)).squeeze(0) # torch amax returns max values, not position
 
     def _initialize_weights(self):
         for m in self.modules():
@@ -100,3 +99,17 @@ class DANNCE(nn.Module):
                 nn.init.xavier_normal_(m.weight)
                 # nn.init.normal_(m.weight, 0, 0.001)
                 nn.init.constant_(m.bias, 0)
+
+def initialize_model(params, device):
+    """
+    Initialize DANNCE model with params and move to GPU.
+    """
+    model = DANNCE(
+        input_channels=(params["chan_num"] + params["depth"])*len(camnames[0]),
+        output_channels=params["n_channels_out"],
+        norm_method=params["norm_method"],
+        # return_coords=params["expval"],
+        input_shape=params["nvox"]
+    )
+    model = model.to(device)
+    return model
