@@ -26,13 +26,9 @@ import dannce.engine.inference as inference
 from typing import List, Dict, Text
 import os, psutil, csv
 
-from torch.utils.tensorboard import SummaryWriter
 import torch
-from dannce.engine.models_pytorch.nets import DANNCE, initialize_model
-import dannce.engine.models_pytorch.metrics as custom_metrics
-import dannce.engine.models_pytorch.loss as custom_losses
+from dannce.engine.models.nets import DANNCE, initialize_model
 from tqdm.auto import tqdm
-
 from dannce.engine.trainer.dannce_trainer import DannceTrainer
 
 process = psutil.Process(os.getpid())

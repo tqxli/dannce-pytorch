@@ -1,5 +1,5 @@
-import dannce.engine.models_pytorch.loss as custom_losses
-import dannce.engine.models_pytorch.metrics as custom_metrics
+import dannce.engine.models.loss as custom_losses
+import dannce.engine.models.metrics as custom_metrics
 import pandas as pd
 
 def prepare_batch(batch, device):
@@ -12,19 +12,22 @@ def prepare_batch(batch, device):
 
 class LossHelper:
     def __init__(self, params):
-        self.loss_params = params["loss"]
+        self.loss_params = params
         self._get_losses()
 
     def _get_losses(self):
         self.loss_fcns = {}
-        for name, loss_weight in self.loss_params.items():
+        for name, loss_weight in self.loss_params["loss"].items():
             self.loss_fcns[name] = [getattr(custom_losses, name), loss_weight]
         
     def compute_loss(self, kpts_gt, kpts_pred):
         loss_dict = {}
         total_loss = 0
         for k, (lossfcn, loss_weight) in self.loss_fcns.items():
-            loss_val = lossfcn(kpts_gt.clone(), kpts_pred.clone())
+            if k == "temporal_loss":
+                loss_val = lossfcn(kpts_gt.clone(), kpts_pred.clone().reshape(-1, self.loss_params["temporal_chunk_size"], *kpts_pred.shape[1:]))
+            else:
+                loss_val = lossfcn(kpts_gt.clone(), kpts_pred.clone())
             total_loss += loss_weight * loss_val
             loss_dict[k] = loss_val.detach().clone().cpu().item()
 
@@ -32,7 +35,7 @@ class LossHelper:
 
     @property
     def names(self):
-        return list(self.loss_params.keys())
+        return list(self.loss_fcns.keys())
 
 class MetricHelper:
     def __init__(self, params):

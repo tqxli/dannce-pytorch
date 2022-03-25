@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torchvision
 
 from .blocks import *
 from dannce.engine.data.ops import spatial_softmax_torch, expected_value_3d_torch

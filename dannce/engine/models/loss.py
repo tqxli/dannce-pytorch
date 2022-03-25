@@ -5,7 +5,7 @@ https://github.com/tensorflow/models/tree/archive/research/keypointnet
 
 import torch 
 import torch.nn.functional as F
-from dannce.engine.models_pytorch.body_limb import SYMMETRY
+from dannce.engine.models.body_limb import SYMMETRY
 
 def mask_nan(kpts_gt, kpts_pred):
     nan_gt = torch.isnan(kpts_gt)

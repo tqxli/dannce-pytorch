@@ -1,4 +1,3 @@
-from dannce.engine.models_pytorch import loss
 from dannce.engine.trainer.base_trainer import BaseTrainer
 from dannce.engine.trainer.train_utils import prepare_batch, LossHelper, MetricHelper, MetricTracker
 import torch
