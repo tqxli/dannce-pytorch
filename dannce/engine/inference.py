@@ -7,12 +7,12 @@ import time
 # import tensorflow as tf
 # import tensorflow.keras as keras
 # from tensorflow.keras.models import Model
-import dannce.engine.processing as processing
-from dannce.engine import ops
+import dannce.engine.data.processing as processing
+from dannce.engine.data import ops
 from typing import List, Dict, Text, Tuple, Union
 import torch
 import matplotlib
-from dannce.engine.processing import savedata_tomat, savedata_expval
+from dannce.engine.data.processing import savedata_tomat, savedata_expval
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -40,28 +40,28 @@ def print_checkpoint(
     return end_time
 
 
-def predict_batch(
-    model: Model, generator: keras.utils.Sequence, n_frame: int, params: Dict
-) -> np.ndarray:
-    """Predict for a single batch and reformat output.
+# def predict_batch(
+#     model: Model, generator: keras.utils.Sequence, n_frame: int, params: Dict
+# ) -> np.ndarray:
+#     """Predict for a single batch and reformat output.
 
-    Args:
-        model (Model): interence model
-        generator (keras.utils.Sequence): Data generator
-        n_frame (int): Frame number
-        params (Dict): Parameters dictionary.
+#     Args:
+#         model (Model): interence model
+#         generator (keras.utils.Sequence): Data generator
+#         n_frame (int): Frame number
+#         params (Dict): Parameters dictionary.
 
-    No Longer Returned:
-        np.ndarray: n_batch x n_cam x h x w x c predictions
-    """
-    pred = model.predict(generator.__getitem__(n_frame)[0])
-    if params["mirror"]:
-        n_cams = 1
-    else:
-        n_cams = len(params["camnames"])
-    shape = [-1, n_cams, pred.shape[1], pred.shape[2], pred.shape[3]]
-    pred = np.reshape(pred, shape)
-    return pred
+#     No Longer Returned:
+#         np.ndarray: n_batch x n_cam x h x w x c predictions
+#     """
+#     pred = model.predict(generator.__getitem__(n_frame)[0])
+#     if params["mirror"]:
+#         n_cams = 1
+#     else:
+#         n_cams = len(params["camnames"])
+#     shape = [-1, n_cams, pred.shape[1], pred.shape[2], pred.shape[3]]
+#     pred = np.reshape(pred, shape)
+#     return pred
 
 
 # def debug_com(
@@ -548,9 +548,9 @@ def predict_batch(
 
 
 def infer_dannce(
-    generator: keras.utils.Sequence,
+    generator,
     params: Dict,
-    model: Model,
+    model,
     partition: Dict,
     device: Text,
     n_chn: int,

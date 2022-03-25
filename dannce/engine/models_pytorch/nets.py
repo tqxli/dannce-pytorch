@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import torchvision
 
 from .blocks import *
-from dannce.engine.ops import spatial_softmax_torch, expected_value_3d_torch
+from dannce.engine.data.ops import spatial_softmax_torch, expected_value_3d_torch
 
 class EncoderDecorder_DANNCE(nn.Module):
     """
@@ -58,7 +58,7 @@ class EncoderDecorder_DANNCE(nn.Module):
         return x
 
 class DANNCE(nn.Module):
-    def __init__(self, input_channels, output_channels, input_shape, return_coords=True, norm_method='layer', residual=False):
+    def __init__(self, input_channels, output_channels, input_shape, return_coords=True, norm_method='layer', residual=True):
         super().__init__()
         # torch Layer Norm requires explicit input shape for initialization
         # self.normalization = NORMALIZATION_MODES[norm_method]
@@ -100,12 +100,12 @@ class DANNCE(nn.Module):
                 # nn.init.normal_(m.weight, 0, 0.001)
                 nn.init.constant_(m.bias, 0)
 
-def initialize_model(params, device):
+def initialize_model(params, n_cams, device):
     """
     Initialize DANNCE model with params and move to GPU.
     """
     model = DANNCE(
-        input_channels=(params["chan_num"] + params["depth"])*len(camnames[0]),
+        input_channels=(params["chan_num"] + params["depth"]) * n_cams,
         output_channels=params["n_channels_out"],
         norm_method=params["norm_method"],
         # return_coords=params["expval"],

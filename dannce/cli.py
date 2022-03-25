@@ -6,7 +6,7 @@ from dannce.interface import (
     dannce_train,
     build_params,
 )
-from dannce.engine.processing import check_config, infer_params
+from dannce.config import check_config, infer_params
 from dannce import (
     _param_defaults_dannce,
     _param_defaults_shared,

@@ -46,6 +46,8 @@ class Res3DBlock(nn.Module):
         res = self.res_branch(x)
         skip = self.skip_con(x)
         return F.relu(res + skip, True)
+    # def forward(self, x):
+    #     return F.relu(self.res_branch(x))
 
 
 class Pool3DBlock(nn.Module):
