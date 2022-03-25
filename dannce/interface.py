@@ -11,12 +11,12 @@ import time
 import gc
 from datetime import datetime
 
-import dannce.engine.serve_data_DANNCE as serve_data_DANNCE
-import dannce.engine.generator as generator
-import dannce.engine.generator_aux as generator_aux
-import dannce.engine.processing as processing
-from dannce.engine.processing import savedata_tomat, savedata_expval
-from dannce.engine import nets, losses, ops, io
+import dannce.engine.data.serve_data_DANNCE as serve_data_DANNCE
+import dannce.engine.data.generator as generator
+import dannce.engine.data.generator_aux as generator_aux
+import dannce.engine.data.processing as processing
+from dannce.engine.data.processing import savedata_tomat, savedata_expval
+from dannce.engine.data import ops, io
 from dannce import (
     _param_defaults_dannce,
     _param_defaults_shared,
@@ -31,6 +31,9 @@ import torch
 from dannce.engine.models_pytorch.nets import DANNCE, initialize_model
 import dannce.engine.models_pytorch.metrics as custom_metrics
 import dannce.engine.models_pytorch.loss as custom_losses
+from tqdm.auto import tqdm
+
+from dannce.engine.trainer.dannce_trainer import DannceTrainer
 
 process = psutil.Process(os.getpid())
 
@@ -133,7 +136,7 @@ def dannce_train(params: Dict):
     make_folder("dannce_train_dir", params)
 
     # nets.get_losses(params)
-    params["loss"] = getattr(custom_losses, params["loss"])
+    # params["loss"] = getattr(custom_losses, params["loss"])
 
     # set GPU ID
     # Temporarily commented out to test on dsplus gpu
@@ -354,7 +357,7 @@ def dannce_train(params: Dict):
                 os.makedirs(tifdir)
             print("Dump training volumes to {}".format(tifdir))
             for i in range(X_train.shape[0]):
-                for j in range(len(camnames[0])):
+                for j in range(n_cams):
                     im = X_train[
                         i,
                         :,
@@ -426,7 +429,7 @@ def dannce_train(params: Dict):
         "heatmap_reg_coeff": params["heatmap_reg_coeff"],
     }
     shared_args_train = {
-        "batch_size": params["batch_size"],
+        # "batch_size": params["batch_size"],
         "rotation": params["rotate"],
         "augment_hue": params["augment_hue"],
         "augment_brightness": params["augment_brightness"],
@@ -442,7 +445,7 @@ def dannce_train(params: Dict):
         "n_rand_views": params["n_rand_views"],
     }
     shared_args_valid = {
-        "batch_size": params["batch_size"],
+        # "batch_size": params["batch_size"],
         "rotation": False,
         "augment_hue": False,
         "augment_brightness": False,
@@ -499,8 +502,6 @@ def dannce_train(params: Dict):
                       "xgrid": X_train_grid,
                       "aux_labels": y_train_aux,
                       "temporal_chunk_list": partition["train_chunks"] if params["use_temporal"] else None,
-                      "separation_loss": params["use_separation"],
-                      "symmetry_loss": params["use_symmetry"]
                       }
 
         args_valid = {
@@ -529,13 +530,13 @@ def dannce_train(params: Dict):
     # TODO: initialize optimizer in a getattr way
     # TODO: lr scheduler
     if params["train_mode"] == "new":
-        model = initialize_model(params, device)
+        model = initialize_model(params, n_cams, device)
         model_params = [p for p in model.parameters() if p.requires_grad]
         optimizer = torch.optim.Adam(model_params, lr=params["lr"])
 
     elif params["train_mode"] == "finetune" or params["train_mode"] == "continued":
         checkpoints = torch.load(params["dannce_finetune_weights"])
-        model = initialize_model(checkpoints["params"], device)
+        model = initialize_model(checkpoints["params"], n_cams, device)
         model.load_state_dict(checkpoints["model"])
 
         model_params = [p for p in model.parameters() if p.requires_grad]
@@ -546,111 +547,21 @@ def dannce_train(params: Dict):
         else:
             optimizer = torch.optim.Adam(model_params, lr=params["lr"])
 
-    # metrics
-    metrics = {}
-    for met in params["metric"]:
-        metrics[met] = getattr(custom_metrics, met)
-    
-    # tensorboard writer
-    logdir = os.path.join(params["dannce_train_dir"], "logs")
-    if not os.path.exists(logdir):
-        os.makedirs(logdir)
-    writer = SummaryWriter(log_dir=logdir)
-
     print("COMPLETE\n")
-    # set up a csv logger
-    # csv_logger = open(os.path.join(params["dannce_train_dir"], "training.csv"), "wb", newline='')
-    # csv_logger.write("Epoch, Train supervised loss, Train unsupervised loss, Val loss, Val metric")
-    # start train
-    # TODO: add a trainer class which takes in the model, optimizer, metrics, dataloaders
-    # contain function: do one epoch, validation, save ...
-    step = 0
-    n_epochs = params["epochs"]
-    for epoch in range(n_epochs):
-        model.train()
 
-        loss_supervised_train, loss_unsupervised_train = [], []
-        for batch in train_dataloader: #tqdm(train_dataloader, desc="Epoch", position=0, leave=True):
-            volumes, grid_centers, keypoints_3d_gt, aux = prepare_batch(batch, device)
+    # set up trainer
+    trainer = DannceTrainer(
+        params=params,
+        model=model,
+        train_dataloader=train_dataloader,
+        valid_dataloader=valid_dataloader,
+        optimizer=optimizer,
+        device=device
+    )
 
-            optimizer.zero_grad()
-            keypoints_3d_pred, _ = model(volumes, grid_centers)
-            
-            # supervised loss
-            loss_supervised = custom_losses.compute_mask_nan_loss(params["loss"], keypoints_3d_gt, keypoints_3d_pred)
+    trainer.train()
 
-            # unsupervised losses
-            loss_unsupervised = 0
-            if params["use_temporal"]:
-                loss_temporal = custom_losses.temporal_loss(keypoints_3d_pred.view(-1, params["temporal_chunk_size"], *keypoints_3d_pred.shape[1:]))
-                loss_unsupervised += loss_temporal
-
-            loss = loss_supervised + loss_unsupervised
-            loss.backward()
-            optimizer.step()
-
-            loss_supervised_train.append(loss_supervised.item())
-            loss_unsupervised_train.append(loss_unsupervised)
-
-            print('Epoch[{}/{}] Supervised Loss: {} Unsupervised Loss: {}'.format(epoch+1, n_epochs, loss_supervised, loss_unsupervised), end='\r')
-            step += 1
-
-        epoch_supervised_loss, epoch_unsupervised_loss = sum(loss_supervised_train)/len(loss_supervised_train), sum(loss_unsupervised_train)/len(loss_unsupervised_train)
-        print('Epoch[{}/{}] Avg Supervised Loss: {} Avg Unsupervised Loss: {}'.format(epoch+1, n_epochs, epoch_supervised_loss, epoch_unsupervised_loss))
-        writer.add_scalar("Epoch Supervised Loss/Train", epoch_supervised_loss, epoch+1)
-        writer.add_scalar("Epoch Unsupervised Loss/Train", epoch_unsupervised_loss, epoch+1)
-
-        # eval
-        model.eval()
-        scalar_results = {}
-        for k in metrics.keys():
-            scalar_results[k] = []
-        val_losses = []
-        with torch.no_grad():
-            for batch in valid_dataloader:#tqdm(valid_dataloader, position=0, leave=True):
-                volumes, grid_centers, keypoints_3d_gt, aux = prepare_batch(batch, device)
-                keypoints_3d_pred, _ = model(volumes, grid_centers)
-                val_loss = custom_losses.compute_mask_nan_loss(params["loss"], keypoints_3d_gt, keypoints_3d_pred)
-                keypoints_3d_pred = keypoints_3d_pred.detach().cpu()
-                keypoints_3d_gt = keypoints_3d_gt.cpu()
-
-                for k, fcn in metrics.items():
-                    scalar_results[k].append(fcn(keypoints_3d_gt.numpy(), keypoints_3d_pred.numpy()))
-                val_losses.append(val_loss.item())
-
-        results = [sum(v) / len(v) for _, v in scalar_results.items()]
-        avg_val_loss = sum(val_losses) / len(val_losses)
-        for i, (k, _) in enumerate(scalar_results.items()):
-            print(f"Epoch[{epoch+1}/{n_epochs}] val_loss: {avg_val_loss} val_{k}: {results[i]}")
-            writer.add_scalar(f"Epoch {k}/val", results[i], epoch+1)
-        
-        # TODO: csv logger
-
-
-        if epoch % 100 == 0:
-            model_stat_dict = {
-                "params": params,
-                "model": model.state_dict(),
-                "optimizer": optimizer.state_dict(),
-            }
-            torch.save(
-                model_stat_dict, 
-                os.path.join(params["dannce_train_dir"], f"weights.epoch{epoch}.val_loss{avg_val_loss}.pth")
-            )
-
-        # kkey = "weights.hdf5"
-        # print("Renaming weights file with best epoch description")
-        # processing.rename_weights(dannce_train_dir, kkey, mon)
-        if epoch == n_epochs - 1:
-            model_stat_dict = {
-                "params": params,
-                "checkpoints": model.state_dict(),
-            }
-            print("Saving full model at end of training")
-            sdir = os.path.join(params["dannce_train_dir"], "fullmodel_weights")
-            if not os.path.exists(sdir):
-                os.makedirs(sdir)
-            torch.save(model_stat_dict, os.path.join(sdir, "fullmodel_end.pth"))
+    # TODO: set up a logger
 
 def dannce_predict(params: Dict):
     """Predict with dannce network
@@ -810,7 +721,7 @@ def dannce_predict(params: Dict):
     model = model.to(device) 
 
     # load predict model
-    model.load_state_dict(torch.load(params["dannce_predict_model"])['checkpoints'])
+    model.load_state_dict(torch.load(params["dannce_predict_model"])['state_dict'])
     model.eval()
 
     if params["maxbatch"] != "max" and params["maxbatch"] > len(predict_generator):
@@ -892,7 +803,7 @@ def setup_dannce_predict(params):
     #     params["loss"] = getattr(keras_losses, params["loss"])
     
     params["net_name"] = params["net"]
-    params["net"] = getattr(nets, params["net_name"])
+    # params["net"] = getattr(nets, params["net_name"])
     # Default to 6 views but a smaller number of views can be specified in the DANNCE config.
     # If the legnth of the camera files list is smaller than n_views, relevant lists will be
     # duplicated in order to match n_views, if possible.
@@ -1081,12 +992,21 @@ def prepare_batch(batch, device):
     return volumes, grids, targets, auxs
 
 def setup_dataloaders(train_dataset, valid_dataset, params):
+    # current implementation returns chunked data
+    if params["use_temporal"]:
+        valid_batch_size = params["batch_size"] // params["temporal_chunk_size"]
+    else:
+        valid_batch_size = params["batch_size"] 
+
     train_dataloader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=params["batch_size"], shuffle=True, collate_fn=collate_fn,
+        train_dataset, batch_size=valid_batch_size, shuffle=True, collate_fn=collate_fn,
         num_workers=params["batch_size"]
     )
     valid_dataloader = torch.utils.data.DataLoader(
-        valid_dataset, batch_size=params["batch_size"], shuffle=False, collate_fn=collate_fn,
+        valid_dataset, valid_batch_size, shuffle=False, collate_fn=collate_fn,
         num_workers=params["batch_size"]
     )
     return train_dataloader, valid_dataloader
+
+def social_dannce_train(params):
+    return
