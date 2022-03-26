@@ -945,7 +945,8 @@ class DataGenerator_3Dconv_frommem(torch.utils.data.Dataset):
                 #     X[..., channel_ids], self.hue_val
                 # )
                 X_temp = torch.as_tensor(X[..., channel_ids]).permute(0, 3, 4, 1, 2)
-                X_temp = TF.adjust_hue(X_temp, self.hue_val)
+                random_hue_val = float(torch.empty(1).uniform_(-self.hue_val, self.hue_val))
+                X_temp = TF.adjust_hue(X_temp, random_hue_val)
                 X[..., channel_ids] = X_temp.permute(0, 3, 4, 1, 2).numpy()
 
         elif self.augment_hue:
@@ -963,7 +964,8 @@ class DataGenerator_3Dconv_frommem(torch.utils.data.Dataset):
                 #     X[..., channel_ids], self.bright_val
                 # )
                 X_temp = torch.as_tensor(X[..., channel_ids]).permute(0, 3, 4, 1, 2)
-                X_temp = TF.adjust_brightness(X_temp, self.bright_val)
+                random_bright_val = float(torch.empty(1).uniform_(0, self.bright_val))
+                X_temp = TF.adjust_brightness(X_temp, random_bright_val)
                 X[..., channel_ids] = X_temp.permute(0, 3, 4, 1, 2).numpy()
 
         if self.mirror_augmentation and self.expval and aux is None:

@@ -28,7 +28,6 @@ import os, psutil, csv
 
 import torch
 from dannce.engine.models.nets import DANNCE, initialize_model
-from tqdm.auto import tqdm
 from dannce.engine.trainer.dannce_trainer import DannceTrainer
 
 process = psutil.Process(os.getpid())
@@ -978,14 +977,6 @@ def collate_fn(items):
         auxs = None 
 
     return volumes, grids, targets, auxs 
-
-def prepare_batch(batch, device):
-    volumes = batch[0].float().to(device)
-    grids = batch[1].float().to(device) if batch[1] is not None else None
-    targets = batch[2].float().to(device)
-    auxs = batch[3].to(device) if batch[3] is not None else None
-    
-    return volumes, grids, targets, auxs
 
 def setup_dataloaders(train_dataset, valid_dataset, params):
     # current implementation returns chunked data
