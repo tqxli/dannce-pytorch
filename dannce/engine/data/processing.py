@@ -22,7 +22,7 @@ import yaml
 import shutil
 import time
 from typing import Dict
-from tensorflow.keras.models import Model
+# from tensorflow.keras.models import Model
 
 
 def write_debug(
@@ -30,7 +30,7 @@ def write_debug(
     ims_train: np.ndarray,
     ims_valid: np.ndarray,
     y_train: np.ndarray,
-    model: Model,
+    model,
     trainData: bool = True,
 ):
     """Factoring re-used debug output code.
