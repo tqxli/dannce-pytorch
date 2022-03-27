@@ -8,10 +8,10 @@ class BaseTrainer:
     """
     Base class for all trainers
     """
-    def __init__(self, params, model, optimizer):
+    def __init__(self, params, model, optimizer, logger):
         # self.config = config
         self.params = params
-        # self.logger = logger
+        self.logger = logger
 
         self.model = model
         self.optimizer = optimizer
@@ -47,12 +47,8 @@ class BaseTrainer:
             train_loss = self._train_epoch(epoch)
             valid_loss, valid_metrics = self._valid_epoch(epoch)
 
-            # # print logged informations to the screen
-            # for key, value in .items():
-            #     self.logger.info('    {:15s}: {}'.format(str(key), value))
-
-            if epoch % self.save_period == 0:
-                self._save_checkpoint(epoch)
+            if epoch % self.save_period == 0 or epoch == self.epochs:
+                self._save_checkpoint(epoch)        
 
     def _save_checkpoint(self, epoch, save_best=False):
         """
@@ -65,11 +61,15 @@ class BaseTrainer:
             'epoch': epoch,
             'state_dict': self.model.state_dict(),
             'optimizer': self.optimizer.state_dict(),
-            'config': self.config
+            'params': self.params
         }
-        filename = str(self.checkpoint_dir / 'checkpoint-epoch{}.pth'.format(epoch))
+
+        # if self.lr_scheduler is not None:
+        #     state["lr_scheduler"] = self.lr_scheduler.state_dict()
+
+        filename = os.path.join(self.checkpoint_dir, 'checkpoint-epoch{}.pth'.format(epoch))
         torch.save(state, filename)
-        # self.logger.info("Saving checkpoint: {} ...".format(filename))
+        self.logger.info("Saving checkpoint: {} ...".format(filename))
 
     def _resume_checkpoint(self, resume_path):
         """

@@ -620,7 +620,7 @@ def grab_predict_label3d_file(defaultdir=""):
     print("Using the following *dannce.mat files: {}".format(label3d_files[0]))
     return label3d_files[0]
 
-def load_expdict(params, e, expdict, _DEFAULT_VIDDIR, _DEFAULT_VIDDIR_SIL):
+def load_expdict(params, e, expdict, _DEFAULT_VIDDIR, _DEFAULT_VIDDIR_SIL, logger):
     """
     Load in camnames and video directories and label3d files for a single experiment
         during training.
@@ -638,18 +638,18 @@ def load_expdict(params, e, expdict, _DEFAULT_VIDDIR, _DEFAULT_VIDDIR_SIL):
     else:
         exp["viddir"] = expdict["viddir"]
 
-    print("Experiment {} using videos in {}".format(e, exp["viddir"]))
+    logger.info("Experiment {} using videos in {}".format(e, exp["viddir"]))
 
     if params["use_silhouette"]:
         exp["viddir_sil"] = os.path.join(exp["base_exp_folder"], _DEFAULT_VIDDIR_SIL) if "viddir_sil" not in expdict else expdict["viddir_sil"]
-        print("Experiment {} also using masked videos in {}".format(e, exp["viddir_sil"]))
+        logger.info("Experiment {} also using masked videos in {}".format(e, exp["viddir_sil"]))
 
     l3d_camnames = io.load_camnames(expdict["label3d_file"])
     if "camnames" in expdict:
         exp["camnames"] = expdict["camnames"]
     elif l3d_camnames is not None:
         exp["camnames"] = l3d_camnames
-    print("Experiment {} using camnames: {}".format(e, exp["camnames"]))
+    logger.info("Experiment {} using camnames: {}".format(e, exp["camnames"]))
 
     # Use the camnames to find the chunks for each video
     chunks = {}
@@ -667,7 +667,7 @@ def load_expdict(params, e, expdict, _DEFAULT_VIDDIR, _DEFAULT_VIDDIR_SIL):
             [int(x.split(".")[0]) for x in video_files]
         )
     exp["chunks"] = chunks
-    print(chunks)
+    logger.info(chunks)
 
     # For npy volume training
     if params["use_npy"]:
@@ -1203,13 +1203,13 @@ def extract_3d_sil_soft(vol, upper_thres, keeprange=3):
             100*np.sum((vol > 0))/len(vol.ravel())))
     return vol
 
-def load_volumes_into_mem(params, partition, n_cams, generator, train=True, silhouette=False):
+def load_volumes_into_mem(params, logger, partition, n_cams, generator, train=True, silhouette=False):
     n_samples = len(partition["train_sampleIDs"]) if train else len(partition["valid_sampleIDs"]) 
     message = "Loading training data into memory" if train else "Loading validation data into memory"
     gridsize = tuple([params["nvox"]] * 3)
 
     X = np.empty((n_samples, *gridsize, params["chan_num"]*n_cams), dtype="float32")
-    print(message)
+    logger.info(message)
 
     X_grid = None
     if params["expval"]:
@@ -1230,7 +1230,7 @@ def load_volumes_into_mem(params, partition, n_cams, generator, train=True, silh
             X[i], y[i] = rr[0], rr[1]
 
     if silhouette:
-        print("Now loading silhouettes")
+        logger.info("Now loading silhouettes")
 
         if params["soft_silhouette"]:
             X = extract_3d_sil_soft(X, params["chan_num"]*n_cams)

@@ -1,6 +1,8 @@
 from dannce.engine.trainer.base_trainer import BaseTrainer
-from dannce.engine.trainer.train_utils import prepare_batch, LossHelper, MetricHelper, MetricTracker
+from dannce.engine.trainer.train_utils import prepare_batch, LossHelper, MetricHelper
 import torch
+
+import csv, os
 
 class DannceTrainer(BaseTrainer):
     def __init__(self, device, train_dataloader, valid_dataloader, lr_scheduler=None, **kwargs):
@@ -12,21 +14,59 @@ class DannceTrainer(BaseTrainer):
         self.valid_dataloader = valid_dataloader
         self.lr_scheduler = lr_scheduler
 
-        self.train_loss_tracker = MetricTracker(*self.loss.names, writer=self.writer, train=True)
-        self.valid_loss_tracker = MetricTracker(*self.loss.names, writer=self.writer, train=False)
-        self.valid_metric_tracker = MetricTracker(*self.metrics.names, writer=self.writer, train=False)
+        stats_file = open(os.path.join(self.params["dannce_train_dir"], "training.csv"), 'w', newline='')
+        self.stats_writer = csv.writer(stats_file)
+        self.stats_keys = [*self.loss.names, *self.metrics.names]
+        train_stats_keys = ["train_"+k for k in self.stats_keys]
+        valid_stats_keys = ["valid_"+k for k in self.stats_keys]
+        self.stats_writer.writerow(["Epoch", *train_stats_keys, *valid_stats_keys])
+
+    def train(self):
+        for epoch in range(self.start_epoch, self.epochs + 1):
+            stats = [epoch]
+            train_loss, train_metrics = self._train_epoch(epoch)
+
+            for k in self.stats_keys:
+                try:
+                    stats.append(train_loss[k])
+                except:
+                    stats.append(train_metrics[k])
+                    
+            result_msg = f"Epoch[{epoch}/{self.epochs}] " \
+                + "".join(f"train_{loss}: {val:.4f} " for loss, val in train_loss.items()) \
+                + "".join(f"train_{met}: {val:.4f} " for met, val in train_metrics.items())
+            self.logger.info(result_msg)
+
+            valid_loss, valid_metrics = self._valid_epoch(epoch)
+
+            for k in self.stats_keys:
+                try:
+                    stats.append(valid_loss[k])
+                except:
+                    stats.append(valid_metrics[k])
+                    
+            result_msg = f"Epoch[{epoch}/{self.epochs}] " \
+                + "".join(f"valid_{loss}: {val:.4f} " for loss, val in valid_loss.items()) \
+                + "".join(f"valid_{met}: {val:.4f} " for met, val in valid_metrics.items())
+            self.logger.info(result_msg)
+
+            self.stats_writer.writerow(stats)
+
+            if epoch % self.save_period == 0 or epoch == self.epochs:
+                self._save_checkpoint(epoch)
+
 
     def _train_epoch(self, epoch):
         self.model.train()
         with torch.autograd.set_detect_anomaly(True):
-            epoch_loss_dict = {}
+            epoch_loss_dict, epoch_metric_dict = {}, {}
             for batch in self.train_dataloader: 
                 volumes, grid_centers, keypoints_3d_gt, aux = prepare_batch(batch, self.device)
 
                 self.optimizer.zero_grad()
                 keypoints_3d_pred, _ = self.model(volumes, grid_centers)
                 total_loss, loss_dict = self.loss.compute_loss(keypoints_3d_gt, keypoints_3d_pred)
-                result = f"Epoch[{epoch}/{self.epochs}] " + "".join(f"train_{loss}: {val} " for loss, val in loss_dict.items())
+                result = f"Epoch[{epoch}/{self.epochs}] " + "".join(f"train_{loss}: {val:.4f} " for loss, val in loss_dict.items())
                 print(result, end='\r')
 
                 total_loss.backward()
@@ -34,24 +74,14 @@ class DannceTrainer(BaseTrainer):
 
                 epoch_loss_dict = self._update_step(epoch_loss_dict, loss_dict)
 
-            for k, v in epoch_loss_dict.items():
-                self.train_loss_tracker.update(k, sum(v)/len(v))
-            result = f"Epoch[{epoch}/{self.epochs}] " + "".join(f"train_{loss}: {sum(val)/len(val)} " for loss, val in epoch_loss_dict.items())
-            print(result)
+                metric_dict = self.metrics.evaluate(keypoints_3d_pred.detach().cpu().numpy(), keypoints_3d_gt.cpu().numpy())
+                epoch_metric_dict = self._update_step(epoch_metric_dict, metric_dict)
 
             if self.lr_scheduler is not None:
                 self.lr_scheduler.step()
 
-        return epoch_loss_dict
-    
-    def _update_step(self, epoch_dict, step_dict):
-        if len(epoch_dict) == 0:
-            for k, v in step_dict.items():
-                epoch_dict[k] = [v]
-        else:
-            for k, v in step_dict.items():
-                epoch_dict[k].append(v)
-        return epoch_dict
+        epoch_loss_dict, epoch_metric_dict = self._average(epoch_loss_dict), self._average(epoch_metric_dict)
+        return epoch_loss_dict, epoch_metric_dict
 
     def _valid_epoch(self, epoch):
         self.model.eval()
@@ -69,16 +99,21 @@ class DannceTrainer(BaseTrainer):
                 metric_dict = self.metrics.evaluate(keypoints_3d_pred.detach().cpu().numpy(), keypoints_3d_gt.cpu().numpy())
                 epoch_metric_dict = self._update_step(epoch_metric_dict, metric_dict)
         
-        for k, v in epoch_loss_dict.items():
-            self.valid_loss_tracker.update(k, sum(v)/len(v))
-        for k, v in epoch_metric_dict.items():
-            self.valid_metric_tracker.update(k, sum(v)/len(v))
-        result = f"Epoch[{epoch}/{self.epochs}] " \
-            + "".join(f"val_{loss}: {sum(val)/len(val)} " for loss, val in epoch_loss_dict.items()) \
-            + "".join(f"val_{met}: {sum(val)/len(val)} " for met, val in epoch_metric_dict.items())
-        print(result)
-        
+        epoch_loss_dict, epoch_metric_dict = self._average(epoch_loss_dict), self._average(epoch_metric_dict)
         return epoch_loss_dict, epoch_metric_dict
-        
+    
+    def _update_step(self, epoch_dict, step_dict):
+        if len(epoch_dict) == 0:
+            for k, v in step_dict.items():
+                epoch_dict[k] = [v]
+        else:
+            for k, v in step_dict.items():
+                epoch_dict[k].append(v)
+        return epoch_dict
+    
+    def _average(self, epoch_dict):
+        for k, v in epoch_dict.items():
+            epoch_dict[k] = sum(v) / len(v)
+        return epoch_dict
 
 

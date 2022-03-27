@@ -30,6 +30,8 @@ import torch
 from dannce.engine.models.nets import DANNCE, initialize_model
 from dannce.engine.trainer.dannce_trainer import DannceTrainer
 
+from dannce.engine.logging.logger import setup_logging, get_logger
+
 process = psutil.Process(os.getpid())
 
 _DEFAULT_VIDDIR = "videos"
@@ -133,6 +135,13 @@ def dannce_train(params: Dict):
     # Make the training directory if it does not exist.
     make_folder("dannce_train_dir", params)
 
+    # setup logger
+    setup_logging(params["dannce_train_dir"])
+    logger = get_logger("training.log", verbosity=2)
+
+    # dump parameters
+    logger.info(params)
+
     # set GPU ID
     # Temporarily commented out to test on dsplus gpu
     # if not params["multi_gpu_train"]:
@@ -152,7 +161,7 @@ def dannce_train(params: Dict):
 
     for e, expdict in enumerate(exps):
 
-        exp = processing.load_expdict(params, e, expdict, _DEFAULT_VIDDIR, _DEFAULT_VIDDIR_SIL)
+        exp = processing.load_expdict(params, e, expdict, _DEFAULT_VIDDIR, _DEFAULT_VIDDIR_SIL, logger)
 
         (
             exp,
@@ -188,7 +197,7 @@ def dannce_train(params: Dict):
 
         cameras[e] = cameras_
         camnames[e] = exp["camnames"]
-        print("Using the following cameras: {}".format(camnames[e]))
+        logger.info("Using the following cameras: {}".format(camnames[e]))
         params["experiment"][e] = exp
         for name, chunk in exp["chunks"].items():
             total_chunks[name] = chunk
@@ -339,8 +348,8 @@ def dannce_train(params: Dict):
 
         # # We should be able to load everything into memory...
         n_cams = len(camnames[0])
-        X_train, X_train_grid, y_train = processing.load_volumes_into_mem(params, partition, n_cams, train_generator, train=True)
-        X_valid, X_valid_grid, y_valid = processing.load_volumes_into_mem(params, partition, n_cams, valid_generator, train=False)
+        X_train, X_train_grid, y_train = processing.load_volumes_into_mem(params, logger, partition, n_cams, train_generator, train=True)
+        X_valid, X_valid_grid, y_valid = processing.load_volumes_into_mem(params, logger, partition, n_cams, valid_generator, train=False)
         
         if params["debug_volume_tifdir"] is not None:
             # When this option is toggled in the config, rather than
@@ -519,7 +528,7 @@ def dannce_train(params: Dict):
     train_dataloader, valid_dataloader = setup_dataloaders(train_generator, valid_generator, params)
     
     # Build net
-    print("Initializing Network...")
+    logger.info("Initializing Network...")
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
     # TODO: initialize optimizer in a getattr way
@@ -542,7 +551,7 @@ def dannce_train(params: Dict):
         else:
             optimizer = torch.optim.Adam(model_params, lr=params["lr"])
 
-    print("COMPLETE\n")
+    logger.info("COMPLETE\n")
 
     # set up trainer
     trainer = DannceTrainer(
@@ -551,12 +560,11 @@ def dannce_train(params: Dict):
         train_dataloader=train_dataloader,
         valid_dataloader=valid_dataloader,
         optimizer=optimizer,
-        device=device
+        device=device,
+        logger=logger
     )
 
     trainer.train()
-
-    # TODO: set up a logger
 
 def dannce_predict(params: Dict):
     """Predict with dannce network
