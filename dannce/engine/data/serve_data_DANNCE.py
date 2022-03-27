@@ -150,7 +150,7 @@ def prepare_data(
         ddict[params["camnames"][i]] = data
 
     data_3d = labels[0]["data_3d"]
-    if len(data.shape) == 2:
+    if len(data_3d.shape) == 2:
         data_3d = np.transpose(np.reshape(data_3d, [data_3d.shape[0], -1, 3]), [0, 2, 1])
 
     # If specific markers are set to be excluded, set them to NaN here.
