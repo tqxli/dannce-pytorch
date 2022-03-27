@@ -1,4 +1,4 @@
-import dannce.engine.models.loss_classes as custom_losses
+import dannce.engine.models.loss as custom_losses
 import dannce.engine.models.metrics as custom_metrics
 import pandas as pd
 
@@ -26,10 +26,6 @@ class LossHelper:
         loss_dict = {}
         total_loss = 0
         for k, lossfcn in self.loss_fcns.items():
-            # if k == "temporal_loss":
-            #     loss_val = lossfcn(kpts_gt.clone(), kpts_pred.clone().reshape(-1, self.loss_params["temporal_chunk_size"], *kpts_pred.shape[1:]))
-            # else:
-            # breakpoint()
             loss_val = lossfcn(kpts_gt.clone(), kpts_pred.clone())
             total_loss += loss_val
             loss_dict[k] = loss_val.detach().clone().cpu().item()

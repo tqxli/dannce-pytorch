@@ -9,11 +9,11 @@ class EncoderDecorder_DANNCE(nn.Module):
     """
     3D UNet class for 3D pose estimation.
     """
-    def __init__(self, normalization, input_shape, residual=False):
+    def __init__(self, in_channels, normalization, input_shape, residual=False):
         super().__init__()
         conv_block = Res3DBlock if residual else Basic3DBlock
 
-        self.encoder_res1 = conv_block(64, 64, normalization, [input_shape]*3)
+        self.encoder_res1 = conv_block(in_channels, 64, normalization, [input_shape]*3)
         self.encoder_pool1 = Pool3DBlock(2)
         self.encoder_res2 = conv_block(64, 128, normalization, [input_shape//2]*3)
         self.encoder_pool2 = Pool3DBlock(2)
@@ -57,16 +57,16 @@ class EncoderDecorder_DANNCE(nn.Module):
         return x
 
 class DANNCE(nn.Module):
-    def __init__(self, input_channels, output_channels, input_shape, return_coords=True, norm_method='layer', residual=True):
+    def __init__(self, input_channels, output_channels, input_shape, return_coords=True, norm_method='layer', residual=False):
         super().__init__()
         # torch Layer Norm requires explicit input shape for initialization
         # self.normalization = NORMALIZATION_MODES[norm_method]
-        if residual:
-            self.front_layers = Res3DBlock(input_channels, 64, norm_method, input_shape=[input_shape]*3)
-        else:
-            self.front_layers = Basic3DBlock(input_channels, 64, norm_method, input_shape=[input_shape]*3)
+        # if residual:
+        #     self.front_layers = Res3DBlock(input_channels, 64, norm_method, input_shape=[input_shape]*3)
+        # else:
+        #     self.front_layers = Basic3DBlock(input_channels, 64, norm_method, input_shape=[input_shape]*3)
 
-        self.encoder_decoder = EncoderDecorder_DANNCE(norm_method, input_shape, residual)
+        self.encoder_decoder = EncoderDecorder_DANNCE(input_channels, norm_method, input_shape, residual)
         self.output_layer = nn.Conv3d(64, output_channels, kernel_size=1, stride=1, padding=0)
         
         # self._initialize_weights()
@@ -79,7 +79,7 @@ class DANNCE(nn.Module):
         volumes: Tensor [batch_size, C, H, W, D]
         grid_centers: [batch_size, nvox**3, 3]
         """
-        volumes = self.front_layers(volumes)
+        # volumes = self.front_layers(volumes)
         volumes = self.encoder_decoder(volumes)
         volumes = self.output_layer(volumes)
 

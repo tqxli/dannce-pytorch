@@ -115,6 +115,7 @@ def dannce_train(params: Dict):
     Raises:
         Exception: Error if training mode is invalid.
     """
+
     params["multi_mode"] = False
     # Default to 6 views but a smaller number of views can be specified in the
     # DANNCE config. If the legnth of the camera files list is smaller than
@@ -124,12 +125,13 @@ def dannce_train(params: Dict):
     if params["use_silhouette_in_volume"]:
         params["use_silhouette"] = True
         params["n_rand_views"] = None
+    
+    if "TemporalLoss" in params["loss"].keys():
+        params["use_temporal"] = True
+        params["temporal_chunk_size"] = params["loss"]["TemporalLoss"]["temporal_chunk_size"]
 
     # Make the training directory if it does not exist.
     make_folder("dannce_train_dir", params)
-
-    # nets.get_losses(params)
-    # params["loss"] = getattr(custom_losses, params["loss"])
 
     # set GPU ID
     # Temporarily commented out to test on dsplus gpu

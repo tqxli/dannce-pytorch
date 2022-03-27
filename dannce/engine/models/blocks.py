@@ -13,9 +13,12 @@ class Basic3DBlock(nn.Module):
 
         self.normalization = NORMALIZATION_MODES[norm_method]
         self.block = nn.Sequential(
-            nn.Conv3d(in_planes, out_planes, kernel_size=kernel_size, stride=1, padding=((kernel_size-1)//2)),
+            nn.Conv3d(in_planes, out_planes, kernel_size=3, stride=1, padding=1),
             self.normalization(input_shape) if norm_method == 'layer' else self.normalization(out_planes),
-            nn.ReLU(True)
+            nn.ReLU(True),
+            nn.Conv3d(out_planes, out_planes, kernel_size=3, stride=1, padding=1),
+            self.normalization(input_shape) if norm_method == 'layer' else self.normalization(out_planes),
+            nn.ReLU(True),
         )
 
     def forward(self, x):
