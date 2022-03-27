@@ -8,6 +8,8 @@ def nanmean_infmean(loss):
     valid = (~np.isnan(loss)) & (~np.isposinf(loss)) & (~np.isneginf(loss))
     num_valid = valid.sum()
     loss[~valid] = 0
+    if num_valid == 0:
+        return 0
     return loss.sum() / num_valid
 
 def euclidean_distance_3D(predicted, target):
