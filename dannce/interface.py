@@ -115,8 +115,6 @@ def dannce_train(params: Dict):
     Raises:
         Exception: Error if training mode is invalid.
     """
-    # Depth disabled until next release.
-    params["depth"] = False
     params["multi_mode"] = False
     # Default to 6 views but a smaller number of views can be specified in the
     # DANNCE config. If the legnth of the camera files list is smaller than
@@ -996,4 +994,406 @@ def setup_dataloaders(train_dataset, valid_dataset, params):
     return train_dataloader, valid_dataloader
 
 def social_dannce_train(params):
+    params["multi_mode"] = False
+    params["n_views"] = int(params["n_views"])
+    params["n_channels_out"] = 23
+    params["loss"]["pair_repulsion_loss"] = 1
+    # Make the training directory if it does not exist.
+    make_folder("dannce_train_dir", params)
+
+    samples = []
+    datadict = {}
+    datadict_3d = {}
+    com3d_dict = {}
+    cameras = {}
+    camnames = {}
+    exps = params["exp"]
+    num_experiments = len(exps)
+    params["experiment"] = {}
+    total_chunks = {}
+    temporal_chunks = {}
+
+    for e, expdict in enumerate(exps):
+
+        exp = processing.load_expdict(params, e, expdict, _DEFAULT_VIDDIR, _DEFAULT_VIDDIR_SIL)
+
+        (
+            exp,
+            samples_,
+            datadict_,
+            datadict_3d_,
+            cameras_,
+            com3d_dict_,
+            temporal_chunks_
+        ) = do_COM_load(exp, expdict, e, params)
+
+        print("Using {} samples total.".format(len(samples_)))
+
+        (
+            samples,
+            datadict,
+            datadict_3d,
+            com3d_dict,
+            temporal_chunks
+        ) = serve_data_DANNCE.add_experiment(
+            e,
+            samples,
+            datadict,
+            datadict_3d,
+            com3d_dict,
+            samples_,
+            datadict_,
+            datadict_3d_,
+            com3d_dict_,
+            temporal_chunks,
+            temporal_chunks_
+        )
+
+        cameras[e] = cameras_
+        camnames[e] = exp["camnames"]
+        print("Using the following cameras: {}".format(camnames[e]))
+        params["experiment"][e] = exp
+        for name, chunk in exp["chunks"].items():
+            total_chunks[name] = chunk
+
+    dannce_train_dir = params["dannce_train_dir"]
+
+    cameras, datadict, params = serve_data_DANNCE.prepend_experiment(
+        params, datadict, num_experiments, camnames, cameras
+    )
+
+    samples = np.array(samples)
+
+    if params["use_npy"]:
+        # Add all npy volume directories to list, to be used by generator
+        npydir = {}
+        for e in range(num_experiments):
+            npydir[e] = params["experiment"][e]["npy_vol_dir"]
+
+        samples = processing.remove_samples_npy(npydir, samples, params)
+    else:
+        # Initialize video objects
+        vids = {}
+        vids_sil = {}
+        for e in range(num_experiments):
+            if params["immode"] == "vid":
+                if params["use_silhouette"]:
+                    vids_sil = processing.initialize_vids(
+                        params, datadict, e, vids_sil, pathonly=True, vidkey="viddir_sil"
+                    )
+                vids = processing.initialize_vids(
+                    params, datadict, e, vids, pathonly=True
+                )
+    if params["expval"]:
+        outmode = "coordinates"
+    else:
+        outmode = "3dprob"
+
+    gridsize = tuple([params["nvox"]] * 3)
+
+    cam3_train = params["cam3_train"]
+    if params["cam3_train"]:
+        cam3_train = True
+    else:
+        cam3_train = False
+
+    partition = processing.make_data_splits(
+        samples, params, dannce_train_dir, num_experiments, 
+        temporal_chunks=temporal_chunks)
+    # the partition needs to be aligned for both animals
+    new_partition = {"train_sampleIDs": [], "valid_sampleIDs": []}
+    for samp in partition["train_sampleIDs"]:
+        if int(samp.split("_")[0]) == 0:
+            new_partition["train_sampleIDs"].append(samp)
+            new_partition["train_sampleIDs"].append(samp.replace("0_", "1_"))
+    new_partition["train_sampleIDs"] = np.array(sorted(new_partition["train_sampleIDs"]))
+
+    for samp in partition["valid_sampleIDs"]:
+        if int(samp.split("_")[0]) == 1:
+            new_partition["valid_sampleIDs"].append(samp)
+            new_partition["valid_sampleIDs"].append(samp.replace("1_", "0_"))
+    new_partition["valid_sampleIDs"] = np.array(sorted(new_partition["valid_sampleIDs"]))
+
+    partition = new_partition
+
+    if params["use_npy"]:
+        # mono conversion will happen from RGB npy files, and the generator
+        # needs to b aware that the npy files contain RGB content
+        params["chan_num"] = params["n_channels_in"]
+    else:
+        # Used to initialize arrays for mono, and also in *frommem (the final generator)
+        params["chan_num"] = 1 if params["mono"] else params["n_channels_in"]
+
+        valid_params = {
+            "dim_in": (
+                params["crop_height"][1] - params["crop_height"][0],
+                params["crop_width"][1] - params["crop_width"][0],
+            ),
+            "n_channels_in": params["n_channels_in"],
+            "batch_size": 1,
+            "n_channels_out": params["n_channels_out"],
+            "out_scale": params["sigma"],
+            "crop_width": params["crop_width"],
+            "crop_height": params["crop_height"],
+            "vmin": params["vmin"],
+            "vmax": params["vmax"],
+            "nvox": params["nvox"],
+            "interp": params["interp"],
+            "depth": params["depth"],
+            "channel_combo": params["channel_combo"],
+            "mode": outmode,
+            "camnames": camnames,
+            "immode": params["immode"],
+            "shuffle": False,  # We will shuffle later
+            "rotation": False,  # We will rotate later if desired
+            "vidreaders": vids,
+            "distort": True,
+            "expval": params["expval"],
+            "crop_im": False,
+            "chunks": total_chunks,
+            "mono": params["mono"],
+            "mirror": params["mirror"],
+        }
+
+        # Setup a generator that will read videos and labels
+        tifdirs = []  # Training from single images not yet supported in this demo
+
+        train_gen_params = [partition["train_sampleIDs"],
+                            datadict,
+                            datadict_3d,
+                            cameras,
+                            partition["train_sampleIDs"],
+                            com3d_dict,
+                            tifdirs]
+        valid_gen_params = [partition["valid_sampleIDs"],
+                            datadict,
+                            datadict_3d,
+                            cameras,
+                            partition["valid_sampleIDs"],
+                            com3d_dict,
+                            tifdirs]
+
+        train_generator = generator.DataGenerator_3Dconv(
+            *train_gen_params,
+            **valid_params
+        )
+        valid_generator = generator.DataGenerator_3Dconv(
+            *valid_gen_params,
+            **valid_params
+        )
+
+        if params["use_silhouette"]:
+            valid_params_sil = deepcopy(valid_params)
+            valid_params_sil["vidreaders"] = vids_sil
+
+            # Set this to false so that all of our voxels stay positive, allowing us
+            # to convert to binary below
+            valid_params_sil["norm_im"] = False
+
+            # expval gets set to True here sop that even in MAX mode the
+            # silhouette generator behaves in a predictable way
+            valid_params_sil["expval"] = True
+
+            train_generator_sil = generator.DataGenerator_3Dconv(
+                *train_gen_params,
+                **valid_params_sil
+            )
+
+            valid_generator_sil = generator.DataGenerator_3Dconv(
+                *valid_gen_params,
+                **valid_params_sil
+            )
+
+        # # We should be able to load everything into memory...
+        n_cams = len(camnames[0])
+        X_train, X_train_grid, y_train = processing.load_volumes_into_mem(params, partition, n_cams, train_generator, train=True)
+        X_valid, X_valid_grid, y_valid = processing.load_volumes_into_mem(params, partition, n_cams, valid_generator, train=False)
+
+        if params["debug_volume_tifdir"] is not None:
+            # When this option is toggled in the config, rather than
+            # training, the image volumes are dumped to tif stacks.
+            # This can be used for debugging problems with calibration or
+            # COM estimation
+            tifdir = params["debug_volume_tifdir"]
+            if not os.path.exists(tifdir):
+                os.makedirs(tifdir)
+            print("Dump training volumes to {}".format(tifdir))
+            for i in range(X_train.shape[0]):
+                for j in range(n_cams):
+                    im = X_train[
+                        i,
+                        :,
+                        :,
+                        :,
+                        j * params["chan_num"] : (j + 1) * params["chan_num"],
+                    ]
+                    im = processing.norm_im(im) * 255
+                    im = im.astype("uint8")
+                    of = os.path.join(
+                        tifdir,
+                        partition["train_sampleIDs"][i] + "_cam" + str(j) + ".tif",
+                    )
+                    imageio.mimwrite(of, np.transpose(im, [2, 0, 1, 3]))
+            return
+    
+    if params["avg+max"] is not None and params["use_silhouette"]:
+        print("******Cannot combine AVG+MAX with silhouette - Using ONLY silhouette*******")
+
+    y_train_aux = None
+    y_valid_aux = None
+    if params["use_silhouette"]:
+        _, _, y_train_aux = processing.load_volumes_into_mem(params, partition, n_cams, train_generator_sil, train=True, silhouette=True)
+        _, _, y_valid_aux = processing.load_volumes_into_mem(params, partition, n_cams, valid_generator_sil, train=False, silhouette=True)
+
+    elif params["avg+max"] is not None:
+        y_train_aux, y_valid_aux = processing.initAvgMax(
+            y_train, y_valid, X_train_grid, X_valid_grid, params
+        )
+
+    if params["use_silhouette_in_volume"]:
+        # concatenate RGB image volumes with silhouette volumes
+        X_train = np.concatenate((X_train, y_train_aux, y_train_aux, y_train_aux), axis=-1)
+        X_valid = np.concatenate((X_valid, y_valid_aux, y_valid_aux, y_valid_aux), axis=-1)
+        print("Input dimension is now {}".format(X_train.shape))
+
+        params["use_silhouette"] = False
+        print("Turn off silhouette loss.")
+
+        y_train_aux = None
+        y_valid_aux = None
+
+    # Now we can generate from memory with shuffling, rotation, etc.
+    randflag = params["channel_combo"] == "random"
+
+    if cam3_train:
+        params["n_rand_views"] = 3
+        params["rand_view_replace"] = False
+        randflag = True
+
+    if params["n_rand_views"] == 0:
+        print(
+            "Using default n_rand_views augmentation with {} views and with replacement".format(
+                params["n_views"]
+            )
+        )
+        print("To disable n_rand_views augmentation, set it to None in the config.")
+        params["n_rand_views"] = params["n_views"]
+        params["rand_view_replace"] = True
+
+    shared_args = {
+        "chan_num": params["chan_num"],
+        "expval": params["expval"],
+        "nvox": params["nvox"],
+        "heatmap_reg": params["heatmap_reg"],
+        "heatmap_reg_coeff": params["heatmap_reg_coeff"],
+    }
+    shared_args_train = {
+        # "batch_size": params["batch_size"],
+        "rotation": params["rotate"],
+        "augment_hue": params["augment_hue"],
+        "augment_brightness": params["augment_brightness"],
+        "augment_continuous_rotation": params["augment_continuous_rotation"],
+        "mirror_augmentation": params["mirror_augmentation"],
+        "right_keypoints": params["right_keypoints"],
+        "left_keypoints": params["left_keypoints"],
+        "bright_val": params["augment_bright_val"],
+        "hue_val": params["augment_hue_val"],
+        "rotation_val": params["augment_rotation_val"],
+        "replace": params["rand_view_replace"],
+        "random": randflag,
+        "n_rand_views": params["n_rand_views"],
+    }
+    shared_args_valid = {
+        # "batch_size": params["batch_size"],
+        "rotation": False,
+        "augment_hue": False,
+        "augment_brightness": False,
+        "augment_continuous_rotation": False,
+        "mirror_augmentation": False,
+        "shuffle": False,
+        "replace": False,
+        "n_rand_views": params["n_rand_views"] if cam3_train else None,
+        "random": True if cam3_train else False,
+    }
+
+    genfunc = generator.DataGenerator_Social
+    X_train = X_train.reshape((-1, 2, *X_train.shape[1:]))
+    X_train_grid = X_train_grid.reshape((-1, 2, *X_valid_grid.shape[1:]))
+    y_train = y_train.reshape((-1, 2, *y_train.shape[1:]))
+    X_valid = X_valid.reshape((-1, 2, *X_train.shape[1:]))
+    X_valid_grid = X_valid_grid.reshape((-1, 2, *X_valid_grid.shape[1:]))
+    y_valid = y_valid.reshape((-1, 2, *y_train.shape[1:]))
+
+    args_train = {
+        "list_IDs": np.arange(len(partition["train_sampleIDs"])),
+        "data": X_train,
+        "labels": y_train,
+    }
+    args_train = {
+                    **args_train,
+                    **shared_args_train,
+                    **shared_args,
+                    "xgrid": X_train_grid,
+                    "aux_labels": y_train_aux,
+                    "temporal_chunk_list": partition["train_chunks"] if params["use_temporal"] else None,
+                    }
+
+    args_valid = {
+        "list_IDs": np.arange(len(partition["valid_sampleIDs"])),
+        "data": X_valid,
+        "labels": y_valid,
+        "aux_labels": y_valid_aux
+    }
+    args_valid = {
+        **args_valid,
+        **shared_args_valid,
+        **shared_args,
+        "xgrid": X_valid_grid,
+        "temporal_chunk_list": partition["valid_chunks"] if params["use_temporal"] else None
+    }
+    
+    train_generator = genfunc(**args_train)
+    valid_generator = genfunc(**args_valid)
+
+    params["batch_size"] = params["batch_size"] // 2
+    train_dataloader, valid_dataloader = setup_dataloaders(train_generator, valid_generator, params)
+    
+    # Build net
+    print("Initializing Network...")
+    device = "cuda:0" if torch.cuda.is_available() else "cpu"
+
+    # TODO: initialize optimizer in a getattr way
+    # TODO: lr scheduler
+    if params["train_mode"] == "new":
+        model = initialize_model(params, n_cams, device)
+        model_params = [p for p in model.parameters() if p.requires_grad]
+        optimizer = torch.optim.Adam(model_params, lr=params["lr"])
+
+    elif params["train_mode"] == "finetune" or params["train_mode"] == "continued":
+        checkpoints = torch.load(params["dannce_finetune_weights"])
+        model = initialize_model(checkpoints["params"], n_cams, device)
+        model.load_state_dict(checkpoints["model"])
+
+        model_params = [p for p in model.parameters() if p.requires_grad]
+        
+        if params["train_mode"] == "continued":
+            optimizer = torch.optim.Adam()
+            optimizer.load_state_dict(checkpoints["optimizer"])
+        else:
+            optimizer = torch.optim.Adam(model_params, lr=params["lr"])
+
+    print("COMPLETE\n")
+
+    # set up trainer
+    trainer = DannceTrainer(
+        params=params,
+        model=model,
+        train_dataloader=train_dataloader,
+        valid_dataloader=valid_dataloader,
+        optimizer=optimizer,
+        device=device
+    )
+
+    trainer.train()
+
     return

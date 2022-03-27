@@ -1214,10 +1214,10 @@ def load_volumes_into_mem(params, partition, n_cams, generator, train=True, silh
     X_grid = None
     if params["expval"]:
         if not silhouette: 
-            y = np.empty((n_samples, 3, params["new_n_channels_out"]), dtype="float32")
+            y = np.empty((n_samples, 3, params["n_channels_out"]), dtype="float32")
             X_grid = np.empty((n_samples, params["nvox"] ** 3, 3), dtype="float32")
     else:
-        y = np.empty((n_samples, *gridsize, params["new_n_channels_out"]), dtype="float32")
+        y = np.empty((n_samples, *gridsize, params["n_channels_out"]), dtype="float32")
 
     for i in range(n_samples):
         print(i, end="\r")

@@ -100,10 +100,22 @@ def separation_loss(delta=10):
 # SOCIAL ANIMALS
 ##################################################################################################
 
-def pair_repulsion_loss(y_pred_s1, y_pred_s2):
+def pair_repulsion_loss(kpts_gt, kpts_pred):
     """Unsupervised pairwise loss with respect to two subjects. 
     The predictions should be as far as possible, i.e. repelling each other.
-    Input:
-        y_pred_s1, y_pred_s2: (B, N, 3)"""
+    kpts_pred: [batch_size, 3, n_joints]
+    """
+    # reshape to [n_animals, scaled batch size, 3, n_joints]
+    n_joints = kpts_pred.shape[-1]
+    kpts_pred = kpts_pred.reshape(-1, 2, *kpts_pred.shape[1:]).permute(1, 0, 2, 3)
 
-    return 1 / ((y_pred_s1 - y_pred_s2)**2).sum()
+    # compute the distance between each joint of animal 1 and all joints of animal 2
+    a1 = kpts_pred[0].repeat(1, 1, n_joints)    
+    a2 = kpts_pred[1].repeat(1, n_joints, 1).reshape(a1.shape)
+
+    diffsqr = (a1 - a2)**2
+    dist = diffsqr.sum(1).sqrt() # [bs, n_joints^2]
+    
+    return dist.mean()
+
+    

@@ -122,7 +122,8 @@ def prepare_data(
         data = label["data_2d"]
 
         # reshape data_2d so that it is shape (time points, 2, 20)
-        data = np.transpose(np.reshape(data, [data.shape[0], -1, 2]), [0, 2, 1])
+        if len(data.shape) == 2:
+            data = np.transpose(np.reshape(data, [data.shape[0], -1, 2]), [0, 2, 1])
 
         # Correct for Matlab "1" indexing
         data = data - 1
@@ -149,7 +150,8 @@ def prepare_data(
         ddict[params["camnames"][i]] = data
 
     data_3d = labels[0]["data_3d"]
-    data_3d = np.transpose(np.reshape(data_3d, [data_3d.shape[0], -1, 3]), [0, 2, 1])
+    if len(data.shape) == 2:
+        data_3d = np.transpose(np.reshape(data_3d, [data_3d.shape[0], -1, 3]), [0, 2, 1])
 
     # If specific markers are set to be excluded, set them to NaN here.
     if params["drop_landmark"] is not None and not prediction:

@@ -1305,19 +1305,29 @@ class DataGenerator_Social(DataGenerator_3Dconv_frommem):
         # x_grid: [n_samples, 2, 64**3, 3]
 
         super().__init__(**kwargs)
+        self.temporal_chunk_size = self.data.shape[1]
 
     def __getitem__(self, index):
         list_IDs_temp = self.list_IDs[index]
         X, X_grid, y_3d, aux = self.__data_generation(list_IDs_temp)
         return X, X_grid, y_3d, aux
     
+    def __len__(self):
+        return self.data.shape[0]
+    
     def __data_generation(self, ID):
         X = self.data[ID].copy()
         y_3d = self.labels[ID]
+
         if self.expval:
             X_grid = self.xgrid[ID]
-        if aux is not None:
+        else:
+            X_grid = None
+
+        if self.aux_labels is not None:
             aux = self.aux_labels[ID]
+        else:
+            aux = None
 
         X, X_grid, y_3d, aux = self.do_augmentation(X, X_grid, y_3d, aux)
         # Randomly re-order, if desired
