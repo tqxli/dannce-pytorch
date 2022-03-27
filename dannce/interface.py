@@ -13,7 +13,7 @@ from datetime import datetime
 
 import dannce.engine.data.serve_data_DANNCE as serve_data_DANNCE
 import dannce.engine.data.generator as generator
-import dannce.engine.data.generator_aux as generator_aux
+# import dannce.engine.data.generator_aux as generator_aux
 import dannce.engine.data.processing as processing
 from dannce.engine.data.processing import savedata_tomat, savedata_expval
 from dannce.engine.data import ops, io

@@ -113,7 +113,8 @@ class DannceTrainer(BaseTrainer):
     
     def _average(self, epoch_dict):
         for k, v in epoch_dict.items():
-            epoch_dict[k] = sum(v) / len(v)
+            valid_num = sum([item > 0 for item in v])
+            epoch_dict[k] = sum(v) / valid_num
         return epoch_dict
 
 

@@ -20,7 +20,7 @@ def compute_mask_nan_loss(loss_fcn, kpts_gt, kpts_pred):
     kpts_gt, kpts_pred, notnan = mask_nan(kpts_gt, kpts_pred)
     # when ground truth is all NaN for certain reasons, do not compute loss since it results in NaN
     if notnan == 0:
-        print("Found all NaN ground truth")
+        # print("Found all NaN ground truth")
         return kpts_pred.new_zeros(())
     return loss_fcn(kpts_gt, kpts_pred) / notnan
 
@@ -44,7 +44,7 @@ class L1Loss(BaseLoss):
     def forward(self, kpts_gt, kpts_pred):
         kpts_gt, kpts_pred, notnan = mask_nan(kpts_gt, kpts_pred)
         if notnan == 0:
-            print("Found all NaN ground truth")
+            # print("Found all NaN ground truth")
             return kpts_pred.new_zeros(())
         loss = F.l1_loss(kpts_gt, kpts_pred, reduction="sum") / notnan
         return self.loss_weight * loss
