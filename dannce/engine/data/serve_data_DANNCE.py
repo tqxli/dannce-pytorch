@@ -1,6 +1,7 @@
 """Define routines for reading/structuring input data for DANNCE."""
 import numpy as np
 import scipy.io as sio
+import torch
 from torch import chunk
 from dannce.engine.data import ops as ops
 from dannce.engine.data.io import load_camera_params, load_labels, load_sync
@@ -594,6 +595,39 @@ def identify_exp_pairs(exps):
         pairs.append(np.where(exp_base_folders == uniques[i]))
     
     return pairs
+
+def collate_fn(items):
+    volumes = torch.cat([item[0] for item in items], dim=0)#.permute(0, 4, 1, 2, 3)
+    targets = torch.cat([item[2] for item in items], dim=0)
+
+    try: 
+        grids = torch.cat([item[1] for item in items], dim=0)
+    except:
+        grids = None
+    
+    try: 
+        auxs = torch.cat([item[3] for item in items], dim=0)
+    except:
+        auxs = None 
+
+    return volumes, grids, targets, auxs 
+
+def setup_dataloaders(train_dataset, valid_dataset, params):
+    # current implementation returns chunked data
+    if params["use_temporal"]:
+        valid_batch_size = params["batch_size"] // params["temporal_chunk_size"]
+    else:
+        valid_batch_size = params["batch_size"] 
+
+    train_dataloader = torch.utils.data.DataLoader(
+        train_dataset, batch_size=valid_batch_size, shuffle=True, collate_fn=collate_fn,
+        num_workers=params["batch_size"]
+    )
+    valid_dataloader = torch.utils.data.DataLoader(
+        valid_dataset, valid_batch_size, shuffle=False, collate_fn=collate_fn,
+        num_workers=params["batch_size"]
+    )
+    return train_dataloader, valid_dataloader
 
 
 

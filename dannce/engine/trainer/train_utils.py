@@ -1,6 +1,6 @@
 import dannce.engine.models.loss as custom_losses
 import dannce.engine.models.metrics as custom_metrics
-import pandas as pd
+# import pandas as pd
 
 def prepare_batch(batch, device):
     volumes = batch[0].float().to(device)
@@ -17,12 +17,13 @@ class LossHelper:
 
     def _get_losses(self):
         self.loss_fcns = {}
-        # for name, loss_weight in self.loss_params["loss"].items():
-        #     self.loss_fcns[name] = [getattr(custom_losses, name), loss_weight]
         for name, args in self.loss_params["loss"].items():
             self.loss_fcns[name] = getattr(custom_losses, name)(**args)
         
     def compute_loss(self, kpts_gt, kpts_pred):
+        """
+        Compute each loss and return their weighted sum for backprop.
+        """
         loss_dict = {}
         total_loss = 0
         for k, lossfcn in self.loss_fcns.items():
@@ -58,26 +59,26 @@ class MetricHelper:
         return self.metric_names
 
 
-class MetricTracker:
-    def __init__(self, *keys, writer=None, train=True):
-        self.writer = writer
-        self._data = pd.DataFrame(index=keys, columns=['total', 'counts', 'average'])
-        self.train = "/train" if train else "/valid"
-        self.reset()
+# class MetricTracker:
+#     def __init__(self, *keys, writer=None, train=True):
+#         self.writer = writer
+#         self._data = pd.DataFrame(index=keys, columns=['total', 'counts', 'average'])
+#         self.train = "/train" if train else "/valid"
+#         self.reset()
 
-    def reset(self):
-        for col in self._data.columns:
-            self._data[col].values[:] = 0
+#     def reset(self):
+#         for col in self._data.columns:
+#             self._data[col].values[:] = 0
 
-    def update(self, key, value, n=1):
-        if self.writer is not None:
-            self.writer.add_scalar(key + self.train, value)
-        self._data.total[key] += value * n
-        self._data.counts[key] += n
-        self._data.average[key] = self._data.total[key] / self._data.counts[key]
+#     def update(self, key, value, n=1):
+#         if self.writer is not None:
+#             self.writer.add_scalar(key + self.train, value)
+#         self._data.total[key] += value * n
+#         self._data.counts[key] += n
+#         self._data.average[key] = self._data.total[key] / self._data.counts[key]
 
-    def avg(self, key):
-        return self._data.average[key]
+#     def avg(self, key):
+#         return self._data.average[key]
 
-    def result(self):
-        return dict(self._data.average)
+#     def result(self):
+#         return dict(self._data.average)

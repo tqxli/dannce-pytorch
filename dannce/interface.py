@@ -525,7 +525,8 @@ def dannce_train(params: Dict):
     train_generator = genfunc(**args_train)
     valid_generator = genfunc(**args_valid)
 
-    train_dataloader, valid_dataloader = setup_dataloaders(train_generator, valid_generator, params)
+    train_dataloader, valid_dataloader = serve_data_DANNCE.setup_dataloaders(
+        train_generator, valid_generator, params)
     
     # Build net
     logger.info("Initializing Network...")
@@ -541,7 +542,7 @@ def dannce_train(params: Dict):
     elif params["train_mode"] == "finetune" or params["train_mode"] == "continued":
         checkpoints = torch.load(params["dannce_finetune_weights"])
         model = initialize_model(checkpoints["params"], n_cams, device)
-        model.load_state_dict(checkpoints["model"])
+        model.load_state_dict(checkpoints["state_dict"])
 
         model_params = [p for p in model.parameters() if p.requires_grad]
         
@@ -714,14 +715,15 @@ def dannce_predict(params: Dict):
 
     # model = build_model(params, camnames)
     print("Initializing Network...")
-    model = DANNCE(
-        input_channels=(params["chan_num"] + params["depth"])*len(camnames[0]),
-        output_channels=params["n_channels_out"],
-        norm_method=params["norm_method"],
-        return_coords=params["expval"],
-        input_shape=params["nvox"]
-    )
-    model = model.to(device) 
+    # model = DANNCE(
+    #     input_channels=(params["chan_num"] + params["depth"])*len(camnames[0]),
+    #     output_channels=params["n_channels_out"],
+    #     norm_method=params["norm_method"],
+    #     return_coords=params["expval"],
+    #     input_shape=params["nvox"]
+    # )
+    # model = model.to(device) 
+    model = initialize_model(params, len(camnames[0]), device)
 
     # load predict model
     model.load_state_dict(torch.load(params["dannce_predict_model"])['state_dict'])
@@ -969,39 +971,6 @@ def check_COM_load(c3dfile: Dict, kkey: Text, win_size: int):
     c3dsi = np.squeeze(c3dfile["sampleID"])
     com3d_dict = {s: c3d[i] for (i, s) in enumerate(c3dsi)}
     return com3d_dict
-
-def collate_fn(items):
-    volumes = torch.cat([item[0] for item in items], dim=0)#.permute(0, 4, 1, 2, 3)
-    targets = torch.cat([item[2] for item in items], dim=0)
-
-    try: 
-        grids = torch.cat([item[1] for item in items], dim=0)
-    except:
-        grids = None
-    
-    try: 
-        auxs = torch.cat([item[3] for item in items], dim=0)
-    except:
-        auxs = None 
-
-    return volumes, grids, targets, auxs 
-
-def setup_dataloaders(train_dataset, valid_dataset, params):
-    # current implementation returns chunked data
-    if params["use_temporal"]:
-        valid_batch_size = params["batch_size"] // params["temporal_chunk_size"]
-    else:
-        valid_batch_size = params["batch_size"] 
-
-    train_dataloader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=valid_batch_size, shuffle=True, collate_fn=collate_fn,
-        num_workers=params["batch_size"]
-    )
-    valid_dataloader = torch.utils.data.DataLoader(
-        valid_dataset, valid_batch_size, shuffle=False, collate_fn=collate_fn,
-        num_workers=params["batch_size"]
-    )
-    return train_dataloader, valid_dataloader
 
 def social_dannce_train(params):
     params["multi_mode"] = False
@@ -1366,7 +1335,7 @@ def social_dannce_train(params):
     valid_generator = genfunc(**args_valid)
 
     params["batch_size"] = params["batch_size"] // 2
-    train_dataloader, valid_dataloader = setup_dataloaders(train_generator, valid_generator, params)
+    train_dataloader, valid_dataloader = serve_data_DANNCE.setup_dataloaders(train_generator, valid_generator, params)
     
     # Build net
     print("Initializing Network...")
@@ -1382,7 +1351,7 @@ def social_dannce_train(params):
     elif params["train_mode"] == "finetune" or params["train_mode"] == "continued":
         checkpoints = torch.load(params["dannce_finetune_weights"])
         model = initialize_model(checkpoints["params"], n_cams, device)
-        model.load_state_dict(checkpoints["model"])
+        model.load_state_dict(checkpoints["state_dict"])
 
         model_params = [p for p in model.parameters() if p.requires_grad]
         

@@ -42,11 +42,7 @@ class L1Loss(BaseLoss):
         super().__init__(**kwargs)
 
     def forward(self, kpts_gt, kpts_pred):
-        kpts_gt, kpts_pred, notnan = mask_nan(kpts_gt, kpts_pred)
-        if notnan == 0:
-            # print("Found all NaN ground truth")
-            return kpts_pred.new_zeros(())
-        loss = F.l1_loss(kpts_gt, kpts_pred, reduction="sum") / notnan
+        loss = compute_mask_nan_loss(nn.L1Loss(reduction="sum"), kpts_gt, kpts_pred)
         return self.loss_weight * loss
 
 class TemporalLoss(BaseLoss):
@@ -58,7 +54,7 @@ class TemporalLoss(BaseLoss):
         self.method = method
     
     def forward(self, kpts_gt, kpts_pred):
-        # [n_chunks, temporal_chunk_size-1, n_joints, 3]
+        # reshape w.r.t temporal chunk size
         kpts_pred = kpts_pred.reshape(-1, self.temporal_chunk_size, *kpts_pred.shape[1:])
         diff = torch.diff(kpts_pred, dim=1)
         if self.method == 'l1':
