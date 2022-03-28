@@ -814,31 +814,30 @@ class DataGenerator_3Dconv_frommem(torch.utils.data.Dataset):
             X (np.ndarray): Rotated image volumes
             y_3d (np.ndarray): Rotated 3D grid coordinates (AVG) or training target volumes (MAX)
         """
-        # if use temporal, rotation augmentations have to be consistent within each temporal chunks
-        # for example, assume the temporal chunk size to be 2, each batch contains exactly 2 chunks
-        # then, only 2 different rotation schemes need to be generated
-        rots = np.random.choice(np.arange(4), self.temporal_chunk_size)
-        for j in range(0, self.temporal_chunk_size):
-            if rots[j] == 0:
-                pass
-            elif rots[j] == 1:
-                # Rotate180
-                # for j in range(i, i+self.temporal_chunk_size):
+        # rotation for all volumes within each chunk must be consistent
+        rot = np.random.choice(np.arange(4), 1)
+        
+        if rot == 0:
+            pass
+        elif rot == 1:
+            # Rotate180
+            for j in range(self.temporal_chunk_size):
                 X[j], y_3d[j] = self.rot180(X[j]), self.rot180(y_3d[j])
                 if aux is not None:
                     aux[j] = self.rot180(aux[j])
-            elif rots[j] == 2:
-                # Rotate90
-                # for j in range(i, i+self.temporal_chunk_size):
+        elif rot  == 2:
+            # Rotate90
+            for j in range(self.temporal_chunk_size):
                 X[j], y_3d[j] = self.rot90(X[j]), self.rot90(y_3d[j])
                 if aux is not None:
                     aux[j] = self.rot90(aux[j])
-            elif rots[j] == 3:
-                # Rotate -90/270
-                # for j in range(i, i+self.temporal_chunk_size):
+        elif rot == 3:
+            # Rotate -90/270
+            for j in range(self.temporal_chunk_size):
                 X[j], y_3d[j] = self.rot180(self.rot90(X[j])), self.rot180(self.rot90(y_3d[j]))
                 if aux is not None:
                     aux[j] = self.rot180(self.rot90(aux[j]))
+    
         if aux is not None:
             return X, y_3d, aux
         return X, y_3d
@@ -864,7 +863,6 @@ class DataGenerator_3Dconv_frommem(torch.utils.data.Dataset):
 
         X = X.permute(0, 2, 3, 1).reshape(*X.shape[:3], X.shape[2], -1).numpy()
         y_3d = y_3d.permute(0, 2, 3, 1).reshape(*X.shape[:3], X.shape[2], -1).numpy()
-
 
         return X, y_3d
 
