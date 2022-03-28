@@ -103,34 +103,34 @@ def infer_params(params, dannce_net, prediction):
         if not prediction and params["train_mode"] is None:
             raise Exception("Need to specific train_mode for DANNCE training")
 
-        if params["net_type"] == "AVG":
-            print_and_set(params, "expval", True)
-        elif params["net_type"] == "MAX":
-            print_and_set(params, "expval", False)
-        else:
-            raise Exception("{} not a valid net_type".format(params["net_type"]))
+        # if params["net_type"] == "AVG":
+        #     print_and_set(params, "expval", True)
+        # elif params["net_type"] == "MAX":
+        #     print_and_set(params, "expval", False)
+        # else:
+        #     raise Exception("{} not a valid net_type".format(params["net_type"]))
 
         # if not prediction:
-        if params["net_type"] == "AVG" and params["train_mode"] == "finetune":
-            print_and_set(params, "net", "finetune_AVG")
-        elif params["net_type"] == "AVG":
-            # This is the network for training from scratch.
-            # This will also set the network for "continued", but that network
-            # will be ignored, as for continued training the full model file
-            # is loaded in without a call to construct the network. However, a value
-            # for params['net'] is still required for initialization
-            print_and_set(params, "net", "unet3d_big_expectedvalue")
-        elif params["net_type"] == "MAX" and params["train_mode"] == "finetune":
-            print_and_set(params, "net", "finetune_MAX")
-        elif params["net_type"] == "MAX":
-            print_and_set(params, "net", "unet3d_big")
+        # if params["net_type"] == "AVG" and params["train_mode"] == "finetune":
+        #     print_and_set(params, "net", "finetune_AVG")
+        # elif params["net_type"] == "AVG":
+        #     # This is the network for training from scratch.
+        #     # This will also set the network for "continued", but that network
+        #     # will be ignored, as for continued training the full model file
+        #     # is loaded in without a call to construct the network. However, a value
+        #     # for params['net'] is still required for initialization
+        #     print_and_set(params, "net", "unet3d_big_expectedvalue")
+        # elif params["net_type"] == "MAX" and params["train_mode"] == "finetune":
+        #     print_and_set(params, "net", "finetune_MAX")
+        # elif params["net_type"] == "MAX":
+        #     print_and_set(params, "net", "unet3d_big")
 
-    elif dannce_net and params["expval"] is None:
-        if "AVG" in params["net"] or "expected" in params["net"]:
-            print_and_set(params, "expval", True)
-        else:
-            print_and_set(params, "expval", False)
-
+    # elif dannce_net and params["expval"] is None:
+    #     if "AVG" in params["net"] or "expected" in params["net"]:
+    #         print_and_set(params, "expval", True)
+    #     else:
+    #         print_and_set(params, "expval", False)
+    print_and_set(params, "expval", True)
     if dannce_net:
         # infer crop_height and crop_width if None. Just use max dims of video, as
         # DANNCE does not need to crop.
@@ -214,13 +214,13 @@ def infer_params(params, dannce_net, prediction):
         warnings.warn(msg)
 
     # Handle COM network name backwards compatibility
-    if params["net"].lower() == "unet2d_fullbn":
-        print_and_set(params, "norm_method", "batch")
-    elif params["net"] == "unet2d_fullIN":
-        print_and_set(params, "norm_method", "layer")
+    # if params["net"].lower() == "unet2d_fullbn":
+    #     print_and_set(params, "norm_method", "batch")
+    # elif params["net"] == "unet2d_fullIN":
+    #     print_and_set(params, "norm_method", "layer")
 
-    if not dannce_net:
-        print_and_set(params, "net", "unet2d_full")
+    # if not dannce_net:
+    #     print_and_set(params, "net", "unet2d_full")
 
     return params
 
@@ -241,7 +241,7 @@ def check_config(params, dannce_net, prediction):
             check_camnames(expdict)
 
     if dannce_net:
-        check_net_expval(params)
+        # check_net_expval(params)
         check_vmin_vmax(params)
 
 def check_vmin_vmax(params):

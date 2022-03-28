@@ -9,9 +9,10 @@ class EncoderDecorder_DANNCE(nn.Module):
     """
     3D UNet class for 3D pose estimation.
     """
-    def __init__(self, in_channels, normalization, input_shape, residual=False):
+    def __init__(self, in_channels, normalization, input_shape, residual=False, norm_upsampling=False):
         super().__init__()
         conv_block = Res3DBlock if residual else Basic3DBlock
+        deconv_block = Upsample3DBlock if norm_upsampling else BasicUpSample3DBlock
 
         self.encoder_res1 = conv_block(in_channels, 64, normalization, [input_shape]*3)
         self.encoder_pool1 = Pool3DBlock(2)
@@ -22,11 +23,11 @@ class EncoderDecorder_DANNCE(nn.Module):
         self.encoder_res4 = conv_block(256, 512, normalization, [input_shape//8]*3)
 
         self.decoder_res3 = conv_block(512, 256, normalization, [input_shape//4]*3)
-        self.decoder_upsample3 = Upsample3DBlock(512, 256, 2, 2, normalization, [input_shape//4]*3)
+        self.decoder_upsample3 = deconv_block(512, 256, 2, 2, normalization, [input_shape//4]*3)
         self.decoder_res2 = conv_block(256, 128, normalization, [input_shape//2]*3)
-        self.decoder_upsample2 = Upsample3DBlock(256, 128, 2, 2, normalization, [input_shape//2]*3)
+        self.decoder_upsample2 = deconv_block(256, 128, 2, 2, normalization, [input_shape//2]*3)
         self.decoder_res1 = conv_block(128, 64, normalization, [input_shape]*3)
-        self.decoder_upsample1 = Upsample3DBlock(128, 64, 2, 2, normalization, [input_shape]*3)
+        self.decoder_upsample1 = deconv_block(128, 64, 2, 2, normalization, [input_shape]*3)
 
     def forward(self, x):
         # encoder
@@ -57,21 +58,13 @@ class EncoderDecorder_DANNCE(nn.Module):
         return x
 
 class DANNCE(nn.Module):
-    def __init__(self, input_channels, output_channels, input_shape, return_coords=True, norm_method='layer', residual=False):
+    def __init__(self, input_channels, output_channels, input_shape, norm_method='layer', residual=False, norm_upsampling=False):
         super().__init__()
-        # torch Layer Norm requires explicit input shape for initialization
-        # self.normalization = NORMALIZATION_MODES[norm_method]
-        # if residual:
-        #     self.front_layers = Res3DBlock(input_channels, 64, norm_method, input_shape=[input_shape]*3)
-        # else:
-        #     self.front_layers = Basic3DBlock(input_channels, 64, norm_method, input_shape=[input_shape]*3)
 
-        self.encoder_decoder = EncoderDecorder_DANNCE(input_channels, norm_method, input_shape, residual)
+        self.encoder_decoder = EncoderDecorder_DANNCE(input_channels, norm_method, input_shape, residual, norm_upsampling)
         self.output_layer = nn.Conv3d(64, output_channels, kernel_size=1, stride=1, padding=0)
         
         # self._initialize_weights()
-
-        self.return_coords = return_coords
         self.n_joints = output_channels
 
     def forward(self, volumes, grid_centers):
@@ -79,7 +72,6 @@ class DANNCE(nn.Module):
         volumes: Tensor [batch_size, C, H, W, D]
         grid_centers: [batch_size, nvox**3, 3]
         """
-        # volumes = self.front_layers(volumes)
         volumes = self.encoder_decoder(volumes)
         volumes = self.output_layer(volumes)
 
@@ -99,16 +91,26 @@ class DANNCE(nn.Module):
                 # nn.init.normal_(m.weight, 0, 0.001)
                 nn.init.constant_(m.bias, 0)
 
+
 def initialize_model(params, n_cams, device):
     """
     Initialize DANNCE model with params and move to GPU.
     """
-    model = DANNCE(
-        input_channels=(params["chan_num"] + params["depth"]) * n_cams,
-        output_channels=params["n_channels_out"],
-        norm_method=params["norm_method"],
-        # return_coords=params["expval"],
-        input_shape=params["nvox"]
-    )
+    model_params = {
+        "input_channels": (params["chan_num"] + params["depth"]) * n_cams,
+        "output_channels": params["n_channels_out"],
+        "norm_method": params["norm_method"],
+        "input_shape": params["nvox"]
+    }
+
+    if params["net_type"] == "dannce":
+        model_params = {**model_params, "residual": False, "norm_upsampling": False}
+    elif params["net_type"] == "semi-v2v":
+        model_params = {**model_params, "residual": False, "norm_upsampling": True}
+    elif params["net_type"] == "v2v":
+        model_params = {**model_params, "residual": True, "norm_upsampling": True}
+
+    model = DANNCE(**model_params)
+
     model = model.to(device)
     return model

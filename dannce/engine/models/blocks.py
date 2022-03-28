@@ -1,3 +1,4 @@
+from turtle import forward
 import torch.nn as nn
 import torch.nn.functional as F
 
@@ -49,8 +50,6 @@ class Res3DBlock(nn.Module):
         res = self.res_branch(x)
         skip = self.skip_con(x)
         return F.relu(res + skip, True)
-    # def forward(self, x):
-    #     return F.relu(self.res_branch(x))
 
 
 class Pool3DBlock(nn.Module):
@@ -61,6 +60,16 @@ class Pool3DBlock(nn.Module):
     def forward(self, x):
         return F.max_pool3d(x, kernel_size=self.pool_size, stride=self.pool_size)
 
+
+class BasicUpSample3DBlock(nn.Module):
+    def __init__(self, in_planes, out_planes, kernel_size, stride, norm_method, input_shape):
+        super(BasicUpSample3DBlock, self).__init__()
+        self.block = nn.Sequential(
+            nn.ConvTranspose3d(in_planes, out_planes, kernel_size=kernel_size, stride=stride, padding=0, output_padding=0)
+        )
+    
+    def forward(self, x):
+        return self.block(x)
 
 class Upsample3DBlock(nn.Module):
     def __init__(self, in_planes, out_planes, kernel_size, stride, norm_method, input_shape):
