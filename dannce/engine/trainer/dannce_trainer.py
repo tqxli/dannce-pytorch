@@ -16,14 +16,18 @@ class DannceTrainer(BaseTrainer):
 
         # set up csv file for tracking training and validation stats
         stats_file = open(os.path.join(self.params["dannce_train_dir"], "training.csv"), 'w', newline='')
-        self.stats_writer = csv.writer(stats_file)
+        stats_writer = csv.writer(stats_file)
         self.stats_keys = [*self.loss.names, *self.metrics.names]
-        train_stats_keys = ["train_"+k for k in self.stats_keys]
-        valid_stats_keys = ["valid_"+k for k in self.stats_keys]
-        self.stats_writer.writerow(["Epoch", *train_stats_keys, *valid_stats_keys])
+        self.train_stats_keys = ["train_"+k for k in self.stats_keys]
+        self.valid_stats_keys = ["val_"+k for k in self.stats_keys]
+        stats_writer.writerow(["Epoch", *self.train_stats_keys, *self.valid_stats_keys])
+        stats_file.close()
 
     def train(self):
         for epoch in range(self.start_epoch, self.epochs + 1):
+            # open csv
+            stats_file = open(os.path.join(self.params["dannce_train_dir"], "training.csv"), 'a', newline='')
+            stats_writer = csv.writer(stats_file)
             stats = [epoch]
             # train
             train_stats = self._train_epoch(epoch)
@@ -33,7 +37,6 @@ class DannceTrainer(BaseTrainer):
                     
             result_msg = f"Epoch[{epoch}/{self.epochs}] " \
                 + "".join(f"train_{k}: {val:.4f} " for k, val in train_stats.items()) 
-            self.logger.info(result_msg)
             
             # validation
             valid_stats= self._valid_epoch(epoch)
@@ -41,12 +44,17 @@ class DannceTrainer(BaseTrainer):
             for k in self.stats_keys:
                 stats.append(valid_stats[k])
                     
-            result_msg = f"Epoch[{epoch}/{self.epochs}] " \
-                + "".join(f"valid_{k}: {val:.4f} " for k, val in valid_stats.items()) 
+            result_msg = result_msg \
+                + "".join(f"val_{k}: {val:.4f} " for k, val in valid_stats.items()) 
             self.logger.info(result_msg)
 
             # write stats to csv
-            self.stats_writer.writerow(stats)
+            stats_writer.writerow(stats)
+            stats_file.close()
+
+            # write stats to tensorboard
+            for k, v in zip([*self.train_stats_keys, *self.valid_stats_keys], stats):
+                self.writer.add_scalar(k, v, epoch)
 
             # save checkpoints after each save period or at the end of training
             if epoch % self.save_period == 0 or epoch == self.epochs:
