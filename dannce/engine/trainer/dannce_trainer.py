@@ -144,7 +144,7 @@ class DannceTrainer(BaseTrainer):
                     :,
                     :,
                     :,
-                    j*self.params["chan_num"]: (j+1)self.params["chan_num"],
+                    j*self.params["chan_num"]: (j+1)*self.params["chan_num"],
                 ]
                 im = processing.norm_im(im) * 255
                 im = im.astype("uint8")
