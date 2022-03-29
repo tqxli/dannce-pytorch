@@ -138,7 +138,7 @@ class DannceTrainer(BaseTrainer):
         print("Dump training volumes to {}".format(tifdir))
         volumes = volumes.clone().detach().cpu().permute(0, 2, 3, 4, 1).numpy()
         for i in range(volumes.shape[0]):
-            for j in range(volumes.shape[1] // self.params["chan_num"]):
+            for j in range(volumes.shape[-1] // self.params["chan_num"]):
                 im = volumes[
                     i,
                     :,
