@@ -563,7 +563,8 @@ def dannce_train(params: Dict):
         valid_dataloader=valid_dataloader,
         optimizer=optimizer,
         device=device,
-        logger=logger
+        logger=logger,
+        visualize_batch=False
     )
 
     trainer.train()

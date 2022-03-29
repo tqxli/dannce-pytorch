@@ -1,10 +1,13 @@
 import torch
 import csv, os
+import imageio
 from dannce.engine.trainer.base_trainer import BaseTrainer
 from dannce.engine.trainer.train_utils import prepare_batch, LossHelper, MetricHelper
+import dannce.engine.data.processing as processing
+import numpy as np
 
 class DannceTrainer(BaseTrainer):
-    def __init__(self, device, train_dataloader, valid_dataloader, lr_scheduler=None, **kwargs):
+    def __init__(self, device, train_dataloader, valid_dataloader, lr_scheduler=None, visualize_batch=False, **kwargs):
         super().__init__(**kwargs)
 
         self.loss = LossHelper(self.params)
@@ -13,6 +16,8 @@ class DannceTrainer(BaseTrainer):
         self.train_dataloader = train_dataloader
         self.valid_dataloader = valid_dataloader
         self.lr_scheduler = lr_scheduler
+
+        self.visualize_batch = visualize_batch
 
         # set up csv file for tracking training and validation stats
         stats_file = open(os.path.join(self.params["dannce_train_dir"], "training.csv"), 'w', newline='')
@@ -68,6 +73,9 @@ class DannceTrainer(BaseTrainer):
             epoch_loss_dict, epoch_metric_dict = {}, {}
             for batch in self.train_dataloader: 
                 volumes, grid_centers, keypoints_3d_gt, aux = prepare_batch(batch, self.device)
+                if self.visualize_batch:
+                    self.visualize(epoch, volumes)
+                    return
 
                 self.optimizer.zero_grad()
                 keypoints_3d_pred, _ = self.model(volumes, grid_centers)
@@ -122,5 +130,29 @@ class DannceTrainer(BaseTrainer):
             valid_num = sum([item > 0 for item in v])
             epoch_dict[k] = sum(v) / valid_num
         return epoch_dict
+    
+    def visualize(self, epoch, volumes):
+        tifdir = os.path.join(self.params["dannce_train_dir"], "debug_volumes", f"epoch{epoch}")
+        if not os.path.exists(tifdir):
+            os.makedirs(tifdir)
+        print("Dump training volumes to {}".format(tifdir))
+        volumes = volumes.clone().detach().cpu().permute(0, 2, 3, 4, 1).numpy()
+        for i in range(volumes.shape[0]):
+            for j in range(volumes.shape[1] // self.params["chan_num"]):
+                im = volumes[
+                    i,
+                    :,
+                    :,
+                    :,
+                    j*self.params["chan_num"]: (j+1)self.params["chan_num"],
+                ]
+                im = processing.norm_im(im) * 255
+                im = im.astype("uint8")
+                of = os.path.join(
+                    tifdir,
+                    f"sample{i}" + "_cam" + str(j) + ".tif",
+                )
+                imageio.mimwrite(of, np.transpose(im, [2, 0, 1, 3]))
+
 
 
