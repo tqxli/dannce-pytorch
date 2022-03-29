@@ -962,7 +962,7 @@ class DataGenerator_3Dconv_frommem(torch.utils.data.Dataset):
                 #     X[..., channel_ids], self.bright_val
                 # )
                 X_temp = torch.as_tensor(X[..., channel_ids]).permute(0, 3, 4, 1, 2)
-                random_bright_val = float(torch.empty(1).uniform_(0, self.bright_val))
+                random_bright_val = float(torch.empty(1).uniform_(1-self.bright_val, 1+self.bright_val))
                 X_temp = TF.adjust_brightness(X_temp, random_bright_val)
                 X[..., channel_ids] = X_temp.permute(0, 3, 4, 1, 2).numpy()
 
