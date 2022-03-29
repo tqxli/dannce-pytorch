@@ -15,10 +15,10 @@ class Basic3DBlock(nn.Module):
         self.normalization = NORMALIZATION_MODES[norm_method]
         self.block = nn.Sequential(
             nn.Conv3d(in_planes, out_planes, kernel_size=3, stride=1, padding=1),
-            self.normalization(input_shape) if norm_method == 'layer' else self.normalization(out_planes),
+            self.normalization([out_planes, *input_shape]) if norm_method == 'layer' else self.normalization(out_planes),
             nn.ReLU(True),
             nn.Conv3d(out_planes, out_planes, kernel_size=3, stride=1, padding=1),
-            self.normalization(input_shape) if norm_method == 'layer' else self.normalization(out_planes),
+            self.normalization([out_planes, *input_shape]) if norm_method == 'layer' else self.normalization(out_planes),
             nn.ReLU(True),
         )
 
@@ -32,10 +32,10 @@ class Res3DBlock(nn.Module):
         self.normalization = NORMALIZATION_MODES[norm_method]
         self.res_branch = nn.Sequential(
             nn.Conv3d(in_planes, out_planes, kernel_size=3, stride=1, padding=1),
-            self.normalization(input_shape) if norm_method == 'layer' else self.normalization(out_planes),
+            self.normalization([out_planes, *input_shape]) if norm_method == 'layer' else self.normalization(out_planes),
             nn.ReLU(True),
             nn.Conv3d(out_planes, out_planes, kernel_size=3, stride=1, padding=1),
-            self.normalization(input_shape) if norm_method == 'layer' else self.normalization(out_planes),
+            self.normalization([out_planes, *input_shape]) if norm_method == 'layer' else self.normalization(out_planes),
         )
 
         if in_planes == out_planes:
@@ -43,7 +43,7 @@ class Res3DBlock(nn.Module):
         else:
             self.skip_con = nn.Sequential(
                 nn.Conv3d(in_planes, out_planes, kernel_size=1, stride=1, padding=0),
-                self.normalization(input_shape) if norm_method == 'layer' else self.normalization(out_planes)
+                self.normalization([out_planes, *input_shape]) if norm_method == 'layer' else self.normalization(out_planes)
             )
 
     def forward(self, x):
@@ -79,7 +79,7 @@ class Upsample3DBlock(nn.Module):
         self.normalization = NORMALIZATION_MODES[norm_method]
         self.block = nn.Sequential(
             nn.ConvTranspose3d(in_planes, out_planes, kernel_size=kernel_size, stride=stride, padding=0, output_padding=0),
-            self.normalization(input_shape) if norm_method == 'layer' else self.normalization(out_planes),
+            self.normalization([out_planes, *input_shape]) if norm_method == 'layer' else self.normalization(out_planes),
             nn.ReLU(True)
         )
 
