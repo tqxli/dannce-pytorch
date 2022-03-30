@@ -94,6 +94,13 @@ class SeparationLoss(BaseLoss):
 
         return self.loss_weight * sep.mean()
 
+class HeatmapRegularizationLoss(BaseLoss):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+    
+    def forward(self, gt, pred):
+        return - (gt * pred.log()).mean()
+
 class PairRepulsionLoss(BaseLoss):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)

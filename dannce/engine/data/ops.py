@@ -1,4 +1,5 @@
 """Operations for dannce."""
+from matplotlib.pyplot import grid
 import numpy as np
 from scipy.interpolate import RegularGridInterpolator
 import cv2
@@ -351,26 +352,21 @@ def spatial_softmax_torch(feats):
     return feats.reshape(bs, channels, h, w, d)
 
 
-# def var_3d(prob_map, grid_centers, markerlocs):
-#     """Return the average variance across all marker probability maps.
+def var_3d_torch(prob_map, grid_centers, markerlocs):
+    """Return the average variance across all marker probability maps.
 
-#     Used a loss to promote "peakiness" in the probability map output
-#     prob_map should be (batch_size,h,w,d,channels)
-#     grid_centers should be (batch_size,h*w*d,3)
-#     markerlocs is (batch_size,3,channels)
-#     """
-#     bs, h, w, d, channels = K.int_shape(prob_map)
+    Used a loss to promote "peakiness" in the probability map output
+    prob_map should be (batch_size,h,w,d,channels)
+    grid_centers should be (batch_size,h*w*d,3)
+    markerlocs is (batch_size,3,channels)
+    """
+    channels, h, w, d = prob_map.shape[1:]
+    prob_map = prob_map.permute(0, 2, 3, 3, 1).reshape(-1, channels)
+    grid_dist = (grid_centers.unsqueeze(-1) - markerlocs.unsqueeze(1)) ** 2
+    grid_dist = grid_dist.sum(2)
+    grid_dist = grid_dist.reshape(-1, channels)
 
-#     prob_map = tf.reshape(prob_map, [-1, channels])
-
-#     # we need the squared distance between all grid centers and
-#     # the mean for each channel grid dist now (bs, h*w*d,17)
-#     grid_dist = tf.reduce_sum(
-#         (grid_centers[:, :, :, tf.newaxis] - markerlocs[:, tf.newaxis, :, :]) ** 2,
-#         axis=2,
-#     )
-#     grid_dist = tf.reshape(grid_dist, [-1, channels])
-#     weighted_var = prob_map * grid_dist
-#     weighted_var = tf.reshape(weighted_var, [-1, h * w * d, channels])
-#     weighted_var = tf.reduce_sum(weighted_var, axis=1)
-#     return tf.reduce_mean(weighted_var, axis=-1)[:, tf.newaxis]
+    weighted_var = prob_map * grid_dist
+    weighted_var = weighted_var.reshape(-1, h*w*d, channels)
+    weighted_var = weighted_var.sum(1)
+    return torch.mean(weighted_var, dim=-1, keepdim=True)

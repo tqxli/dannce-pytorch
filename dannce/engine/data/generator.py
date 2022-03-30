@@ -515,6 +515,21 @@ class DataGenerator_3Dconv(DataGenerator):
             (x_coord_3d, y_coord_3d, z_coord_3d) = torch.meshgrid(
                 xgrid, ygrid, zgrid
             )
+            
+            if self.mode == "3dprob":
+                for j in range(self.n_channels_out):
+                    y_3d[i, j] = np.exp(
+                        -(
+                            (y_coord_3d - this_y_3d[1, j]) ** 2
+                            + (x_coord_3d - this_y_3d[0, j]) ** 2
+                            + (z_coord_3d - this_y_3d[2, j]) ** 2
+                        )
+                        / (2 * self.out_scale ** 2)
+                    )
+                    # When the voxel grid is coarse, we will likely miss
+                    # the peak of the probability distribution, as it
+                    # will lie somewhere in the middle of a large voxel.
+                    # So here we renormalize to [~, 1]
 
             if self.mode == "coordinates":
                 if this_y_3d.shape == y_3d[i].shape:
