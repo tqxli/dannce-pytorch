@@ -64,7 +64,7 @@ class DANNCE(nn.Module):
         self.encoder_decoder = EncoderDecorder_DANNCE(input_channels, norm_method, input_shape, residual, norm_upsampling)
         self.output_layer = nn.Conv3d(64, output_channels, kernel_size=1, stride=1, padding=0)
         
-        # self._initialize_weights()
+        self._initialize_weights()
         self.n_joints = output_channels
 
     def forward(self, volumes, grid_centers):
@@ -83,13 +83,13 @@ class DANNCE(nn.Module):
     def _initialize_weights(self):
         for m in self.modules():
             if isinstance(m, nn.Conv3d):
-                nn.init.xavier_normal_(m.weight)
-                # nn.init.normal_(m.weight, 0, 0.001)
-                nn.init.constant_(m.bias, 0)
+                nn.init.xavier_uniform_(m.weight)
+                # nn.init.xavier_normal_(m.weight)
+                nn.init.zeros_(m.bias)
             elif isinstance(m, nn.ConvTranspose3d):
-                nn.init.xavier_normal_(m.weight)
-                # nn.init.normal_(m.weight, 0, 0.001)
-                nn.init.constant_(m.bias, 0)
+                nn.init.xavier_uniform_(m.weight)
+                # nn.init.xavier_normal_(m.weight)
+                nn.init.zeros_(m.bias)
 
 
 def initialize_model(params, n_cams, device):

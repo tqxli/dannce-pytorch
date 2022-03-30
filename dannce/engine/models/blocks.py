@@ -1,11 +1,12 @@
 from turtle import forward
 import torch.nn as nn
 import torch.nn.functional as F
+from .normalization import LayerNormalization
 
 NORMALIZATION_MODES = {
     'batch': nn.BatchNorm3d,
     'instance': nn.InstanceNorm3d,
-    'layer': nn.LayerNorm
+    'layer': LayerNormalization,# nn.LayerNorm
 }
 
 class Basic3DBlock(nn.Module):
