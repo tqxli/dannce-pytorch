@@ -58,7 +58,7 @@ class DannceTrainer(BaseTrainer):
             stats_file.close()
 
             # write stats to tensorboard
-            for k, v in zip([*self.train_stats_keys, *self.valid_stats_keys], stats):
+            for k, v in zip([*self.train_stats_keys, *self.valid_stats_keys], stats[1:]):
                 self.writer.add_scalar(k, v, epoch)
 
             # save checkpoints after each save period or at the end of training
