@@ -27,7 +27,7 @@ from typing import List, Dict, Text
 import os, psutil, csv
 
 import torch
-from dannce.engine.models.nets import DANNCE, initialize_model
+from dannce.engine.models.nets import initialize_model
 from dannce.engine.trainer.dannce_trainer import DannceTrainer
 
 from dannce.engine.logging.logger import setup_logging, get_logger
@@ -537,7 +537,7 @@ def dannce_train(params: Dict):
     if params["train_mode"] == "new":
         model = initialize_model(params, n_cams, device)
         model_params = [p for p in model.parameters() if p.requires_grad]
-        optimizer = torch.optim.Adam(model_params, lr=params["lr"])
+        optimizer = torch.optim.Adam(model_params, lr=params["lr"], eps=1e-7)
 
     elif params["train_mode"] == "finetune" or params["train_mode"] == "continued":
         checkpoints = torch.load(params["dannce_finetune_weights"])
@@ -550,9 +550,11 @@ def dannce_train(params: Dict):
             optimizer = torch.optim.Adam()
             optimizer.load_state_dict(checkpoints["optimizer"])
         else:
-            optimizer = torch.optim.Adam(model_params, lr=params["lr"])
+            optimizer = torch.optim.Adam(model_params, lr=params["lr"], eps=1e-7)
 
-    # lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(mode='min', factor=0.1, patience=50)
+    lr_scheduler = None
+    if lr_scheduler is not None:
+        lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=int(params["epochs"] // 3), gamma=0.1, verbose=True)
     logger.info("COMPLETE\n")
 
     # set up trainer
@@ -564,7 +566,8 @@ def dannce_train(params: Dict):
         optimizer=optimizer,
         device=device,
         logger=logger,
-        visualize_batch=False
+        visualize_batch=False,
+        lr_scheduler=lr_scheduler
     )
 
     trainer.train()

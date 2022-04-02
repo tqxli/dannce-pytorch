@@ -3,14 +3,14 @@ Adapted from
 https://github.com/facebookresearch/VideoPose3D/blob/main/common/loss.py
 """
 import numpy as np
+import torch
 
 def nanmean_infmean(loss):
     valid = (~np.isnan(loss)) & (~np.isposinf(loss)) & (~np.isneginf(loss))
     num_valid = valid.sum()
-    loss[~valid] = 0
     if num_valid == 0:
         return 0
-    return loss.sum() / num_valid
+    return loss[valid].sum() / num_valid
 
 def euclidean_distance_3D(predicted, target):
     """

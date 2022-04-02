@@ -18,6 +18,7 @@ setup(
         "multiprocess",
         "opencv-python",
         'tensorboard',
+        "tensorflow==2.4",
         # "pandas"
         "psutil",
     ],

@@ -62,8 +62,8 @@ class DannceTrainer(BaseTrainer):
                 self.writer.add_scalar(k, v, epoch)
 
             # save checkpoints after each save period or at the end of training
-            if epoch % self.save_period == 0 or epoch == self.epochs:
-                self._save_checkpoint(epoch)
+            # if epoch % self.save_period == 0 or epoch == self.epochs:
+            self._save_checkpoint(epoch)
 
 
     def _train_epoch(self, epoch):

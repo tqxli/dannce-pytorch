@@ -1,4 +1,3 @@
-from turtle import forward
 import torch.nn as nn
 import torch.nn.functional as F
 from .normalization import LayerNormalization
@@ -59,7 +58,7 @@ class Pool3DBlock(nn.Module):
         self.pool_size = pool_size
 
     def forward(self, x):
-        return F.max_pool3d(x, kernel_size=self.pool_size, stride=self.pool_size)
+        return F.max_pool3d(x, kernel_size=self.pool_size)
 
 
 class BasicUpSample3DBlock(nn.Module):

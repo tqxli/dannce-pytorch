@@ -25,13 +25,13 @@ class LossHelper:
         Compute each loss and return their weighted sum for backprop.
         """
         loss_dict = {}
-        total_loss = 0
+        total_loss = []
         for k, lossfcn in self.loss_fcns.items():
-            loss_val = lossfcn(kpts_gt.clone(), kpts_pred.clone())
-            total_loss += loss_val
+            loss_val = lossfcn(kpts_gt, kpts_pred)
+            total_loss.append(loss_val)
             loss_dict[k] = loss_val.detach().clone().cpu().item()
 
-        return total_loss, loss_dict
+        return sum(total_loss), loss_dict
 
     @property
     def names(self):
@@ -50,7 +50,7 @@ class MetricHelper:
     def evaluate(self, kpts_gt, kpts_pred):
         metric_dict = {}
         for met in self.metric_names:
-            metric_dict[met] = self.metrics[met](kpts_gt, kpts_pred)
+            metric_dict[met] = self.metrics[met](kpts_pred, kpts_gt)
 
         return metric_dict
 

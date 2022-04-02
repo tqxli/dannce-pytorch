@@ -10,6 +10,7 @@ import time
 from multiprocessing.dummy import Pool as ThreadPool
 from typing import List, Dict, Tuple, Text
 
+import tensorflow as tf
 import torch
 import torchvision.transforms.functional as TF
 
@@ -869,15 +870,47 @@ class DataGenerator_3Dconv_frommem(torch.utils.data.Dataset):
             np.ndarray: rotated image volumes
             np.ndarray: rotated grid coordimates
         """
-        rotangle = np.random.rand() * (2 * max_delta) - max_delta
-        X = torch.as_tensor(X).reshape(*X.shape[:3], -1).permute(0, 3, 1, 2) # dimension [B, D*C, H, W]
-        y_3d = torch.as_tensor(y_3d).reshape(y_3d.shape[:3], -1).permute(0, 3, 1, 2)
-        for i in range(X.shape[0]):
-            X[i] = TF.affine(X[i], angle=rotangle)
-            y_3d[i] = TF.affine(y_3d[i], angle=rotangle)
+        # rotangle = np.random.rand() * (2 * max_delta) - max_delta
+        # X = torch.as_tensor(X).reshape(*X.shape[:3], -1).permute(0, 3, 1, 2) # dimension [B, D*C, H, W]
+        # y_3d = torch.as_tensor(y_3d).reshape(y_3d.shape[:3], -1).permute(0, 3, 1, 2)
+        # for i in range(X.shape[0]):
+        #     X[i] = TF.affine(X[i], angle=rotangle)
+        #     y_3d[i] = TF.affine(y_3d[i], angle=rotangle)
 
-        X = X.permute(0, 2, 3, 1).reshape(*X.shape[:3], X.shape[2], -1).numpy()
-        y_3d = y_3d.permute(0, 2, 3, 1).reshape(*X.shape[:3], X.shape[2], -1).numpy()
+        # X = X.permute(0, 2, 3, 1).reshape(*X.shape[:3], X.shape[2], -1).numpy()
+        # y_3d = y_3d.permute(0, 2, 3, 1).reshape(*X.shape[:3], X.shape[2], -1).numpy()
+
+        # return X, y_3d
+        rotangle = np.random.rand() * (2 * max_delta) - max_delta
+        X = tf.reshape(X, [X.shape[0], X.shape[1], X.shape[2], -1]).numpy()
+        y_3d = tf.reshape(y_3d, [y_3d.shape[0], y_3d.shape[1], y_3d.shape[2], -1]).numpy()
+        for i in range(X.shape[0]):
+            X[i] = tf.keras.preprocessing.image.apply_affine_transform(
+                X[i],
+                theta=rotangle,
+                row_axis=0,
+                col_axis=1,
+                channel_axis=2,
+                fill_mode="nearest",
+                cval=0.0,
+                order=1,
+            )
+            y_3d[i] = tf.keras.preprocessing.image.apply_affine_transform(
+                y_3d[i],
+                theta=rotangle,
+                row_axis=0,
+                col_axis=1,
+                channel_axis=2,
+                fill_mode="nearest",
+                cval=0.0,
+                order=1,
+            )
+
+        X = tf.reshape(X, [X.shape[0], X.shape[1], X.shape[2], X.shape[2], -1]).numpy()
+        y_3d = tf.reshape(
+            y_3d,
+            [y_3d.shape[0], y_3d.shape[1], y_3d.shape[2], y_3d.shape[2], -1],
+        ).numpy()
 
         return X, y_3d
 
@@ -954,13 +987,13 @@ class DataGenerator_3Dconv_frommem(torch.utils.data.Dataset):
                     n_cam * self.chan_num,
                     n_cam * self.chan_num + self.chan_num,
                 )
-                # X[..., channel_ids] = tf.image.random_hue(
-                #     X[..., channel_ids], self.hue_val
-                # )
-                X_temp = torch.as_tensor(X[..., channel_ids]).permute(0, 3, 4, 1, 2)
-                random_hue_val = float(torch.empty(1).uniform_(-self.hue_val, self.hue_val))
-                X_temp = TF.adjust_hue(X_temp, random_hue_val)
-                X[..., channel_ids] = X_temp.permute(0, 3, 4, 1, 2).numpy()
+                X[..., channel_ids] = tf.image.random_hue(
+                    X[..., channel_ids], self.hue_val
+                )
+                #X_temp = torch.as_tensor(X[..., channel_ids]).permute(0, 3, 4, 1, 2)
+                #random_hue_val = float(torch.empty(1).uniform_(-self.hue_val, self.hue_val))
+                #X_temp = TF.adjust_hue(X_temp, random_hue_val)
+                #X[..., channel_ids] = X_temp.permute(0, 3, 4, 1, 2).numpy()
 
         elif self.augment_hue:
             warnings.warn(
@@ -973,13 +1006,13 @@ class DataGenerator_3Dconv_frommem(torch.utils.data.Dataset):
                     n_cam * self.chan_num,
                     n_cam * self.chan_num + self.chan_num,
                 )
-                # X[..., channel_ids] = tf.image.random_brightness(
-                #     X[..., channel_ids], self.bright_val
-                # )
-                X_temp = torch.as_tensor(X[..., channel_ids]).permute(0, 3, 4, 1, 2)
-                random_bright_val = float(torch.empty(1).uniform_(1-self.bright_val, 1+self.bright_val))
-                X_temp = TF.adjust_brightness(X_temp, random_bright_val)
-                X[..., channel_ids] = X_temp.permute(0, 3, 4, 1, 2).numpy()
+                X[..., channel_ids] = tf.image.random_brightness(
+                    X[..., channel_ids], self.bright_val
+                )
+                # X_temp = torch.as_tensor(X[..., channel_ids]).permute(0, 3, 4, 1, 2)
+                # random_bright_val = float(torch.empty(1).uniform_(1-self.bright_val, 1+self.bright_val))
+                # X_temp = TF.adjust_brightness(X_temp, random_bright_val)
+                #X[..., channel_ids] = X_temp.permute(0, 3, 4, 1, 2).numpy()
 
         if self.mirror_augmentation and self.expval and aux is None:
             if np.random.rand() > 0.5:
@@ -1088,6 +1121,9 @@ class DataGenerator_3Dconv_frommem(torch.utils.data.Dataset):
             aux = torch.from_numpy(aux)
 
         return torch.from_numpy(X).permute(0, 4, 1, 2, 3), X_grid, torch.from_numpy(y_3d), aux
+    
+    def compute_avg_bone_length(self):
+        return
 
 class DataGenerator_3Dconv_npy(DataGenerator_3Dconv_frommem):
     """Generates 3d conv data from npy files.

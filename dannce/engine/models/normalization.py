@@ -22,11 +22,11 @@ class LayerNormalization(nn.Module):
         self.normal_shape = torch.Size(normal_shape)
         self.epsilon = epsilon
         if gamma:
-            self.gamma = nn.Parameter(torch.Tensor(*normal_shape))
+            self.gamma = nn.Parameter(torch.Tensor(1))
         else:
             self.register_parameter('gamma', None)
         if beta:
-            self.beta = nn.Parameter(torch.Tensor(*normal_shape))
+            self.beta = nn.Parameter(torch.Tensor(1))
         else:
             self.register_parameter('beta', None)
         self.reset_parameters()

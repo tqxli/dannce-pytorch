@@ -1,5 +1,4 @@
 from abc import abstractmethod
-from turtle import forward
 import torch 
 import torch.nn as nn
 import torch.nn.functional as F
@@ -9,20 +8,23 @@ from dannce.engine.models.body_limb import SYMMETRY
 # UTIL_FUNCTIONS
 ##################################################################################################
 
-def mask_nan(kpts_gt, kpts_pred):
-    nan_gt = torch.isnan(kpts_gt)
-    not_nan = (~nan_gt).sum()
-    kpts_gt[nan_gt] = 0 
-    kpts_pred[nan_gt] = 0
-    return kpts_gt, kpts_pred, not_nan
+# def mask_nan(kpts_gt, kpts_pred):
+#     nan_gt = torch.isnan(kpts_gt)
+#     not_nan = (~nan_gt).sum()
+#     kpts_gt[nan_gt] = 0 
+#     kpts_pred[nan_gt] = 0
+#     return kpts_gt, kpts_pred, not_nan
 
 def compute_mask_nan_loss(loss_fcn, kpts_gt, kpts_pred):
-    kpts_gt, kpts_pred, notnan = mask_nan(kpts_gt, kpts_pred)
+    # kpts_gt, kpts_pred, notnan = mask_nan(kpts_gt, kpts_pred)
+    notnan_gt = ~torch.isnan(kpts_gt)
+    notnan = notnan_gt.sum()
     # when ground truth is all NaN for certain reasons, do not compute loss since it results in NaN
     if notnan == 0:
         # print("Found all NaN ground truth")
-        return kpts_pred.new_zeros(())
-    return loss_fcn(kpts_gt, kpts_pred) / notnan
+        return kpts_pred.new_zeros((), requires_grad=False)
+    
+    return loss_fcn(kpts_gt[notnan_gt], kpts_pred[notnan_gt]) / notnan
 
 ##################################################################################################
 # LOSSES
@@ -60,7 +62,7 @@ class TemporalLoss(BaseLoss):
         if self.method == 'l1':
             loss_temp = torch.abs(diff).mean()
         else:
-            loss_temp = (diff**2).sum(-1).sqrt().mean()
+            loss_temp = (diff**2).sum(1).sqrt().mean()
         return self.loss_weight * loss_temp
 
 class BodySymmetryLoss(BaseLoss):

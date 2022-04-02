@@ -66,11 +66,14 @@ class BaseTrainer:
 
         # if self.lr_scheduler is not None:
         #     state["lr_scheduler"] = self.lr_scheduler.state_dict()
-
-        filename = os.path.join(self.checkpoint_dir, 'checkpoint-epoch{}.pth'.format(epoch))
+        if epoch % self.save_period == 0 or epoch == self.epochs:
+            filename = os.path.join(self.checkpoint_dir, 'checkpoint-epoch{}.pth'.format(epoch))
+            self.logger.info("Saving checkpoint: {} ...".format(filename))
+        else:
+            filename = os.path.join(self.checkpoint_dir, 'checkpoint.pth'.format(epoch))
+        
         torch.save(state, filename)
-        self.logger.info("Saving checkpoint: {} ...".format(filename))
-
+        
     def _resume_checkpoint(self, resume_path):
         """
         Resume from saved checkpoints
