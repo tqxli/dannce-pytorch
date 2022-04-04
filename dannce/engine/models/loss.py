@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from dannce.engine.models.body_limb import SYMMETRY
+from dannce.engine.models.vis import draw_voxels
 
 ##################################################################################################
 # UTIL_FUNCTIONS
@@ -96,12 +97,53 @@ class SeparationLoss(BaseLoss):
 
         return self.loss_weight * sep.mean()
 
-class HeatmapRegularizationLoss(BaseLoss):
+class GaussianRegLoss(BaseLoss):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
     
-    def forward(self, gt, pred):
-        return - (gt * pred.log()).mean()
+    def visualize(self, target):
+        import matplotlib
+        import matplotlib.pyplot as plt
+        matplotlib.use('TkAgg')
+
+        fig = plt.figure(figsize=(10, 10))
+        ax = fig.add_subplot(111, projection='3d')
+
+        draw_voxels(target.clone().detach().cpu(), ax)
+        plt.show(block=True)
+        input("Press Enter to continue...")
+
+    def _generate_gaussian_target(self, centers, grids, sigma=0.5):
+        """
+        centers: [batch_size, 3, n_joints]
+        grid: [batch_size, h*w*d, 3]
+        """
+        y_3d = grids.new_zeros(centers.shape[0], centers.shape[2], grids.shape[1]) #[bs, n_joints, n_vox**3]
+        for i in range(y_3d.shape[0]):
+            for j in range(y_3d.shape[1]):
+                y_3d[i, j] = (-((grids[i, :, 1] - centers[i, 1, j])**2 
+                            + (grids[i, :, 0] - centers[i, 0, j])**2
+                            + (grids[i, :, 2] - centers[i, 2, j])**2)).exp()
+                y_3d[i, j] /= (2 * sigma**2)
+        y_3d = F.softmax(y_3d, dim=-1)
+        return y_3d
+        # target = (grids.unsqueeze(-1) - centers.unsqueeze(1))**2 #[bs, n_vox**3, 3, n_joints]
+        # target = (-target.sum(2)).exp() #[bs, n_vox**3, n_joints]
+        # target /= 2 * sigma**2
+        # return target.permute(0, 2, 1) #[bs, n_joints, nvox**3]
+
+    def forward(self, kpts_gt, kpts_pred, heatmaps, grid_centers):
+        """
+        kpts_pred: [bs, 3, n_joints]
+        heatmaps: [bs, n_joints, h, w, d]
+        grid_centers: [bs, h*w*d, 3]
+        """
+        bs, n_joints = heatmaps.shape[0], heatmaps.shape[1]
+        gaussian_gt = self._generate_gaussian_target(kpts_pred.clone().detach(), grid_centers)
+        loss = F.mse_loss(gaussian_gt.reshape(*heatmaps.shape), heatmaps, reduction="sum")
+        loss = loss / bs
+
+        return self.loss_weight * loss
 
 class PairRepulsionLoss(BaseLoss):
     def __init__(self, **kwargs):
@@ -119,6 +161,7 @@ class PairRepulsionLoss(BaseLoss):
         dist = diffsqr.sum(1).sqrt() # [bs, n_joints^2]
         
         return self.loss_weight * dist.mean()
+
 
 # wait to be implemented
 # def silhouette_loss(kpts_gt, kpts_pred):

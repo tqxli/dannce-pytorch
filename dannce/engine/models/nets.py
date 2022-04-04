@@ -78,7 +78,9 @@ class DANNCE(nn.Module):
         heatmaps = spatial_softmax_torch(volumes)
         coords = expected_value_3d_torch(heatmaps, grid_centers)
 
-        return coords, torch.amax(heatmaps, dim=(2, 3, 4)).squeeze(0) # torch amax returns max values, not position
+        return coords, heatmaps
+        
+        # torch.amax(heatmaps, dim=(2, 3, 4)).squeeze(0) # torch amax returns max values, not position
 
     def _initialize_weights(self):
         for m in self.modules():

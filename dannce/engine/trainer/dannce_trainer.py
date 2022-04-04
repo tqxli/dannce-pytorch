@@ -78,8 +78,8 @@ class DannceTrainer(BaseTrainer):
                     return
 
                 self.optimizer.zero_grad()
-                keypoints_3d_pred, _ = self.model(volumes, grid_centers)
-                total_loss, loss_dict = self.loss.compute_loss(keypoints_3d_gt, keypoints_3d_pred)
+                keypoints_3d_pred, heatmaps = self.model(volumes, grid_centers)
+                total_loss, loss_dict = self.loss.compute_loss(keypoints_3d_gt, keypoints_3d_pred, heatmaps, grid_centers)
                 result = f"Epoch[{epoch}/{self.epochs}] " + "".join(f"train_{loss}: {val:.4f} " for loss, val in loss_dict.items())
                 print(result, end='\r')
 
@@ -105,9 +105,9 @@ class DannceTrainer(BaseTrainer):
         with torch.no_grad():
             for batch in self.valid_dataloader:
                 volumes, grid_centers, keypoints_3d_gt, aux = prepare_batch(batch, self.device)
-                keypoints_3d_pred, _ = self.model(volumes, grid_centers)
+                keypoints_3d_pred, heatmaps = self.model(volumes, grid_centers)
 
-                _, loss_dict = self.loss.compute_loss(keypoints_3d_gt, keypoints_3d_pred)
+                _, loss_dict = self.loss.compute_loss(keypoints_3d_gt, keypoints_3d_pred, heatmaps, grid_centers)
                 epoch_loss_dict = self._update_step(epoch_loss_dict, loss_dict)
 
                 metric_dict = self.metrics.evaluate(keypoints_3d_pred.detach().cpu().numpy(), keypoints_3d_gt.cpu().numpy())

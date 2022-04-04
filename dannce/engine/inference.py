@@ -617,7 +617,7 @@ def infer_dannce(
         )
         # breakpoint()
         if params["expval"]:
-            probmap = pred[1].detach().cpu().numpy()
+            probmap = torch.amax(pred[1], dim=(2, 3, 4)).squeeze(0).detach().cpu().numpy()
             pred = pred[0].detach().cpu().numpy()
             for j in range(pred.shape[0]):
                 pred_max = probmap[j]

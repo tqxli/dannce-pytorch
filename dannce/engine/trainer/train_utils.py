@@ -20,14 +20,17 @@ class LossHelper:
         for name, args in self.loss_params["loss"].items():
             self.loss_fcns[name] = getattr(custom_losses, name)(**args)
         
-    def compute_loss(self, kpts_gt, kpts_pred):
+    def compute_loss(self, kpts_gt, kpts_pred, heatmaps, grid_centers):
         """
         Compute each loss and return their weighted sum for backprop.
         """
         loss_dict = {}
         total_loss = []
         for k, lossfcn in self.loss_fcns.items():
-            loss_val = lossfcn(kpts_gt, kpts_pred)
+            if k == "GaussianRegLoss":
+                loss_val = lossfcn(kpts_gt, kpts_pred, heatmaps, grid_centers)
+            else:
+                loss_val = lossfcn(kpts_gt, kpts_pred)
             total_loss.append(loss_val)
             loss_dict[k] = loss_val.detach().clone().cpu().item()
 
