@@ -1173,12 +1173,46 @@ def write_npy(uri, gen):
         # loop over all examples in batch and save volume
         for j in range(bs):
             # get the frame name / unique ID
-            fname = gen.list_IDs[gen.indexes[i * bs + j]]
+            fname = gen.list_IDs[i * bs + j]
 
             # and save
             print(fname)
             np.save(os.path.join(imdir, fname + ".npy"), bch[0][0][j].astype("uint8"))
             np.save(os.path.join(griddir, fname + ".npy"), bch[0][1][j])
+
+def write_sil_npy(uri, gen):
+    """
+    Creates a new image folder and grid folder at the uri and uses
+    the generator to generate samples and save them as npy files
+    """
+    imdir = os.path.join(uri, "visual_hulls")
+    if not os.path.exists(imdir):
+        os.makedirs(imdir)
+
+    # Make sure rotation and shuffle are turned off
+    gen.channel_combo = None
+    gen.shuffle = False
+    gen.rotation = False
+    gen.expval = True
+
+    # Turn normalization off so that we can save as uint8
+    gen.norm_im = False
+
+    bs = gen.batch_size
+    for i in range(len(gen)):
+        if i % 1000 == 0:
+            print(i)
+        # Generate batch
+        bch = gen.__getitem__(i)
+        # loop over all examples in batch and save volume
+        for j in range(bs):
+            # get the frame name / unique ID
+            fname = gen.list_IDs[i * bs + j]
+            # and save
+            print(fname)
+            # extract visual hull
+            sil = np.squeeze(extract_3d_sil(bch[0][0][j], 18))
+            np.save(os.path.join(imdir, fname + ".npy"), sil)
 
 def extract_3d_sil(vol, upper_thres):
     vol[vol > 0] = 1

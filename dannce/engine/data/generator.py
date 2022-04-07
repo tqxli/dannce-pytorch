@@ -519,7 +519,7 @@ class DataGenerator_3Dconv(DataGenerator):
             
             if self.mode == "3dprob":
                 for j in range(self.n_channels_out):
-                    y_3d[i, j] = np.exp(
+                    y_3d[i, j] = torch.exp(
                         -(
                             (y_coord_3d - this_y_3d[1, j]) ** 2
                             + (x_coord_3d - this_y_3d[0, j]) ** 2
@@ -531,7 +531,7 @@ class DataGenerator_3Dconv(DataGenerator):
                     # the peak of the probability distribution, as it
                     # will lie somewhere in the middle of a large voxel.
                     # So here we renormalize to [~, 1]
-
+            # breakpoint()
             if self.mode == "coordinates":
                 if this_y_3d.shape == y_3d[i].shape:
                     y_3d[i] = this_y_3d

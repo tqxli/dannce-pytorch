@@ -703,7 +703,7 @@ def dannce_predict(params: Dict):
     )
 
     predict_generator_sil = None
-    if params["use_silhouette_in_volume"]:
+    if (params["use_silhouette_in_volume"]) or (params["write_visual_hull"] is not None):
         # require silhouette + RGB volume
         vids_sil = processing.initialize_vids(
             params, datadict, 0, {}, pathonly=True, vidkey="viddir_sil"
@@ -752,6 +752,10 @@ def dannce_predict(params: Dict):
         print("Writing samples to .npy files")
         processing.write_npy(params["write_npy"], predict_generator)
         return
+    
+    if params["write_visual_hull"] is not None:
+        print("Writing visual hull to .npy files")
+        processing.write_sil_npy(params["write_visual_hull"], predict_generator_sil)
 
     save_data = inference.infer_dannce(
         predict_generator,
@@ -835,7 +839,7 @@ def setup_dannce_predict(params):
     print("Using camnames: {}".format(params["camnames"]))
     # Also add parent params under the 'experiment' key for compatibility
     # with DANNCE's video loading function
-    if params["use_silhouette_in_volume"]:
+    if (params["use_silhouette_in_volume"]) or (params["write_visual_hull"] is not None):
         params["viddir_sil"] = os.path.join(params["base_exp_folder"], _DEFAULT_VIDDIR_SIL)
         
     params["experiment"] = {}

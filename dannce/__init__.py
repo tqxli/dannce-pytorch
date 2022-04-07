@@ -41,6 +41,7 @@ _param_defaults_shared = {
     "n_instances": 1,
     "start_sample": 0,
     "write_npy": None,
+    "write_visual_hull": None,
     "use_npy": False,
     "data_split_seed": None,
     "valid_exp": None,
