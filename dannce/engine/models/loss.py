@@ -98,8 +98,10 @@ class SeparationLoss(BaseLoss):
         return self.loss_weight * sep.mean()
 
 class GaussianRegLoss(BaseLoss):
-    def __init__(self, **kwargs):
+    def __init__(self, method="mse", sigma=5, **kwargs):
         super().__init__(**kwargs)
+        self.method = method
+        self.sigma = sigma
     
     def visualize(self, target):
         import matplotlib
@@ -113,35 +115,41 @@ class GaussianRegLoss(BaseLoss):
         plt.show(block=True)
         input("Press Enter to continue...")
 
-    def _generate_gaussian_target(self, centers, grids, sigma=0.5):
+    def _generate_gaussian_target(self, centers, grids):
         """
         centers: [batch_size, 3, n_joints]
-        grid: [batch_size, h*w*d, 3]
+        grid: [batch_size, 3, h, w, d]
         """
-        y_3d = grids.new_zeros(centers.shape[0], centers.shape[2], grids.shape[1]) #[bs, n_joints, n_vox**3]
+        y_3d = grids.new_zeros(centers.shape[0], centers.shape[2], *grids.shape[2:]) #[bs, n_joints, n_vox, n_vox, n_vox]
         for i in range(y_3d.shape[0]):
             for j in range(y_3d.shape[1]):
-                y_3d[i, j] = (-((grids[i, :, 1] - centers[i, 1, j])**2 
-                            + (grids[i, :, 0] - centers[i, 0, j])**2
-                            + (grids[i, :, 2] - centers[i, 2, j])**2)).exp()
-                y_3d[i, j] /= (2 * sigma**2)
-        y_3d = F.softmax(y_3d, dim=-1)
+                y_3d[i, j] = torch.exp(-((grids[i, 1] - centers[i, 1, j])**2 
+                            + (grids[i, 0] - centers[i, 0, j])**2
+                            + (grids[i, 2] - centers[i, 2, j])**2))
+                y_3d[i, j] /= (2 * self.sigma**2)
+                
         return y_3d
-        # target = (grids.unsqueeze(-1) - centers.unsqueeze(1))**2 #[bs, n_vox**3, 3, n_joints]
-        # target = (-target.sum(2)).exp() #[bs, n_vox**3, n_joints]
-        # target /= 2 * sigma**2
-        # return target.permute(0, 2, 1) #[bs, n_joints, nvox**3]
 
-    def forward(self, kpts_gt, kpts_pred, heatmaps, grid_centers):
+    def forward(self, kpts_gt, kpts_pred, heatmaps, grids):
         """
         kpts_pred: [bs, 3, n_joints]
         heatmaps: [bs, n_joints, h, w, d]
         grid_centers: [bs, h*w*d, 3]
         """
-        bs, n_joints = heatmaps.shape[0], heatmaps.shape[1]
-        gaussian_gt = self._generate_gaussian_target(kpts_pred.clone().detach(), grid_centers)
-        loss = F.mse_loss(gaussian_gt.reshape(*heatmaps.shape), heatmaps, reduction="sum")
-        loss = loss / bs
+        # reshape grids
+        grids = grids.permute(0, 2, 1).reshape(grids.shape[0], grids.shape[2], *heatmaps.shape[2:]) # [bs, 3, n_vox, n_vox, n_vox]
+
+        # generate gaussian shaped targets based on current predictions
+        gaussian_gt = self._generate_gaussian_target(kpts_pred.clone().detach(), grids) #[bs, n_joints, n_vox**3]
+
+        # apply sigmoid to the exposed heatmap
+        heatmaps = torch.sigmoid(heatmaps)
+
+        # compute loss
+        if self.method == "mse":
+            loss = F.mse_loss(gaussian_gt, heatmaps)
+        elif self.method == "cross_entropy":
+            loss = - (gaussian_gt * heatmaps.log()).mean()
 
         return self.loss_weight * loss
 

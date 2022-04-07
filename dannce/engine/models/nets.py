@@ -73,10 +73,10 @@ class DANNCE(nn.Module):
         grid_centers: [batch_size, nvox**3, 3]
         """
         volumes = self.encoder_decoder(volumes)
-        volumes = self.output_layer(volumes)
+        heatmaps = self.output_layer(volumes)
 
-        heatmaps = spatial_softmax_torch(volumes)
-        coords = expected_value_3d_torch(heatmaps, grid_centers)
+        heatmaps_softmax = spatial_softmax_torch(heatmaps)
+        coords = expected_value_3d_torch(heatmaps_softmax, grid_centers)
 
         return coords, heatmaps
         
