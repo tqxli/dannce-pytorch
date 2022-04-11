@@ -40,6 +40,14 @@ class BaseLoss(nn.Module):
     def forward(kpts_gt, kpts_pred):
         return NotImplementedError
 
+class L2Loss(BaseLoss):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def forward(self, kpts_gt, kpts_pred):
+        loss = compute_mask_nan_loss(nn.MSELoss(reduction="sum"), kpts_gt, kpts_pred)
+        return self.loss_weight * loss
+
 class L1Loss(BaseLoss):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -154,21 +162,27 @@ class GaussianRegLoss(BaseLoss):
         return self.loss_weight * loss
 
 class PairRepulsionLoss(BaseLoss):
-    def __init__(self, **kwargs):
+    def __init__(self, delta=5, **kwargs):
         super().__init__(**kwargs)
+        self.delta = delta
     
     def forward(self, kpts_gt, kpts_pred):
-        n_joints = kpts_pred.shape[-1]
+        """
+        [bs, 3, n_joints]
+        """
+        bs, n_joints = kpts_pred.shape[0], kpts_pred.shape[-1]
+        
         kpts_pred = kpts_pred.reshape(-1, 2, *kpts_pred.shape[1:]).permute(1, 0, 2, 3)
 
         # compute the distance between each joint of animal 1 and all joints of animal 2
-        a1 = kpts_pred[0].repeat(1, 1, n_joints)    
+        a1 = kpts_pred[0].repeat(1, 1, n_joints) # [n, 3, n_joints^2]
         a2 = kpts_pred[1].repeat(1, n_joints, 1).reshape(a1.shape)
 
         diffsqr = (a1 - a2)**2
-        dist = diffsqr.sum(1).sqrt() # [bs, n_joints^2]
+        dist = diffsqr.sum(1).sqrt() # [bs, n_joints^2] 
+        dist = torch.maximum(self.delta - dist, torch.zeros_like(dist))
         
-        return self.loss_weight * dist.mean()
+        return self.loss_weight * (dist.sum() / n_joints / bs)
 
 
 # wait to be implemented
