@@ -555,6 +555,7 @@ def infer_dannce(
     device: Text,
     n_chn: int,
     sil_generator=None,
+    save_heatmaps=False
 ):
     """Perform dannce detection over a set of frames.
 
@@ -573,6 +574,12 @@ def infer_dannce(
     save_data = {}
     start_ind = params["start_batch"]
     end_ind = params["maxbatch"]
+
+    if save_heatmaps:
+        save_path = os.path.join(params["dannce_predict_dir"], "heatmaps")
+        if not os.path.exists(save_path):
+            os.makedirs(save_path)
+
     for idx, i in enumerate(range(start_ind, end_ind)):
         print("Predicting on batch {}".format(i), flush=True)
         if (i - start_ind) % 10 == 0 and i != start_ind:
@@ -615,9 +622,11 @@ def infer_dannce(
             torch.from_numpy(ims[0][0]).permute(0, 4, 1, 2, 3).to(device), 
             torch.from_numpy(ims[0][1]).to(device)
         )
+
         # breakpoint()
         if params["expval"]:
             probmap = torch.amax(pred[1], dim=(2, 3, 4)).squeeze(0).detach().cpu().numpy()
+            heatmaps = pred[1].squeeze().detach().cpu().numpy()
             pred = pred[0].detach().cpu().numpy()
             for j in range(pred.shape[0]):
                 pred_max = probmap[j]
@@ -627,8 +636,10 @@ def infer_dannce(
                     "pred_coord": pred[j],
                     "sampleID": sampleID,
                 }
-        else:
+                if save_heatmaps:
+                    np.save(os.path.join(save_path, sampleID), heatmaps[j])
 
+        else:
             for j in range(pred.shape[0]):
                 preds = torch.as_tensor(pred[j], dtype=torch.float32, device=device)
                 pred_max = preds.max(0).values.max(0).values.max(0).values
