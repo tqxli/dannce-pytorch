@@ -17,6 +17,7 @@ def prepare_data(
     com_flag=True,
     nanflag=False,
     prediction=False,
+    predict_labeled_only=False,
     return_cammat=False,
 ):
     """Assemble necessary data structures given a set of config params.
@@ -29,7 +30,8 @@ def prepare_data(
     multimode: when this True, we output all 2D markers AND their 2D COM
     """
     if prediction:
-        labels = load_sync(params["label3d_file"])
+        # allow predictions only on labeled frames for easier metric evaluation
+        labels = load_labels(params["label3d_file"]) if predict_labeled_only else load_sync(params["label3d_file"])
         nFrames = np.max(labels[0]["data_frame"].shape)
         
         nKeypoints = params["n_channels_out"]

@@ -267,6 +267,12 @@ def add_shared_args(
         help="Normalization method to use, can be 'batch', 'instance', or 'layer'.",
     )
 
+    parser.add_argument(
+        "--predict-labeled-only",
+        dest="predict_labeled_only",
+        action="store_true"
+    )
+
     return parser
 
 
