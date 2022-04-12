@@ -104,11 +104,11 @@ def make_folder(key: Text, params: Dict):
     else:
         raise ValueError(key + " must be defined.")
 
-    # if key == "dannce_train_dir":
-    #     curr_time = datetime.now().strftime('%Y-%m-%d-%H-%M')
-    #     new_dir = os.path.join(params[key], curr_time)
-    #     os.makedirs(new_dir)
-    #     params[key] = new_dir
+    if key == "dannce_train_dir":
+        curr_time = datetime.now().strftime('%Y-%m-%d-%H-%M')
+        new_dir = os.path.join(params[key], curr_time)
+        os.makedirs(new_dir)
+        params[key] = new_dir
 
 def dannce_train(params: Dict):
     """Train dannce network.
