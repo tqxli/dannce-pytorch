@@ -76,34 +76,67 @@ def prepare_data(
         # select extra samples from the neighborhood of labeled samples
         # each of which is referred as a "temporal chunk"
         left_bound, right_bound = -int(temp_n // 2), int(np.round(temp_n/2))
-        extra_samples_inds = [sample_inds+i for i in range(left_bound, right_bound) if i != 0]
+        center = -left_bound
+        chunk_ind_list = [np.arange(sample_ind+left_bound, sample_ind+right_bound) for sample_ind in sample_inds]
+        all_samples_inds = np.concatenate(chunk_ind_list)
 
-        # force validity of the extra sampleIDs
-        for i in range(len(extra_samples_inds)):
-            extra_samples_inds[i][extra_samples_inds[i] < 0] = sample_inds[extra_samples_inds[i] < 0] + i + 1
-            extra_samples_inds[i][extra_samples_inds[i] >= len(samples_extra)] = sample_inds[extra_samples_inds[i] >= len(samples_extra)] - 1 - i
-        extra_samples_inds = np.concatenate(extra_samples_inds)
+        # check sample validity
+        all_samples_inds[all_samples_inds < 0] = 0
+        all_samples_inds[all_samples_inds >= len(samples_extra)] = len(samples_extra) - 1 
 
-        # concat sampleIDs with extra sampleIDs without labels
-        samples = np.concatenate((samples, samples_extra[extra_samples_inds]), axis=0)
-        # sort samples and obtain indices for later use
-        sorted_inds = np.argsort(samples)
-        samples = samples[sorted_inds]
+        all_samples = samples_extra[all_samples_inds]
+        # there can be repetitive sampleIDs
+        chunk_list = [all_samples[i:i + temp_n] for i in range(0, len(all_samples), temp_n)]
+        all_samples, unique_index = np.unique(all_samples, return_index=True)
 
+        labeled_inds = np.array([np.where(all_samples == samp)[0][0] for samp in samples])
+
+        samples = all_samples
+        
         for i, label in enumerate(labels):
             for k in ['data_frame', 'data_2d', 'data_3d']:
                 if label[k].shape[0] == 1:
                     label[k] = label[k].T
                 if labels_extra[i][k].shape[0] == 1:
                     labels_extra[i][k] = labels_extra[i][k].T
-
-                if k == 'data_frame':
-                    label[k] = np.concatenate((label[k], labels_extra[i][k][extra_samples_inds]), axis=0)
-                else: 
-                    label[k] = np.concatenate((label[k], labels_extra[i][k][extra_samples_inds]*np.nan), axis=0)
-                label[k] = label[k][sorted_inds]
                 
-        chunk_list = [samples[i:i + temp_n] for i in range(0, len(samples), temp_n)]
+                if k == "data_frame":
+                    label[k] = labels_extra[i][k][all_samples_inds[unique_index]]
+                else:
+                    temp_data = np.nan * np.ones((len(samples), label[k].shape[1]))
+                    temp_data[labeled_inds] = label[k]
+                    label[k] = temp_data
+
+        # extra_samples_inds = [sample_inds+i for i in range(left_bound, right_bound) if i != 0]
+
+        # # force validity of the extra sampleIDs
+        # for i in range(len(extra_samples_inds)):
+        #     extra_samples_inds[i][extra_samples_inds[i] < 0] = sample_inds[extra_samples_inds[i] < 0] + i + 1
+        #     extra_samples_inds[i][extra_samples_inds[i] >= len(samples_extra)] = sample_inds[extra_samples_inds[i] >= len(samples_extra)] - 1 - i
+        # extra_samples_inds = np.concatenate(extra_samples_inds)
+
+        # # concat sampleIDs with extra sampleIDs without labels
+        # samples = np.concatenate((samples, samples_extra[extra_samples_inds]), axis=0)
+        # # sort samples and obtain indices for later use
+        # sorted_inds = np.argsort(samples)
+        # samples = samples[sorted_inds]
+
+        # for i, label in enumerate(labels):
+        #     for k in ['data_frame', 'data_2d', 'data_3d']:
+        #         # in case of varying label3d data structure (1, n) vs (n, 1)
+        #         if label[k].shape[0] == 1:
+        #             label[k] = label[k].T
+        #         if labels_extra[i][k].shape[0] == 1:
+        #             labels_extra[i][k] = labels_extra[i][k].T
+
+        #         if k == 'data_frame':
+        #             label[k] = np.concatenate((label[k], labels_extra[i][k][extra_samples_inds]), axis=0)
+        #         else: 
+        #             label[k] = np.concatenate((label[k], np.nan*np.ones((len(extra_samples_inds), label[k].shape[1]))), axis=0)
+        #             # label[k] = np.concatenate((label[k], labels_extra[i][k][extra_samples_inds]*np.nan), axis=0)
+        #         label[k] = label[k][sorted_inds]
+                
+        # chunk_list = [samples[i:i + temp_n] for i in range(0, len(samples), temp_n)]
 
     if labels[0]["data_sampleID"].shape == (1, 1):
         # Then the squeezed value is just a number, so we add to to a list so
