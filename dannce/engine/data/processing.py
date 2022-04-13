@@ -245,14 +245,19 @@ def make_data_splits(samples, params, results_dir, num_experiments, temporal_chu
                     i for i in range(len(samples)) if int(samples[i].split("_")[0]) == e
                 ]
                 all_valid_inds = all_valid_inds + tinds
+
+                # enable full validation experiments 
+                # by specifying params["num_validation_per_exp"] > number of samples
+                if v > len(tinds):
+                    v = len(tinds)
+                    print("Setting all {} samples in experiment {} for validation purpose.".format(v, e))
+                    
                 valid_inds = valid_inds + list(
                     np.random.choice(tinds, (v,), replace=False)
                 )
                 valid_inds = list(np.sort(valid_inds))
 
-            train_inds = list(
-                set(all_inds) - set(all_valid_inds)
-            )  # [i for i in all_inds if i not in all_valid_inds]
+            train_inds = list(set(all_inds) - set(all_valid_inds))  # [i for i in all_inds if i not in all_valid_inds]
         elif v > 0:  # if 0, do not perform validation
             for e in range(num_experiments):
                 tinds = [
@@ -270,7 +275,6 @@ def make_data_splits(samples, params, results_dir, num_experiments, temporal_chu
             train_inds = all_inds
 
         assert (set(valid_inds) & set(train_inds)) == set()
-
         train_samples = samples[train_inds]
         train_inds = []
         if params["valid_exp"] is not None:

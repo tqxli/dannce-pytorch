@@ -216,7 +216,6 @@ def dannce_train(params: Dict):
     cameras, datadict, params = serve_data_DANNCE.prepend_experiment(
         params, datadict, num_experiments, camnames, cameras
     )
-
     samples = np.array(samples)
 
     if params["use_npy"]:
@@ -256,9 +255,11 @@ def dannce_train(params: Dict):
     else:
         cam3_train = False
 
+    # make train/valid splits
     partition = processing.make_data_splits(
         samples, params, dannce_train_dir, num_experiments, 
         temporal_chunks=temporal_chunks)
+    logger.info("\nTRAIN:VALIDATION SPLIT = {}:{}\n".format(len(partition["train_sampleIDs"]), len(partition["valid_sampleIDs"])))
 
     if params["use_npy"]:
         # mono conversion will happen from RGB npy files, and the generator
