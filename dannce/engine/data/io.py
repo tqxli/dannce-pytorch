@@ -2,6 +2,7 @@
 import numpy as np
 import scipy.io as sio
 from typing import List, Dict, Text, Union
+import mat73
 
 
 def load_label3d_data(path: Text, key: Text):
@@ -14,20 +15,24 @@ def load_label3d_data(path: Text, key: Text):
     Returns:
         TYPE: Data from field
     """
-    d = sio.loadmat(path)[key]
-    dataset = [f[0] for f in d]
+    try:
+        d = sio.loadmat(path)[key]
+        dataset = [f[0] for f in d]
 
-    # Data are loaded in this annoying structure where the array
-    # we want is at dataset[i][key][0,0], as a nested array of arrays.
-    # Simplify this structure (a numpy record array) here.
-    # Additionally, cannot use views here because of shape mismatches. Define
-    # new dict and return.
-    data = []
-    for d in dataset:
-        d_ = {}
-        for key in d.dtype.names:
-            d_[key] = d[key][0, 0]
-        data.append(d_)
+        # Data are loaded in this annoying structure where the array
+        # we want is at dataset[i][key][0,0], as a nested array of arrays.
+        # Simplify this structure (a numpy record array) here.
+        # Additionally, cannot use views here because of shape mismatches. Define
+        # new dict and return.
+        data = []
+        for d in dataset:
+            d_ = {}
+            for key in d.dtype.names:
+                d_[key] = d[key][0, 0]
+            data.append(d_)
+    except:
+        d = mat73.loadmat(path)[key]
+        data = [f[0] for f in d]
     return data
 
 
@@ -44,6 +49,8 @@ def load_camera_params(path: Text) -> List[Dict]:
     for p in params:
         if "r" in p:
             p["R"] = p["r"]
+        if len(p["t"].shape) == 1:
+            p["t"] = p["t"][np.newaxis, ...]
     return params
 
 
@@ -88,10 +95,14 @@ def load_com(path: Text) -> Dict:
     Returns:
         Dict: Dictionary with com data
     """
-    d = sio.loadmat(path)["com"]
-    data = {}
-    data["com3d"] = d["com3d"][0, 0]
-    data["sampleID"] = d["sampleID"][0, 0].astype(int)
+    try:
+        d = sio.loadmat(path)["com"]
+        data = {}
+        data["com3d"] = d["com3d"][0, 0]
+        data["sampleID"] = d["sampleID"][0, 0].astype(int)
+    except:
+        data = mat73.loadmat(path)["com"]
+        data["sampleID"] = data["sampleID"].astype(int)
     return data
 
 
@@ -104,13 +115,18 @@ def load_camnames(path: Text) -> Union[List, None]:
     Returns:
         Union[List, None]: List of cameranames
     """
-    label_3d_file = sio.loadmat(path)
-    if "camnames" in label_3d_file:
-        names = label_3d_file["camnames"][:]
-        if len(names) != len(label_3d_file["labelData"]):
-            camnames = [name[0] for name in names[0]]
+    try:
+        label_3d_file = sio.loadmat(path)
+        if "camnames" in label_3d_file:
+            names = label_3d_file["camnames"][:]
+            if len(names) != len(label_3d_file["labelData"]):
+                camnames = [name[0] for name in names[0]]
+            else:
+                camnames = [name[0][0] for name in names]
         else:
-            camnames = [name[0][0] for name in names]
-    else:
-        camnames = None
+            camnames = None
+    except:
+        label_3d_file = mat73.loadmat(path)
+        if "camnames" in label_3d_file:
+            camnames = [name[0] for name in label_3d_file["camnames"]] 
     return camnames
