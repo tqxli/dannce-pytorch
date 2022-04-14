@@ -260,7 +260,7 @@ def dannce_train(params: Dict):
         samples, params, dannce_train_dir, num_experiments, 
         temporal_chunks=temporal_chunks)
     logger.info("\nTRAIN:VALIDATION SPLIT = {}:{}\n".format(len(partition["train_sampleIDs"]), len(partition["valid_sampleIDs"])))
-    
+
     if params["use_npy"]:
         # mono conversion will happen from RGB npy files, and the generator
         # needs to b aware that the npy files contain RGB content
@@ -554,10 +554,12 @@ def dannce_train(params: Dict):
             optimizer.load_state_dict(checkpoints["optimizer"])
         else:
             optimizer = torch.optim.Adam(model_params, lr=params["lr"], eps=1e-7)
-
+    
     lr_scheduler = None
-    if lr_scheduler is not None:
-        lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=int(params["epochs"] // 3), gamma=0.1, verbose=True)
+    if params["lr_scheduler"] is not None:
+        lr_scheduler_class = getattr(torch.optim.lr_scheduler, params["lr_scheduler"]["type"])
+        lr_scheduler = lr_scheduler_class(optimizer=optimizer, **params["lr_scheduler"]["args"], verbose=True)
+        logger.info("Using lr scheduler")
     logger.info("COMPLETE\n")
 
     # set up trainer

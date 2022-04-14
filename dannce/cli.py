@@ -675,11 +675,11 @@ def add_dannce_train_args(
         dest="separation_delta",
     )
 
-    parser.add_argument(
-        "--lr-scheduler",
-        type=str,
-        dest="lr_scheduler",
-    )
+    # parser.add_argument(
+    #     "--lr-scheduler",
+    #     type=str,
+    #     dest="lr_scheduler",
+    # )
 
     parser.add_argument(
         "--symmetry-loss-weight",
