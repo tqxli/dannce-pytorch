@@ -182,6 +182,11 @@ def make_data_splits(samples, params, results_dir, num_experiments, temporal_chu
             if params["valid_exp"] is not None and v > 0:
                 for e in range(num_experiments):
                     if e in params["valid_exp"]:
+                        v = params["num_validation_per_exp"]
+                        if v > len(temporal_chunks[e]):
+                            v = len(temporal_chunks[e])
+                            print("Setting all {} samples in experiment {} for validation purpose.".format(v, e))
+
                         valid_chunk_idx = sorted(np.random.choice(len(temporal_chunks[e]), v, replace=False))
                         valid_chunks += list(np.array(temporal_chunks[e])[valid_chunk_idx])
                         train_chunks += list(np.delete(temporal_chunks[e], valid_chunk_idx, 0))
@@ -200,6 +205,12 @@ def make_data_splits(samples, params, results_dir, num_experiments, temporal_chu
 
             train_expts = np.arange(num_experiments)
             print("TRAIN EXPTS: {}".format(train_expts))
+
+            if isinstance(params["training_fraction"], float):
+                assert (params["training_fraction"] < 1.0) & (params["training_fraction"] > 0)
+                n_chunks = len(train_chunks)
+                train_chunk_idx = sorted(np.random.choice(n_chunks, int(n_chunks*params["training_fraction"]), replace=False))
+                train_chunks = [train_chunks[i] for i in train_chunk_idx]
 
             train_sampleIDs = list(np.concatenate(train_chunks))
             try: 
@@ -248,6 +259,7 @@ def make_data_splits(samples, params, results_dir, num_experiments, temporal_chu
 
                 # enable full validation experiments 
                 # by specifying params["num_validation_per_exp"] > number of samples
+                v = params["num_validation_per_exp"]
                 if v > len(tinds):
                     v = len(tinds)
                     print("Setting all {} samples in experiment {} for validation purpose.".format(v, e))
@@ -258,6 +270,12 @@ def make_data_splits(samples, params, results_dir, num_experiments, temporal_chu
                 valid_inds = list(np.sort(valid_inds))
 
             train_inds = list(set(all_inds) - set(all_valid_inds))  # [i for i in all_inds if i not in all_valid_inds]
+            if isinstance(params["training_fraction"], float):
+                assert (params["training_fraction"] < 1.0) & (params["training_fraction"] > 0)
+                n_samples = len(train_inds)
+                train_inds_idx = sorted(np.random.choice(n_samples, int(n_samples*params["training_fraction"]), replace=False))
+                train_inds = [train_inds[i] for i in train_inds_idx]
+
         elif v > 0:  # if 0, do not perform validation
             for e in range(num_experiments):
                 tinds = [

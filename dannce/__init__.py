@@ -49,6 +49,7 @@ _param_defaults_shared = {
     "slurm_config": None,
     "save_period": 100,
     "predict_labeled_only": False,
+    "training_fraction": None,
 }
 _param_defaults_dannce = {
     "metric": ["euclidean_distance_3D"],

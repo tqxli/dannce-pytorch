@@ -273,6 +273,12 @@ def add_shared_args(
         action="store_true"
     )
 
+    parser.add_argument(
+        "--training-fraction",
+        dest="training_fraction",
+        type=float,
+    )
+
     return parser
 
 
