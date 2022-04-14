@@ -260,7 +260,7 @@ def dannce_train(params: Dict):
         samples, params, dannce_train_dir, num_experiments, 
         temporal_chunks=temporal_chunks)
     logger.info("\nTRAIN:VALIDATION SPLIT = {}:{}\n".format(len(partition["train_sampleIDs"]), len(partition["valid_sampleIDs"])))
-
+    
     if params["use_npy"]:
         # mono conversion will happen from RGB npy files, and the generator
         # needs to b aware that the npy files contain RGB content
@@ -952,7 +952,6 @@ def do_COM_load(exp: Dict, expdict: Dict, e, params: Dict, training=True):
 
     return exp, samples_, datadict_, datadict_3d_, cameras_, com3d_dict_, temporal_chunks
 
-
 def check_COM_load(c3dfile: Dict, kkey: Text, win_size: int):
     """Check that the COM file is of the appropriate format, and filter it.
 
@@ -1090,18 +1089,17 @@ def social_dannce_train(params):
         temporal_chunks=temporal_chunks)
 
     # the partition needs to be aligned for both animals
+    # for now, manually put exps as consecutive pairs, 
+    # i.e. [exp1_instance0, exp1_instance1, exp2_instance0, exp2_instance1, ...]
     new_partition = {"train_sampleIDs": [], "valid_sampleIDs": []}
+    all_sampleIDs = partition["train_sampleIDs"] + partition["valid_sampleIDs"]
     for samp in partition["train_sampleIDs"]:
-        if int(samp.split("_")[0]) == 0:
+        exp_id = int(samp.split("_")[0]) %2
+        if exp_id % 2 == 0:
             new_partition["train_sampleIDs"].append(samp)
-            new_partition["train_sampleIDs"].append(samp.replace("0_", "1_"))
+            new_partition["train_sampleIDs"].append(samp.replace(f"{exp_id}_", f"{exp_id+1}_"))
     new_partition["train_sampleIDs"] = np.array(sorted(new_partition["train_sampleIDs"]))
-
-    for samp in partition["valid_sampleIDs"]:
-        if int(samp.split("_")[0]) == 1:
-            new_partition["valid_sampleIDs"].append(samp)
-            new_partition["valid_sampleIDs"].append(samp.replace("1_", "0_"))
-    new_partition["valid_sampleIDs"] = np.array(sorted(new_partition["valid_sampleIDs"]))
+    new_partition["valid_sampleIDs"] = sorted(list(set(all_sampleIDs) - set(new_partition["train_sampleIDs"])))
 
     partition = new_partition
 
@@ -1306,12 +1304,13 @@ def social_dannce_train(params):
     }
 
     genfunc = generator.DataGenerator_Social
-    X_train = X_train.reshape((-1, 2, *X_train.shape[1:]))
-    X_train_grid = X_train_grid.reshape((-1, 2, *X_train_grid.shape[1:]))
-    y_train = y_train.reshape((-1, 2, *y_train.shape[1:]))
-    X_valid = X_valid.reshape((-1, 2, *X_valid.shape[1:]))
-    X_valid_grid = X_valid_grid.reshape((-1, 2, *X_valid_grid.shape[1:]))
-    y_valid = y_valid.reshape((-1, 2, *y_valid.shape[1:]))
+    n_animals = 2
+    X_train = X_train.reshape((-1, n_animals, *X_train.shape[1:]))
+    X_train_grid = X_train_grid.reshape((-1, n_animals, *X_train_grid.shape[1:]))
+    y_train = y_train.reshape((-1, n_animals, *y_train.shape[1:]))
+    X_valid = X_valid.reshape((-1, n_animals, *X_valid.shape[1:]))
+    X_valid_grid = X_valid_grid.reshape((-1, n_animals, *X_valid_grid.shape[1:]))
+    y_valid = y_valid.reshape((-1, n_animals, *y_valid.shape[1:]))
 
     args_train = {
         "list_IDs": np.arange(len(partition["train_sampleIDs"])),
