@@ -1018,7 +1018,7 @@ class DataGenerator_3Dconv_frommem(torch.utils.data.Dataset):
             if np.random.rand() > 0.5:
                 X_grid = np.reshape(
                     X_grid,
-                    (self.temporal_batch_size, self.nvox, self.nvox, self.nvox, 3),
+                    (self.temporal_chunk_size, self.nvox, self.nvox, self.nvox, 3),
                 )
                 # Flip the image and the symmetric keypoints
                 X, y_3d, X_grid = self.mirror(X.copy(), y_3d.copy(), X_grid.copy())
