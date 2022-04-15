@@ -165,6 +165,8 @@ def dannce_train(params: Dict):
 
         exp = processing.load_expdict(params, e, expdict, _DEFAULT_VIDDIR, _DEFAULT_VIDDIR_SIL, logger)
 
+        # training = not(e in params["valid_exp"])
+
         (
             exp,
             samples_,
@@ -550,7 +552,7 @@ def dannce_train(params: Dict):
         model_params = [p for p in model.parameters() if p.requires_grad]
         
         if params["train_mode"] == "continued":
-            optimizer = torch.optim.Adam()
+            optimizer = torch.optim.Adam(model_params)
             optimizer.load_state_dict(checkpoints["optimizer"])
         else:
             optimizer = torch.optim.Adam(model_params, lr=params["lr"], eps=1e-7)
@@ -894,7 +896,8 @@ def do_COM_load(exp: Dict, expdict: Dict, e, params: Dict, training=True):
     ) = serve_data_DANNCE.prepare_data(
         exp, 
         prediction=not training, 
-        predict_labeled_only=params["predict_labeled_only"]
+        predict_labeled_only=params["predict_labeled_only"],
+        valid=(e in params["valid_exp"])
     )
 
     # If there is "clean" data (full marker set), can take the

@@ -18,6 +18,7 @@ def prepare_data(
     nanflag=False,
     prediction=False,
     predict_labeled_only=False,
+    valid=False,
     return_cammat=False,
 ):
     """Assemble necessary data structures given a set of config params.
@@ -61,22 +62,36 @@ def prepare_data(
         )
 
     # ------------- new chunk code to refactor / modularize
-    TEMPORAL_FLAG = (not prediction) and params["use_temporal"]
+    TEMPORAL_FLAG = (not prediction) and (params["use_temporal"]) #and (not valid)
+
     chunk_list = None
 
     if TEMPORAL_FLAG:
         assert params["temporal_chunk_size"], "PLease specify the temporal chunk size when using temporal loss."
         temp_n = params["temporal_chunk_size"]
 
-        # load in extra samples for unsupervised learning     
+        # load in extra sampleIDs  
         labels_extra = load_sync(params["label3d_file"])
         samples_extra = np.squeeze(labels_extra[0]["data_sampleID"])
-        sample_inds = np.array([np.where(samples_extra == samp)[0][0] for samp in samples])
+        sample_inds = [np.where(samples_extra == samp)[0][0] for samp in samples]
 
         # select extra samples from the neighborhood of labeled samples
         # each of which is referred as a "temporal chunk"
         left_bound, right_bound = -int(temp_n // 2), int(np.round(temp_n/2))
-        center = -left_bound
+        
+        # if specified, load in extra completely unlabaled chunks 
+        samples_inds_unlabeled = []
+        if (params["unlabeled_temp"] > 0) and (not valid):
+            all_samples_inds_unlabeled = np.array(list(set(np.arange(len(samples_extra))) - set(sample_inds)))
+            n_unlabeled_temp = int(len(samples) * params["unlabeled_temp"])
+            print("Load in {} unlabeled temporal chunks, in addition to {} labels.".format(n_unlabeled_temp, len(samples)))
+            samples_inds_unlabeled = np.random.choice(all_samples_inds_unlabeled, size=n_unlabeled_temp, replace=False)
+            samples_inds_unlabeled = sorted(list(samples_inds_unlabeled))
+
+        sample_inds = sample_inds + samples_inds_unlabeled
+        sample_inds = np.array(sample_inds)
+
+        # generate chunks
         chunk_ind_list = [np.arange(sample_ind+left_bound, sample_ind+right_bound) for sample_ind in sample_inds]
         all_samples_inds = np.concatenate(chunk_ind_list)
 
@@ -84,11 +99,11 @@ def prepare_data(
         all_samples_inds[all_samples_inds < 0] = 0
         all_samples_inds[all_samples_inds >= len(samples_extra)] = len(samples_extra) - 1 
 
+        # there can be repetitive sampleIDs, 
+        # only load in each label once in datadict
         all_samples = samples_extra[all_samples_inds]
-        # there can be repetitive sampleIDs
         chunk_list = [all_samples[i:i + temp_n] for i in range(0, len(all_samples), temp_n)]
         all_samples, unique_index = np.unique(all_samples, return_index=True)
-
         labeled_inds = np.array([np.where(all_samples == samp)[0][0] for samp in samples])
 
         samples = all_samples

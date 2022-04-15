@@ -662,7 +662,11 @@ def add_dannce_train_args(
         type=int,
         dest="temporal_chunk_size",
     )
-
+    parser.add_argument(
+        "--unlabeled-temp",
+        type=float,
+        dest="unlabeled_temp",
+    )
     parser.add_argument(
         "--separation-loss-weight",
         type=float,
