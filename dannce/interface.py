@@ -897,7 +897,7 @@ def do_COM_load(exp: Dict, expdict: Dict, e, params: Dict, training=True):
         exp, 
         prediction=not training, 
         predict_labeled_only=params["predict_labeled_only"],
-        valid=(e in params["valid_exp"])
+        valid=(e in params["valid_exp"]) if params["valid_exp"] is not None else False
     )
 
     # If there is "clean" data (full marker set), can take the
