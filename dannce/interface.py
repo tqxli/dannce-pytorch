@@ -164,7 +164,6 @@ def dannce_train(params: Dict):
     for e, expdict in enumerate(exps):
 
         exp = processing.load_expdict(params, e, expdict, _DEFAULT_VIDDIR, _DEFAULT_VIDDIR_SIL, logger)
-
         # training = not(e in params["valid_exp"])
 
         (
@@ -897,7 +896,8 @@ def do_COM_load(exp: Dict, expdict: Dict, e, params: Dict, training=True):
         exp, 
         prediction=not training, 
         predict_labeled_only=params["predict_labeled_only"],
-        valid=(e in params["valid_exp"]) if params["valid_exp"] is not None else False
+        valid=(e in params["valid_exp"]) if params["valid_exp"] is not None else False,
+        test=(e in params["test_exp"]) if params["test_exp"] is not None else False,
     )
 
     # If there is "clean" data (full marker set), can take the

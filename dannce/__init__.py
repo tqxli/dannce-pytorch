@@ -103,6 +103,8 @@ _param_defaults_dannce = {
     ## changes made to temporal
     "temporal_chunk_size": None,
     "temporal_loss_weight": None,
+    "test_exp": None,
+    "n_test_chunks": None,
     "unlabeled_temp": 0,
     "silhouette_loss_weight": None,
     "separation_loss_weight": None,

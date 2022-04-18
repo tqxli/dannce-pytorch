@@ -208,9 +208,21 @@ def make_data_splits(samples, params, results_dir, num_experiments, temporal_chu
 
             if isinstance(params["training_fraction"], float):
                 assert (params["training_fraction"] < 1.0) & (params["training_fraction"] > 0)
-                n_chunks = len(train_chunks)
-                train_chunk_idx = sorted(np.random.choice(n_chunks, int(n_chunks*params["training_fraction"]), replace=False))
-                train_chunks = [train_chunks[i] for i in train_chunk_idx]
+
+                # load in the training samples
+                labeled_train_samples = np.load('train_samples/baseline.pickle', allow_pickle=True)
+                #labeled_train_chunks = [labeled_train_samples[i:i+params["temporal_chunk_size"]] for i in range(0, len(labeled_train_samples), params["temporal_chunk_size"])]
+                n_chunks = len(labeled_train_samples)
+                # do the selection from 
+                labeled_train_idx = sorted(np.random.choice(n_chunks, int(n_chunks*params["training_fraction"]), replace=False))
+                idxes_to_be_removed = list(set(range(n_chunks)) - set(labeled_train_idx))
+                train_samples_to_be_removed = [labeled_train_samples[i] for i in idxes_to_be_removed]
+
+                new_train_chunks = []
+                for chunk in train_chunks:
+                    if chunk[2] not in train_samples_to_be_removed:
+                        new_train_chunks.append(chunk) 
+                train_chunks = new_train_chunks    
 
             train_sampleIDs = list(np.concatenate(train_chunks))
             try: 

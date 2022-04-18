@@ -19,6 +19,7 @@ def prepare_data(
     prediction=False,
     predict_labeled_only=False,
     valid=False,
+    test=False,
     return_cammat=False,
 ):
     """Assemble necessary data structures given a set of config params.
@@ -48,7 +49,17 @@ def prepare_data(
         labels = load_labels(params["label3d_file"])
 
     samples = np.squeeze(labels[0]["data_sampleID"])
+    n_samples = len(samples)
 
+    # if isinstance(params["training_fraction"], float):
+    #     # need to make the data splits here ...
+    #     if params["data_split_seed"] is not None:
+    #         np.random.seed(params["data_split_seed"])
+
+    #     assert (params["training_fraction"] < 1.0) & (params["training_fraction"] > 0)
+    #     train_inds_idx = sorted(np.random.choice(n_samples, int(n_samples*params["training_fraction"]), replace=False))
+    #     samples = [samples[i] for i in train_inds_idx]
+    # breakpoint()
     camera_params = load_camera_params(params["label3d_file"])
     cameras = {name: camera_params[i] for i, name in enumerate(params["camnames"])}
 
@@ -73,22 +84,30 @@ def prepare_data(
         # load in extra sampleIDs  
         labels_extra = load_sync(params["label3d_file"])
         samples_extra = np.squeeze(labels_extra[0]["data_sampleID"])
-        sample_inds = [np.where(samples_extra == samp)[0][0] for samp in samples]
-
         # select extra samples from the neighborhood of labeled samples
         # each of which is referred as a "temporal chunk"
         left_bound, right_bound = -int(temp_n // 2), int(np.round(temp_n/2))
         
-        # if specified, load in extra completely unlabaled chunks 
-        samples_inds_unlabeled = []
-        if (params["unlabeled_temp"] > 0) and (not valid):
-            all_samples_inds_unlabeled = np.array(list(set(np.arange(len(samples_extra))) - set(sample_inds)))
-            n_unlabeled_temp = int(len(samples) * params["unlabeled_temp"])
-            print("Load in {} unlabeled temporal chunks, in addition to {} labels.".format(n_unlabeled_temp, len(samples)))
-            samples_inds_unlabeled = np.random.choice(all_samples_inds_unlabeled, size=n_unlabeled_temp, replace=False)
-            samples_inds_unlabeled = sorted(list(samples_inds_unlabeled))
+        # what if we want to use the unlabeled frames in the test set for pretraining
+        sample_inds, samples_inds_unlabeled, samples_test_inds = [], [], []
+        if (test) and isinstance(params["n_test_chunks"], int):
+            samples_test_inds = np.random.choice(samples_extra[:5000], size=params["n_test_chunks"], replace=False)
+            samples_test_inds = sorted(list(samples_test_inds))
+            print("For unsupervised training, load in {} unlabeled chunks from the test recording.".format(params["n_test_chunks"]))
+            samples = None
+        else:
+            sample_inds = [np.where(samples_extra == samp)[0][0] for samp in samples]
 
-        sample_inds = sample_inds + samples_inds_unlabeled
+            # if specified, load in extra completely unlabaled chunks 
+            if (params["unlabeled_temp"] > 0) and (not valid):
+                all_samples_inds_unlabeled = np.array(list(set(np.arange(len(samples_extra))) - set(sample_inds)))
+                # n_unlabeled_temp = int(params["unlabeled_temp"])
+                n_unlabeled_temp = int(len(samples) * params["unlabeled_temp"])
+                print("Load in {} unlabeled temporal chunks, in addition to {} labels.".format(n_unlabeled_temp, len(samples)))
+                samples_inds_unlabeled = np.random.choice(all_samples_inds_unlabeled, size=n_unlabeled_temp, replace=False)
+                samples_inds_unlabeled = sorted(list(samples_inds_unlabeled))
+
+        sample_inds = sample_inds + samples_inds_unlabeled + samples_test_inds  
         sample_inds = np.array(sample_inds)
 
         # generate chunks
@@ -104,7 +123,7 @@ def prepare_data(
         all_samples = samples_extra[all_samples_inds]
         chunk_list = [all_samples[i:i + temp_n] for i in range(0, len(all_samples), temp_n)]
         all_samples, unique_index = np.unique(all_samples, return_index=True)
-        labeled_inds = np.array([np.where(all_samples == samp)[0][0] for samp in samples])
+        labeled_inds = np.array([np.where(all_samples == samp)[0][0] for samp in samples]) if samples is not None else None
 
         samples = all_samples
         
@@ -119,7 +138,8 @@ def prepare_data(
                     label[k] = labels_extra[i][k][all_samples_inds[unique_index]]
                 else:
                     temp_data = np.nan * np.ones((len(samples), label[k].shape[1]))
-                    temp_data[labeled_inds] = label[k]
+                    if labeled_inds is not None:
+                        temp_data[labeled_inds] = label[k]  
                     label[k] = temp_data
 
     if labels[0]["data_sampleID"].shape == (1, 1):

@@ -668,6 +668,17 @@ def add_dannce_train_args(
         dest="unlabeled_temp",
     )
     parser.add_argument(
+        "--test-exp",
+        type=ast.literal_eval,
+        dest="test_exp"
+    )
+    parser.add_argument(
+        "--n-test-chunks",
+        type=int,
+        dest="n_test_chunks",
+    )
+
+    parser.add_argument(
         "--separation-loss-weight",
         type=float,
         dest="separation_loss_weight",
