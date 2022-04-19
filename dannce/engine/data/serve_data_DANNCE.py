@@ -102,7 +102,7 @@ def prepare_data(
             if (params["unlabeled_temp"] > 0) and (not valid):
                 all_samples_inds_unlabeled = np.array(list(set(np.arange(len(samples_extra))) - set(sample_inds)))
                 # n_unlabeled_temp = int(params["unlabeled_temp"])
-                n_unlabeled_temp = int(len(samples) * params["unlabeled_temp"])
+                n_unlabeled_temp = int(np.ceil(len(samples) * params["unlabeled_temp"]))
                 print("Load in {} unlabeled temporal chunks, in addition to {} labels.".format(n_unlabeled_temp, len(samples)))
                 samples_inds_unlabeled = np.random.choice(all_samples_inds_unlabeled, size=n_unlabeled_temp, replace=False)
                 samples_inds_unlabeled = sorted(list(samples_inds_unlabeled))
