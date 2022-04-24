@@ -551,7 +551,7 @@ def add_dannce_shared_args(
 
     parser.add_argument(
         "--soft-silhouette",
-        default=True,
+        default=False,
         type=ast.literal_eval,
         dest="soft_silhouette",
     )
@@ -668,14 +668,14 @@ def add_dannce_train_args(
         dest="unlabeled_temp",
     )
     parser.add_argument(
-        "--test-exp",
+        "--support-exp",
         type=ast.literal_eval,
-        dest="test_exp"
+        dest="support_exp"
     )
     parser.add_argument(
-        "--n-test-chunks",
+        "--n-support-chunks",
         type=int,
-        dest="n_test_chunks",
+        dest="n_support_chunks",
     )
 
     parser.add_argument(
