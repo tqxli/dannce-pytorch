@@ -1270,6 +1270,8 @@ def extract_3d_sil(vol, upper_thres):
     vol[vol > 0] = 1
     vol = np.sum(vol, axis=-1, keepdims=True)
 
+    upper_thres = np.max(vol)
+
     vol[vol < upper_thres] = 0
     vol[vol > 0] = 1
 
@@ -1317,13 +1319,13 @@ def load_volumes_into_mem(params, logger, partition, n_cams, generator, train=Tr
 
     if silhouette:
         logger.info("Now loading silhouettes")
-
+        X_copy = X.copy()
         if params["soft_silhouette"]:
             X = extract_3d_sil_soft(X, params["chan_num"]*n_cams)
         else:
             X = extract_3d_sil(X, params["chan_num"]*n_cams)
         
-        return None, None, X
+        return X_copy, None, X
     
     return X, X_grid, y
 

@@ -12,6 +12,7 @@ from typing import List, Dict, Tuple, Text
 
 import tensorflow as tf
 import torch
+import torchvision
 import torchvision.transforms.functional as TF
 
 MISSING_KEYPOINTS_MSG = (
@@ -164,6 +165,7 @@ class DataGenerator_3Dconv(DataGenerator):
         mono: bool = False,
         mirror: bool = False,
         predict_flag: bool = False,
+        segmentation_model=None,
     ):
         """Initialize data generator.
 
@@ -258,6 +260,9 @@ class DataGenerator_3Dconv(DataGenerator):
         self.device = torch.device("cuda:" + self.gpu_id)
 
         self.threadpool = ThreadPool(len(self.camnames[0]))
+        self.segmentation_model = segmentation_model
+        # if self.segmentation_model is not None:
+        #     self.segmentation_model.to(self.device)
 
         ts = time.time()
 
@@ -382,6 +387,14 @@ class DataGenerator_3Dconv(DataGenerator):
             else:
                 thisim = processing.cropcom(thisim, com, size=self.dim_in[0])
         # print('Frame loading took {} sec.'.format(time.time() - ts))
+        
+        if self.segmentation_model is not None:
+            input = [torchvision.transforms.functional.to_tensor(thisim.copy()).to(self.device)]
+            prediction = self.segmentation_model(input)[0]
+            mask = prediction['masks'][0].permute(1, 2, 0).detach().cpu().numpy()
+            mask = (mask >= 0.5).astype(np.uint8)
+            # thisim *= mask
+            thisim = mask
 
         ts = time.time()
         proj_grid = ops.project_to2d(
@@ -1118,7 +1131,7 @@ class DataGenerator_3Dconv_frommem(torch.utils.data.Dataset):
         if X_grid is not None:
             X_grid = torch.from_numpy(X_grid)
         if aux is not None:
-            aux = torch.from_numpy(aux)
+            aux = torch.from_numpy(aux).permute(0, 4, 1, 2, 3)
 
         return torch.from_numpy(X).permute(0, 4, 1, 2, 3), X_grid, torch.from_numpy(y_3d), aux
     

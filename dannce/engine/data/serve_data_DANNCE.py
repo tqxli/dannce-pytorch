@@ -1,4 +1,5 @@
 """Define routines for reading/structuring input data for DANNCE."""
+from random import sample
 import numpy as np
 import scipy.io as sio
 import torch
@@ -18,8 +19,9 @@ def prepare_data(
     nanflag=False,
     prediction=False,
     predict_labeled_only=False,
+    predict_smoothed_labels=False,
     valid=False,
-    test=False,
+    support=False,
     return_cammat=False,
 ):
     """Assemble necessary data structures given a set of config params.
@@ -34,7 +36,10 @@ def prepare_data(
     if prediction:
         # allow predictions only on labeled frames for easier metric evaluation
         labels = load_labels(params["label3d_file"]) if predict_labeled_only else load_sync(params["label3d_file"])
-        nFrames = np.max(labels[0]["data_frame"].shape)
+        nFrames = np.max(labels[0]["data_frame"].shape) 
+        
+        if predict_smoothed_labels:
+            nFrames *= 10
         
         nKeypoints = params["n_channels_out"]
         if "new_n_channels_out" in params.keys():
@@ -49,17 +54,14 @@ def prepare_data(
         labels = load_labels(params["label3d_file"])
 
     samples = np.squeeze(labels[0]["data_sampleID"])
+    if predict_smoothed_labels:
+        sampleIDs_labeled = np.squeeze(load_labels(params["label3d_file"])[0]["data_sampleID"])
+        sample_inds = [np.where(samples == samp)[0][0] for samp in sampleIDs_labeled]
+        expanded_sample_inds = np.concatenate([np.arange(sample_ind-5, sample_ind+5) for sample_ind in sample_inds])
+        samples = samples[expanded_sample_inds]
+        
     n_samples = len(samples)
 
-    # if isinstance(params["training_fraction"], float):
-    #     # need to make the data splits here ...
-    #     if params["data_split_seed"] is not None:
-    #         np.random.seed(params["data_split_seed"])
-
-    #     assert (params["training_fraction"] < 1.0) & (params["training_fraction"] > 0)
-    #     train_inds_idx = sorted(np.random.choice(n_samples, int(n_samples*params["training_fraction"]), replace=False))
-    #     samples = [samples[i] for i in train_inds_idx]
-    # breakpoint()
     camera_params = load_camera_params(params["label3d_file"])
     cameras = {name: camera_params[i] for i, name in enumerate(params["camnames"])}
 
@@ -90,10 +92,10 @@ def prepare_data(
         
         # what if we want to use the unlabeled frames in the test set for pretraining
         sample_inds, samples_inds_unlabeled, samples_test_inds = [], [], []
-        if (test) and isinstance(params["n_test_chunks"], int):
-            samples_test_inds = np.random.choice(samples_extra[:5000], size=params["n_test_chunks"], replace=False)
+        if (support) and isinstance(params["n_support_chunks"], int):
+            samples_test_inds = np.random.choice(samples_extra[-left_bound::temp_n], size=params["n_support_chunks"], replace=False)
             samples_test_inds = sorted(list(samples_test_inds))
-            print("For unsupervised training, load in {} unlabeled chunks from the test recording.".format(params["n_test_chunks"]))
+            print("For unsupervised training, load in {} unlabeled chunks from the valid/test recording.".format(params["n_support_chunks"]))
             samples = None
         else:
             sample_inds = [np.where(samples_extra == samp)[0][0] for samp in samples]

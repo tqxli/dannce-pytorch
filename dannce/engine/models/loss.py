@@ -185,7 +185,24 @@ class PairRepulsionLoss(BaseLoss):
         return self.loss_weight * (dist.sum() / n_joints / bs)
 
 
-# wait to be implemented
+class SilhouetteLoss(BaseLoss):
+    def __init__(self, delta=5, **kwargs):
+        super().__init__(**kwargs)
+        self.delta = delta
+    
+    def forward(self, y_true, y_pred):
+        """
+        [bs, H, W, D, n_joints]
+        """
+        reduce_axes = [1, 2, 3]
+        sil = torch.sum(y_pred * y_true, axis=reduce_axes)
+        sil = torch.mean(-(sil + 1e-12).log())
+        if torch.isnan(sil):
+            sil = sil.new_zeros(())
+        
+        return self.loss_weight * sil
+
+
 # def silhouette_loss(kpts_gt, kpts_pred):
 #     # y_true and y_pred will both have shape
 #     # (n_batch, width, height, n_keypts)
@@ -194,19 +211,3 @@ class PairRepulsionLoss(BaseLoss):
 #     sil = -(sil+1e-12).log()
     
 #     return sil.mean()
-
-# def separation_loss(delta=10):
-#     def _separation_loss(kpts_gt, kpts_pred):
-#         """
-#         Loss which penalizes 3D keypoint predictions being too close.
-#         """
-#         num_kpts = kpts_pred.shape[-1]
-
-#         t1 = kpts_pred.repeat(1, 1, num_kpts)
-#         t2 = kpts_pred.repeat(1, num_kpts, 1).reshape(t1.shape)
-
-#         lensqr = ((t1 - t2)**2).sum(1)
-#         sep = torch.maximum(delta - lensqr, 0.0).sum(1) / num_kpts**2
-
-#         return sep.mean()
-#     return _separation_loss

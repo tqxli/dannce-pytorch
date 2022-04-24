@@ -130,6 +130,9 @@ def dannce_train(params: Dict):
         params["use_silhouette"] = True
         params["n_rand_views"] = None
     
+    if "SilhouetteLoss" in params["loss"].keys():
+        params["use_silhouette"] = True
+
     if "TemporalLoss" in params["loss"].keys():
         params["use_temporal"] = True
         params["temporal_chunk_size"] = params["loss"]["TemporalLoss"]["temporal_chunk_size"]
@@ -232,10 +235,10 @@ def dannce_train(params: Dict):
         vids_sil = {}
         for e in range(num_experiments):
             if params["immode"] == "vid":
-                if params["use_silhouette"]:
-                    vids_sil = processing.initialize_vids(
-                        params, datadict, e, vids_sil, pathonly=True, vidkey="viddir_sil"
-                    )
+                # if params["use_silhouette"]:
+                #     vids_sil = processing.initialize_vids(
+                #         params, datadict, e, vids_sil, pathonly=True, vidkey="viddir_sil"
+                #     )
                 vids = processing.initialize_vids(
                     params, datadict, e, vids, pathonly=True
                 )
@@ -328,26 +331,38 @@ def dannce_train(params: Dict):
             **valid_params
         )
 
+        segmentation_model = None
         if params["use_silhouette"]:
             valid_params_sil = deepcopy(valid_params)
-            valid_params_sil["vidreaders"] = vids_sil
+            valid_params_sil["vidreaders"] = vids #vids_sil
 
-            # Set this to false so that all of our voxels stay positive, allowing us
-            # to convert to binary below
+            # # Set this to false so that all of our voxels stay positive, allowing us
+            # # to convert to binary below
             valid_params_sil["norm_im"] = False
 
-            # expval gets set to True here sop that even in MAX mode the
-            # silhouette generator behaves in a predictable way
+            # # expval gets set to True here sop that even in MAX mode the
+            # # silhouette generator behaves in a predictable way
             valid_params_sil["expval"] = True
+
+            checkpoint_path = '/home/tianqingli/dl-projects/social-rat/rat-inst-seg/exps/logdir/train_social_rat_mask_rcnn@2022-02-25-14-10/checkpoints/checkpoint_ep14.pth'
+            from dannce.engine.models.segmentation import get_instance_segmentation_model
+            segmentation_model = get_instance_segmentation_model(2)
+            checkpoints = torch.load(checkpoint_path)
+            segmentation_model.load_state_dict(checkpoints["state_dict"])
+            segmentation_model.eval()
+
+            segmentation_model = segmentation_model.to("cuda:0")
 
             train_generator_sil = generator.DataGenerator_3Dconv(
                 *train_gen_params,
-                **valid_params_sil
+                **valid_params_sil,
+                segmentation_model=segmentation_model 
             )
 
             valid_generator_sil = generator.DataGenerator_3Dconv(
                 *valid_gen_params,
-                **valid_params_sil
+                **valid_params_sil,
+                segmentation_model=segmentation_model
             )
 
         # # We should be able to load everything into memory...
@@ -391,8 +406,34 @@ def dannce_train(params: Dict):
     y_train_aux = None
     y_valid_aux = None
     if params["use_silhouette"]:
-        _, _, y_train_aux = processing.load_volumes_into_mem(params, partition, n_cams, train_generator_sil, train=True, silhouette=True)
-        _, _, y_valid_aux = processing.load_volumes_into_mem(params, partition, n_cams, valid_generator_sil, train=False, silhouette=True)
+        _, _, y_train_aux = processing.load_volumes_into_mem(params, logger, partition, n_cams, train_generator_sil, train=True, silhouette=True)
+        _, _, y_valid_aux = processing.load_volumes_into_mem(params, logger, partition, n_cams, valid_generator_sil, train=False, silhouette=True)
+        # save_path = '/media/mynewdrive/datasets/ocpose'
+        # np.save(os.path.join(save_path, 'X_train_sil'), y_train_aux)
+        # np.save(os.path.join(save_path, 'X_valid_sil'), y_valid_aux)
+        # return
+        # tifdir = 'silhouette_debug'
+        # if not os.path.exists(tifdir):
+        #     os.makedirs(tifdir)
+        # print("Dump silhouette volumes to {}".format(tifdir))
+        # for i in range(sil.shape[0]):
+        #     for j in range(n_cams):
+        #         im = sil[
+        #             i,
+        #             :,
+        #             :,
+        #             :,
+        #             j * params["chan_num"] : (j + 1) * params["chan_num"],
+        #         ]
+        #         # im *= 255
+        #         im = processing.norm_im(im) * 255
+        #         im = im.astype("uint8")
+        #         of = os.path.join(
+        #             tifdir,
+        #             partition["train_sampleIDs"][i] + "_cam" + str(j) + ".tif",
+        #         )
+        #         imageio.mimwrite(of, np.transpose(im, [2, 0, 1, 3]))
+        # return
 
     elif params["avg+max"] is not None:
         y_train_aux, y_valid_aux = processing.initAvgMax(
@@ -411,6 +452,8 @@ def dannce_train(params: Dict):
         y_train_aux = None
         y_valid_aux = None
 
+    if segmentation_model is not None:
+        del segmentation_model
     # Now we can generate from memory with shuffling, rotation, etc.
     randflag = params["channel_combo"] == "random"
 
@@ -897,7 +940,7 @@ def do_COM_load(exp: Dict, expdict: Dict, e, params: Dict, training=True):
         prediction=not training, 
         predict_labeled_only=params["predict_labeled_only"],
         valid=(e in params["valid_exp"]) if params["valid_exp"] is not None else False,
-        test=(e in params["test_exp"]) if params["test_exp"] is not None else False,
+        support=(e in params["support_exp"]) if params["support_exp"] is not None else False,
     )
 
     # If there is "clean" data (full marker set), can take the
@@ -1097,14 +1140,14 @@ def social_dannce_train(params):
     # for now, manually put exps as consecutive pairs, 
     # i.e. [exp1_instance0, exp1_instance1, exp2_instance0, exp2_instance1, ...]
     new_partition = {"train_sampleIDs": [], "valid_sampleIDs": []}
-    all_sampleIDs = partition["train_sampleIDs"] + partition["valid_sampleIDs"]
+    all_sampleIDs = np.concatenate((partition["train_sampleIDs"], partition["valid_sampleIDs"]))
     for samp in partition["train_sampleIDs"]:
         exp_id = int(samp.split("_")[0]) %2
         if exp_id % 2 == 0:
             new_partition["train_sampleIDs"].append(samp)
             new_partition["train_sampleIDs"].append(samp.replace(f"{exp_id}_", f"{exp_id+1}_"))
     new_partition["train_sampleIDs"] = np.array(sorted(new_partition["train_sampleIDs"]))
-    new_partition["valid_sampleIDs"] = sorted(list(set(all_sampleIDs) - set(new_partition["train_sampleIDs"])))
+    new_partition["valid_sampleIDs"] = np.array(sorted(list(set(all_sampleIDs) - set(new_partition["train_sampleIDs"]))))
 
     partition = new_partition
 
