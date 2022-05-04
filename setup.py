@@ -20,7 +20,7 @@ setup(
         'tensorboard',
         "tensorflow==2.4",
         # "pandas"
-        "mat73"
+        "mat73",
         "psutil",
     ],
     # scripts=[],
