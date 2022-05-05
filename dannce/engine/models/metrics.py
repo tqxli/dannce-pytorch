@@ -20,13 +20,18 @@ def euclidean_distance_3D(predicted, target):
     assert predicted.shape == target.shape
     return nanmean_infmean(np.sqrt(((target - predicted) ** 2).sum(1)).flatten())
 
-def pa_mpjpe(predicted, target):
+def p_mpjpe(predicted, target, pmax=None, thresh=None, error=True, scale=False):
     """
     Pose error: MPJPE after rigid alignment (scale, rotation, and translation),
     often referred to as "Protocol #2" in many papers.
+    
+    Adapated from Pavllo et al. 2018
+
+    Dimensions of predicted and target are
+    (N, 20, 3)
     """
     assert predicted.shape == target.shape
-    
+        
     muX = np.mean(target, axis=1, keepdims=True)
     muY = np.mean(predicted, axis=1, keepdims=True)
     
@@ -52,15 +57,24 @@ def pa_mpjpe(predicted, target):
 
     tr = np.expand_dims(np.sum(s, axis=1, keepdims=True), axis=2)
 
-    a = tr * normX / normY # Scale
-    t = muX - a*np.matmul(muY, R) # Translation
+    if scale:
+        a = tr * normX / normY # Scale
+        t = muX - a*np.matmul(muY, R) # Translation
+        predicted_aligned = a*np.matmul(predicted, R) + t
+    else:
+        t = muX - np.matmul(muY, R) # Translation
+        # Perform rigid transformation on the input
+        predicted_aligned = np.matmul(predicted, R) + t
     
-    # Perform rigid transformation on the input
-    predicted_aligned = a*np.matmul(predicted, R) + t
-    
-    # Return MPJPE
-    # return np.nanmean(np.linalg.norm(predicted_aligned - target, axis=len(target.shape)-1), axis=-1)
-    return np.linalg.norm(predicted_aligned - target, axis=len(target.shape)-1)
+    # If we are thresholding based on P-max, nan values here
+    if thresh is not None:
+        predicted_aligned[:,pmax<=thresh,:] = np.nan
+
+    if error:
+        return euclidean_distance_3D(predicted_aligned, target)
+    else:
+        # return the rotated coords only
+        return predicted_aligned
     
 def n_mpjpe(predicted, target):
     """

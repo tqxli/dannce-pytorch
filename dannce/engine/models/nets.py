@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from .blocks import *
-from dannce.engine.data.ops import spatial_softmax_torch, expected_value_3d_torch
+from dannce.engine.data.ops import spatial_softmax, expected_value_3d
 
 class EncoderDecorder_DANNCE(nn.Module):
     """
@@ -75,8 +75,8 @@ class DANNCE(nn.Module):
         volumes = self.encoder_decoder(volumes)
         heatmaps = self.output_layer(volumes)
 
-        heatmaps_softmax = spatial_softmax_torch(heatmaps)
-        coords = expected_value_3d_torch(heatmaps_softmax, grid_centers)
+        heatmaps_softmax = spatial_softmax(heatmaps)
+        coords = expected_value_3d(heatmaps_softmax, grid_centers)
 
         return coords, heatmaps
         
