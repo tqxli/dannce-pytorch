@@ -21,6 +21,12 @@ def camera_matrix(K: np.ndarray, R: np.ndarray, t: np.ndarray) -> np.ndarray:
     """
     return np.concatenate((R, t), axis=0) @ K
 
+def world_to_cam(pts, M, device):
+    M = M.to(device=device)
+    pts1 = torch.ones(pts.shape[0], 1, dtype=torch.float32, device=device)
+
+    projPts = torch.matmul(torch.cat((pts, pts1), 1), M)
+    return projPts
 
 def project_to2d(pts, M: np.ndarray, device: Text) -> torch.Tensor:
     """Project 3d points to 2d.
@@ -42,7 +48,7 @@ def project_to2d(pts, M: np.ndarray, device: Text) -> torch.Tensor:
     return projPts
 
 
-def sample_grid_torch_nearest(
+def sample_grid_nearest(
     im: np.ndarray, projPts: np.ndarray, device: Text
 ) -> torch.Tensor:
     """Unproject features."""
@@ -68,7 +74,7 @@ def sample_grid_torch_nearest(
     return Ir.reshape((c, c, c, -1)).permute(3, 0, 1, 2).unsqueeze(0)
 
 
-def sample_grid_torch_linear(
+def sample_grid_linear(
     im: np.ndarray, projPts: np.ndarray, device: Text
 ) -> torch.Tensor:
     """Unproject features."""
@@ -150,9 +156,9 @@ def sample_grid(im: np.ndarray, projPts: np.ndarray, device: Text, method: Text 
     reshaped after being returned
     """
     if method == "nearest" or method == "out2d":
-        proj_rgb = sample_grid_torch_nearest(im, projPts, device)
+        proj_rgb = sample_grid_nearest(im, projPts, device)
     elif method == "linear" or method == "bilinear":
-        proj_rgb = sample_grid_torch_linear(im, projPts, device)
+        proj_rgb = sample_grid_linear(im, projPts, device)
     else:
         raise Exception("{} not a valid interpolation method".format(method))
 
@@ -335,7 +341,7 @@ def distortPoints(
 
     return distortedPoints
 
-def expected_value_3d_torch(prob_map, grid_centers):
+def expected_value_3d(prob_map, grid_centers):
     bs, channels, h, w, d = prob_map.shape
 
     prob_map = prob_map.permute(0, 2, 3, 4, 1).reshape(-1, channels)
@@ -345,14 +351,14 @@ def expected_value_3d_torch(prob_map, grid_centers):
 
     return weighted_centers # [bs, 3, channels]
 
-def spatial_softmax_torch(feats):
+def spatial_softmax(feats):
     bs, channels, h, w, d = feats.shape
     feats = feats.reshape(bs, channels, -1)
     feats = F.softmax(feats, dim=-1)
     return feats.reshape(bs, channels, h, w, d)
 
 
-def var_3d_torch(prob_map, grid_centers, markerlocs):
+def var_3d(prob_map, grid_centers, markerlocs):
     """Return the average variance across all marker probability maps.
 
     Used a loss to promote "peakiness" in the probability map output

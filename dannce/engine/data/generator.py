@@ -261,8 +261,6 @@ class DataGenerator_3Dconv(DataGenerator):
 
         self.threadpool = ThreadPool(len(self.camnames[0]))
         self.segmentation_model = segmentation_model
-        # if self.segmentation_model is not None:
-        #     self.segmentation_model.to(self.device)
 
         ts = time.time()
 
@@ -312,14 +310,9 @@ class DataGenerator_3Dconv(DataGenerator):
         """
         ts = time.time()
         # Need this copy so that this_y does not change
-        this_y = torch.as_tensor(
-            self.labels[ID]["data"][camname],
-            dtype=torch.float32,
-            device=self.device,
-        ).round()
+        this_y = torch.as_tensor(self.labels[ID]["data"][camname], dtype=torch.float32, device=self.device).round()
 
         if torch.all(torch.isnan(this_y)):
-            #com_precrop = torch.zeros_like(this_y[:, 0]) * torch.nan
             com_precrop = torch.zeros_like(this_y[:, 0])*float("nan")
         else:
             # For projecting points, we should not use this offset
@@ -385,14 +378,67 @@ class DataGenerator_3Dconv(DataGenerator):
                     device=self.device,
                 )
             else:
-                thisim = processing.cropcom(thisim, com, size=self.dim_in[0])
+                thisim, _ = processing.cropcom(thisim, com, size=self.dim_in[0])
         # print('Frame loading took {} sec.'.format(time.time() - ts))
-        
+
         if self.segmentation_model is not None:
-            input = [torchvision.transforms.functional.to_tensor(thisim.copy()).to(self.device)]
+            #cropped_img, crop_dim = processing.cropcom(thisim.copy(), com.clone().cpu().numpy(), size=256)
+            input = [torchvision.transforms.functional.to_tensor(thisim.copy()).to(self.device,  dtype=torch.float)]
             prediction = self.segmentation_model(input)[0]
-            mask = prediction['masks'][0].permute(1, 2, 0).detach().cpu().numpy()
-            mask = (mask >= 0.5).astype(np.uint8)
+            
+            mask1 = prediction["masks"][0].permute(1, 2, 0).detach().cpu().numpy()
+            mask1 = (mask1 >= 0.5).astype(np.uint8)
+            # bbox1 = processing.mask_to_bbox(mask1)
+            # com1 = [(bbox1[0]+bbox1[2])/2, (bbox1[1]+bbox1[3])/2]
+
+            mask_flag = True
+            try:
+                mask2 = prediction["masks"][1].permute(1, 2, 0).detach().cpu().numpy()
+                mask2 = (mask2 >= 0.5).astype(np.uint8)
+            except:
+                mask2 = np.ones_like(mask1)
+                mask_flag = False
+            # bbox2 = processing.mask_to_bbox(mask2)
+
+            # print("Mask area before: ", np.sum(mask1), np.sum(mask2))
+            if mask_flag:
+                mask_intersect = processing.mask_intersection(mask1, mask2)
+                mask1 -= mask_intersect
+                mask2 -= mask_intersect
+            # print("Mask area after: ", np.sum(mask1), np.sum(mask2))
+
+            # if (mask_iou(mask1, mask2) > 0.5):
+            #     mask_flag = False
+            #     mask2 = np.ones_like(mask2)
+                # com2 = [(bbox2[0]+bbox2[2])/2, (bbox2[1]+bbox2[3])/2]
+
+            index = com.clone().cpu().int().numpy()
+            support_region_size = 10
+            sp_l = np.maximum(0, index[1]-support_region_size)
+            sp_r = np.minimum(mask1.shape[0], index[1]+support_region_size)
+            sp_t = np.maximum(0, index[0]-support_region_size)
+            sp_b = np.minimum(mask1.shape[1], index[0]+support_region_size)
+
+
+            count1 = np.sum(mask1[sp_l:sp_r, sp_t:sp_b, 0])
+            count2 = np.sum(mask2[sp_l:sp_r, sp_t:sp_b, 0])
+            # print("Support regions: ", count1, count2)
+            # print(np.sqrt((com1[0]-index[0])**2 + (com1[1]-index[1])**2),  np.sqrt((com2[0]-index[0])**2 + (com2[1]-index[1])**2))
+            
+            # bboxs = [bbox1, bbox2]
+
+            diff = np.abs(count1-count2)
+            if (mask_flag):
+                if (count1 >= count2) and diff / count1 >= 0.5:
+                    mask = mask1
+                else:
+                    mask = mask2
+                # if np.min([np.abs(index[1]-bboxs[inst][0]), np.abs(index[1]-bboxs[inst][2]), np.abs(index[0]-bboxs[inst][1]), np.abs(index[0]-bboxs[inst][3])]) < 15:
+                #     print("COM too close to the boundary")
+                #     mask = np.ones_like(mask)
+            else:
+                mask = np.ones_like(mask1)
+            
             # thisim *= mask
             thisim = mask
 
@@ -435,27 +481,8 @@ class DataGenerator_3Dconv(DataGenerator):
             X = rgb.permute(0, 2, 3, 4, 1)
 
         return X
-
-    # TODO(nesting): There is pretty deep locigal nesting in this function,
-    # might be useful to break apart
-    def __data_generation(self, list_IDs_temp):
-        """Generate data containing batch_size samples.
-        X : (n_samples, *dim, n_channels)
-
-        Args:
-            list_IDs_temp (List): List of experiment Ids
-
-        Returns:
-            Tuple: Batch_size training samples
-                X: Input volumes
-                y_3d: Targets
-                rotangle: Rotation angle
-        Raises:
-            Exception: Invalid generator mode specified.
-        """
-        # Initialization
-        first_exp = int(self.list_IDs[0].split("_")[0])
-
+    
+    def _init_vars(self, first_exp):
         X = torch.zeros(
             (
                 self.batch_size * len(self.camnames[first_exp]),
@@ -488,118 +515,46 @@ class DataGenerator_3Dconv(DataGenerator):
             device=self.device,
         )
 
-        # Generate data
-        for i, ID in enumerate(list_IDs_temp):
-            sampleID = int(ID.split("_")[1])
-            experimentID = int(ID.split("_")[0])
+        return X, y_3d, X_grid
+    
+    def _generate_coord_grid(self, this_COM_3d):
+        xgrid = torch.arange(
+            self.vmin + this_COM_3d[0] + self.vsize / 2,
+            this_COM_3d[0] + self.vmax,
+            self.vsize,
+            dtype=torch.float32,
+            device=self.device,
+        )
+        ygrid = torch.arange(
+            self.vmin + this_COM_3d[1] + self.vsize / 2,
+            this_COM_3d[1] + self.vmax,
+            self.vsize,
+            dtype=torch.float32,
+            device=self.device,
+        )
+        zgrid = torch.arange(
+            self.vmin + this_COM_3d[2] + self.vsize / 2,
+            this_COM_3d[2] + self.vmax,
+            self.vsize,
+            dtype=torch.float32,
+            device=self.device,
+        )
+        (x_coord_3d, y_coord_3d, z_coord_3d) = torch.meshgrid(
+            xgrid, ygrid, zgrid
+        )
 
-            # For 3D ground truth
-            this_y_3d = torch.as_tensor(
-                self.labels_3d[ID],
-                dtype=torch.float32,
-                device=self.device,
-            )
-            this_COM_3d = torch.as_tensor(
-                self.com3d[ID], dtype=torch.float32, device=self.device
-            )
+        grid = torch.stack(
+            (
+            x_coord_3d.transpose(0, 1).flatten(),
+            y_coord_3d.transpose(0, 1).flatten(),
+            z_coord_3d.transpose(0, 1).flatten(),
+            ),
+            dim=1,
+        )
 
-            # Create and project the grid here,
+        return (x_coord_3d, y_coord_3d, z_coord_3d), grid
 
-            xgrid = torch.arange(
-                self.vmin + this_COM_3d[0] + self.vsize / 2,
-                this_COM_3d[0] + self.vmax,
-                self.vsize,
-                dtype=torch.float32,
-                device=self.device,
-            )
-            ygrid = torch.arange(
-                self.vmin + this_COM_3d[1] + self.vsize / 2,
-                this_COM_3d[1] + self.vmax,
-                self.vsize,
-                dtype=torch.float32,
-                device=self.device,
-            )
-            zgrid = torch.arange(
-                self.vmin + this_COM_3d[2] + self.vsize / 2,
-                this_COM_3d[2] + self.vmax,
-                self.vsize,
-                dtype=torch.float32,
-                device=self.device,
-            )
-            (x_coord_3d, y_coord_3d, z_coord_3d) = torch.meshgrid(
-                xgrid, ygrid, zgrid
-            )
-            
-            if self.mode == "3dprob":
-                for j in range(self.n_channels_out):
-                    y_3d[i, j] = torch.exp(
-                        -(
-                            (y_coord_3d - this_y_3d[1, j]) ** 2
-                            + (x_coord_3d - this_y_3d[0, j]) ** 2
-                            + (z_coord_3d - this_y_3d[2, j]) ** 2
-                        )
-                        / (2 * self.out_scale ** 2)
-                    )
-                    # When the voxel grid is coarse, we will likely miss
-                    # the peak of the probability distribution, as it
-                    # will lie somewhere in the middle of a large voxel.
-                    # So here we renormalize to [~, 1]
-            # breakpoint()
-            if self.mode == "coordinates":
-                if this_y_3d.shape == y_3d[i].shape:
-                    y_3d[i] = this_y_3d
-                else:
-                    msg = "Note: ignoring dimension mismatch in 3D labels"
-                    warnings.warn(msg)
-
-            X_grid[i] = torch.stack(
-                    (
-                    x_coord_3d.transpose(0, 1).flatten(),
-                    y_coord_3d.transpose(0, 1).flatten(),
-                    z_coord_3d.transpose(0, 1).flatten(),
-                    ),
-                    dim=1,
-            )
-
-            # Compute projected images in parallel using multithreading
-            ts = time.time()
-            num_cams = len(self.camnames[experimentID])
-            arglist = []
-            if self.mirror:
-                # Here we only load the video once, and then parallelize the projection
-                # and sampling after mirror flipping. For setups that collect views
-                # in a single imgae with the use of mirrors
-                loadim = self.load_frame.load_vid_frame(
-                    self.labels[ID]["frames"][self.camnames[experimentID][0]],
-                    self.camnames[experimentID][0],
-                    extension=self.extension,
-                )[
-                    self.crop_height[0] : self.crop_height[1],
-                    self.crop_width[0] : self.crop_width[1],
-                ]
-                for c in range(num_cams):
-                    arglist.append(
-                        [
-                            X_grid[i],
-                            self.camnames[experimentID][c],
-                            ID,
-                            experimentID,
-                            loadim,
-                        ]
-                    )
-                result = self.threadpool.starmap(self.pj_grid_mirror, arglist)
-            else:
-                for c in range(num_cams):
-                    arglist.append(
-                        [X_grid[i], self.camnames[experimentID][c], ID, experimentID]
-                    )
-                result = self.threadpool.starmap(self.project_grid, arglist)
-
-            for c in range(num_cams):
-                ic = c + i * len(self.camnames[experimentID])
-                X[ic, :, :, :, :] = result[c]
-            # print('MP took {} sec.'.format(time.time()-ts))
-
+    def _adjust_vol_channels(self, X, y_3d, first_exp, num_cams):
         if self.multicam:
             X = X.reshape(
                 (
@@ -625,6 +580,553 @@ class DataGenerator_3Dconv(DataGenerator):
         else:
             # Then leave the batch_size and num_cams combined
             y_3d = y_3d.repeat(num_cams, 1, 1, 1, 1)
+        
+        return X, y_3d
+
+    def _convert_tensor_to_numpy(self, X, y_3d, X_grid):
+        # ts = time.time()
+        if torch.is_tensor(X):
+            X = X.float().cpu().numpy()
+        if torch.is_tensor(y_3d):
+            y_3d = y_3d.cpu().numpy()
+        if torch.is_tensor(X_grid):
+            X_grid = X_grid.cpu().numpy()
+        # print('Numpy took {} sec'.format(time.time() - ts))
+
+        return X, y_3d, X_grid
+
+    def _finalize_samples(self, X, y_3d, X_grid):
+        if self.var_reg or self.norm_im:
+            X = processing.preprocess_3d(X)
+
+        inputs, targets = [X], [y_3d]
+
+        if self.expval:
+            inputs.append(X_grid)
+        
+        if self.var_reg:
+            targets.append(torch.zeros((self.batch_size, 1)))
+        
+        return inputs, targets
+
+    def __data_generation(self, list_IDs_temp):
+        """Generate data containing batch_size samples.
+        X : (n_samples, *dim, n_channels)
+
+        Args:
+            list_IDs_temp (List): List of experiment Ids
+
+        Returns:
+            Tuple: Batch_size training samples
+                X: Input volumes
+                y_3d: Targets
+                rotangle: Rotation angle
+        Raises:
+            Exception: Invalid generator mode specified.
+        """
+        # Initialization
+        first_exp = int(self.list_IDs[0].split("_")[0])
+        X, y_3d, X_grid = self._init_vars(first_exp)
+
+        # Generate data
+        for i, ID in enumerate(list_IDs_temp):
+            sampleID = int(ID.split("_")[1])
+            experimentID = int(ID.split("_")[0])
+
+            # For 3D ground truth
+            this_y_3d = torch.as_tensor(
+                self.labels_3d[ID],
+                dtype=torch.float32,
+                device=self.device,
+            )
+            this_COM_3d = torch.as_tensor(
+                self.com3d[ID], 
+                dtype=torch.float32, 
+                device=self.device
+            )
+
+            # Create and project the grid here,
+            (x_coord_3d, y_coord_3d, z_coord_3d), grid = self._generate_coord_grid(this_COM_3d)
+            X_grid[i] = grid
+            
+            if self.mode == "3dprob":
+                for j in range(self.n_channels_out):
+                    y_3d[i, j] = torch.exp(
+                        -(
+                            (y_coord_3d - this_y_3d[1, j]) ** 2
+                            + (x_coord_3d - this_y_3d[0, j]) ** 2
+                            + (z_coord_3d - this_y_3d[2, j]) ** 2
+                        )
+                        / (2 * self.out_scale ** 2)
+                    )
+                    # When the voxel grid is coarse, we will likely miss
+                    # the peak of the probability distribution, as it
+                    # will lie somewhere in the middle of a large voxel.
+                    # So here we renormalize to [~, 1]
+            # breakpoint()
+            if self.mode == "coordinates":
+                if this_y_3d.shape == y_3d[i].shape:
+                    y_3d[i] = this_y_3d
+                else:
+                    msg = "Note: ignoring dimension mismatch in 3D labels"
+                    warnings.warn(msg)
+
+            # Compute projected images in parallel using multithreading
+            ts = time.time()
+            num_cams = len(self.camnames[experimentID])
+            arglist = []
+            if self.mirror:
+                # Here we only load the video once, and then parallelize the projection
+                # and sampling after mirror flipping. For setups that collect views
+                # in a single imgae with the use of mirrors
+                loadim = self.load_frame.load_vid_frame(
+                    self.labels[ID]["frames"][self.camnames[experimentID][0]],
+                    self.camnames[experimentID][0],
+                    extension=self.extension,
+                )[
+                    self.crop_height[0] : self.crop_height[1],
+                    self.crop_width[0] : self.crop_width[1],
+                ]
+                for c in range(num_cams):
+                    arglist.append(
+                        [X_grid[i], self.camnames[experimentID][c], ID, experimentID, loadim]
+                    )
+                result = self.threadpool.starmap(self.pj_grid_mirror, arglist)
+            else:
+                for c in range(num_cams):
+                    arglist.append(
+                        [X_grid[i], self.camnames[experimentID][c], ID, experimentID]
+                    )
+                result = self.threadpool.starmap(self.project_grid, arglist)
+
+            for c in range(num_cams):
+                ic = c + i * len(self.camnames[experimentID])
+                X[ic, :, :, :, :] = result[c]
+            # print('MP took {} sec.'.format(time.time()-ts))
+
+        # adjust camera channels
+        X, y_3d = self._adjust_vol_channels(X, y_3d, first_exp, num_cams)
+        
+        # 3dprob is required for *training* MAX networks
+        if self.mode == "3dprob":
+            y_3d = y_3d.permute([0, 2, 3, 4, 1])
+
+        if self.mono and self.n_channels_in == 3:
+            # Convert from RGB to mono using the skimage formula. Drop the duplicated frames.
+            # Reshape so RGB can be processed easily.
+            X = X.reshape(*X.shape[:4], len(self.camnames[first_exp]), -1)
+            X = X[..., 0] * 0.2125 + X[..., 1] * 0.7154 + X[..., 2] * 0.0721
+
+        # Convert pytorch tensors back to numpy array
+        X, y_3d, X_grid = self._convert_tensor_to_numpy(X, y_3d, X_grid)
+
+        return self._finalize_samples(X, y_3d, X_grid)
+
+class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
+    def __init__(
+        self,
+        list_IDs: List,
+        labels: Dict,
+        labels_3d: Dict,
+        camera_params: Dict,
+        clusterIDs: List,
+        com3d: Dict,
+        tifdirs: List,
+        n_instances = 2,
+        **kwargs
+    ):
+        DataGenerator_3Dconv.__init__(
+            self,
+            list_IDs,
+            labels,
+            labels_3d,
+            camera_params,
+            clusterIDs,
+            com3d,
+            tifdirs,
+            **kwargs
+        )
+
+        self.n_instances = n_instances
+        self.batch_size = n_instances
+        self.list_IDs = [ID for ID in self.list_IDs if int(ID.split("_")[0]) % n_instances == 0]
+
+    def __getitem__(self, index: int):
+        """Generate one batch of data.
+
+        Args:
+            index (int): Frame index
+
+        Returns:
+            Tuple[np.ndarray, np.ndarray]: One batch of data X
+                (np.ndarray): Input volume y
+                (np.ndarray): Target
+        """
+        # Find list of IDs
+        thisID = self.list_IDs[index]
+        experimentID, sampleID = thisID.split("_")
+
+        list_IDs_temp = [str(int(experimentID)+i)+"_"+sampleID for i in range(self.n_instances)]
+        # Generate data
+        X, y = self.__data_generation(list_IDs_temp)
+
+        return X, y
+
+    def project_grid(self, X_grids, camnames, IDs, experimentIDs, com_3ds):
+        import matplotlib.pyplot as plt
+        """Projects 3D voxel centers and sample images as projected 2D pixel coordinates
+
+        Args:
+            X_grid (np.ndarray): 3-D array containing center coordinates of each voxel.
+            camname (Text): camera name
+            ID (Text): string denoting a sample ID
+            experimentID (int): identifier for a video recording session.
+
+        Returns:
+            np.ndarray: projected voxel centers, now in 2D pixels
+        """
+        ts = time.time()
+
+        # Need this copy so that this_y does not change
+        thisims, coms, com_precrops = [], [], []
+        
+        thisim = self.load_frame.load_vid_frame(
+            self.labels[IDs[0]]["frames"][camnames[0]],
+            camnames[0],
+            extension=self.extension,
+        )[
+            self.crop_height[0] : self.crop_height[1],
+            self.crop_width[0] : self.crop_width[1],
+        ]
+        
+        # if int(camnames[0].split('_')[-1].split('Camera')[-1]) == 1:
+        #     plt.imsave(
+        #         '/media/mynewdrive/datasets/dannce/social_rat/debug_im/'+IDs[0]+'.jpg',
+        #         thisim
+        #     )
+        for i in range(self.n_instances):
+            this_y = torch.as_tensor(
+                self.labels[IDs[i]]["data"][camnames[i]],
+                dtype=torch.float32,
+                device=self.device,
+            ).round()
+
+            if torch.all(torch.isnan(this_y)):
+                com_precrop = torch.zeros_like(this_y[:, 0])*float("nan")
+            else:
+                com_precrop = torch.mean(this_y, axis=1)
+
+            this_y[0, :] = this_y[0, :] - self.crop_width[0]
+            this_y[1, :] = this_y[1, :] - self.crop_height[0]
+            com = torch.mean(this_y, axis=1)
+            
+            # thisim = self.load_frame.load_vid_frame(
+            #     self.labels[IDs[i]]["frames"][camnames[i]],
+            #     camnames[i],
+            #     extension=self.extension,
+            # )[
+            #     self.crop_height[0] : self.crop_height[1],
+            #     self.crop_width[0] : self.crop_width[1],
+            # ]
+
+            # this_ys.append(this_y)
+            coms.append(com)
+            com_precrops.append(com_precrop)
+            thisims.append(thisim)
+
+        return self.pj_grid_post(
+            X_grids, camnames, IDs, experimentIDs, coms, com_precrops, thisims, com_3ds
+        )
+
+    def pj_grid_mirror(self, X_grid, camname, ID, experimentID, thisim):
+        this_y = torch.as_tensor(
+            self.labels[ID]["data"][camname],
+            dtype=torch.float32,
+            device=self.device,
+        ).round()
+
+        if torch.all(torch.isnan(this_y)):
+            com_precrop = torch.zeros_like(this_y[:, 0]) * float("nan")
+        else:
+            # For projecting points, we should not use this offset
+            com_precrop = torch.mean(this_y, dim=1)
+
+        this_y[0, :] = this_y[0, :] - self.crop_width[0]
+        this_y[1, :] = this_y[1, :] - self.crop_height[0]
+        com = torch.mean(this_y, dim=1)
+
+        if not self.mirror:
+            raise Exception(
+                "Trying to project onto mirrored images without mirror being set properly"
+            )
+
+        if self.camera_params[experimentID][camname]["m"] == 1:
+            passim = thisim[-1::-1].copy()
+        elif self.camera_params[experimentID][camname]["m"] == 0:
+            passim = thisim.copy()
+        else:
+            raise Exception("Invalid mirror parameter, m, must be 0 or 1")
+
+        return self.pj_grid_post(
+            X_grid, camname, ID, experimentID, com, com_precrop, passim
+        )
+
+    def pj_grid_post(self, X_grids, camnames, IDs, experimentIDs, coms, com_precrops, thisims, com_3ds):
+        # separate the porjection and sampling into its own function so that
+        # when mirror == True, this can be called directly
+        if self.crop_im:
+            for i in range(self.n_instances):
+                if torch.all(torch.isnan(coms[i])):
+                    thisims[i] = torch.zeros(
+                        (self.dim_in[1], self.dim_in[0], self.n_channels_in),
+                        dtype=torch.uint8,
+                        device=self.device,
+                    )
+                else:
+                    thisims[i] = processing.cropcom(thisims[i], coms[i], size=self.dim_in[0])[0] 
+        # print('Frame loading took {} sec.'.format(time.time() - ts))
+
+        if self.segmentation_model is not None:
+            # compute 3D COMs in camera coordinates for occlusion check
+            com_3ds_cam = ops.world_to_cam(
+                com_3ds.clone(), 
+                self.camera_params[experimentIDs[0]][camnames[0]]["M"],
+                self.device
+            ).detach().cpu().numpy()
+            
+            # com_3ds_proj = com_3ds_cam[:, :2] / com_3ds_cam[:, 2:]
+
+            # check depths
+            instance_front = np.argmin(com_3ds_cam[:, 2])
+
+            # check overlap region
+            bb1 = [com_3ds_cam[0, 0]+self.vmin, com_3ds_cam[0, 1]+self.vmin, com_3ds_cam[0, 0]+self.vmax, com_3ds_cam[0, 1]+self.vmax]
+            bb2 = [com_3ds_cam[1, 0]+self.vmin, com_3ds_cam[1, 1]+self.vmin, com_3ds_cam[1, 0]+self.vmax, com_3ds_cam[1, 1]+self.vmax]
+            
+            iou = processing.bbox_iou(bb1, bb2)
+            occlusion_flag = (iou > 0.8)
+            # if there is no occlusion, 
+            # the model should be able to detect `n_instances`` masks 
+            # in this specific camera view, with high confidence (score > 0.9)
+
+            # initialize masks as ones ==> no influence if no masks predicted
+            masks = np.ones((self.n_instances, *thisims[0].shape[:2], 1))
+
+            # get mask predictions
+            input = [torchvision.transforms.functional.to_tensor(thisims[0].copy()).to(self.device,  dtype=torch.float)]
+            prediction = self.segmentation_model(input)[0]
+            # filter by confidence scores
+            filtering_by_scores = (prediction["scores"] > 0.9)
+            raw_masks = prediction["masks"][filtering_by_scores]
+            print(f"{len(raw_masks)} masks detected.")
+            if len(raw_masks) > self.n_instances:
+                raw_masks = raw_masks[:self.n_instances]
+
+            # adjust dimension, convert to numpy
+            masks_unordered = []
+            for j in range(len(raw_masks)):
+                mask = raw_masks[j].permute(1, 2, 0).detach().cpu().numpy()
+                masks_unordered.append((mask >= 0.5).astype(np.uint8))
+            masks_unordered = np.stack(masks_unordered)
+
+            # mask matching
+            if len(raw_masks) == 0:
+                print("No mask predicted.")
+            
+            elif len(raw_masks) < self.n_instances:
+                counts = processing.compute_support(coms, masks_unordered[0])
+                assignment = np.argmax(counts)
+                masks[assignment] = masks_unordered[0]
+                
+                if occlusion_flag and (assignment == instance_front):
+                    print("Severe occlusion; mask only predicted on animal at front.")
+                    non_assignment =((np.arange(len(raw_masks)) != assignment))
+                    masks[non_assignment] = (masks_unordered[0] == 0).astype(np.uint8)
+                else:
+                    print("Mask only predicted on animal behind.")
+
+            elif len(raw_masks) == self.n_instances:
+                # remove intersected region
+                mask_intersect = processing.mask_intersection(masks_unordered[0], masks_unordered[1])
+                masks_unordered = [mask-mask_intersect for mask in masks_unordered]
+            
+                counts0 = processing.compute_support(coms, masks_unordered[0])
+                counts1 = processing.compute_support(coms, masks_unordered[1])
+                
+                assignment0 = np.argmax(counts0)
+                assignment1 = np.argmax(counts1)
+
+                if assignment0 != assignment1:
+                    # perfect matching
+                    masks[assignment0] = masks_unordered[0]
+                    masks[assignment1] = masks_unordered[1]
+                elif occlusion_flag and (assignment0 == instance_front):
+                    print("Mask ambiguity. Assume the higher confidence mask belongds to the front.")
+                    masks[instance_front] = masks_unordered[0]
+
+            for i, im in enumerate(thisims):
+                thisims[i] = im * masks[i]
+
+        X = []
+        for i in range(self.n_instances):
+            # ts = time.time()
+            proj_grid = ops.project_to2d(
+                X_grids[i], self.camera_params[experimentIDs[i]][camnames[i]]["M"], self.device
+            )
+            # print('Project2d took {} sec.'.format(time.time() - ts))
+
+            # ts = time.time()
+            if self.distort:
+                proj_grid = ops.distortPoints(
+                    proj_grid[:, :2],
+                    self.camera_params[experimentIDs[i]][camnames[i]]["K"],
+                    np.squeeze(self.camera_params[experimentIDs[i]][camnames[i]]["RDistort"]),
+                    np.squeeze(self.camera_params[experimentIDs[i]][camnames[i]]["TDistort"]),
+                    self.device,
+                )
+                proj_grid = proj_grid.transpose(0, 1)
+                # print('Distort took {} sec.'.format(time.time() - ts))
+
+            # ts = time.time()
+            if self.crop_im:
+                proj_grid = proj_grid[:, :2] - com_precrops[i] + self.dim_in[0] // 2
+                # Now all coordinates should map properly to the image cropped around the COM
+            else:
+                # Then the only thing we need to correct for is crops at the borders
+                proj_grid = proj_grid[:, :2]
+                proj_grid[:, 0] = proj_grid[:, 0] - self.crop_width[0]
+                proj_grid[:, 1] = proj_grid[:, 1] - self.crop_height[0]
+
+            rgb = ops.sample_grid(thisims[i], proj_grid, self.device, method=self.interp)
+            # print('Sample grid {} sec.'.format(time.time() - ts))
+            
+            # tifdir = '/media/mynewdrive/datasets/dannce/social_rat_debug_social_volume2'
+            # if not os.path.exists(tifdir):
+            #     os.makedirs(tifdir)
+            # im = rgb.permute(0, 2, 3, 4, 1).clone()[0].cpu().numpy()
+            # im = processing.norm_im(im) * 255
+            # im = im.astype("uint8")
+            # of = os.path.join(
+            #         tifdir,
+            #         IDs[i] + camnames[i] + ".tif",
+            #     )
+            # import imageio
+            # imageio.mimwrite(of, np.transpose(im, [2, 0, 1, 3]))
+            # breakpoint()
+
+            if (
+                ~torch.any(torch.isnan(com_precrops[i]))
+                or (self.channel_combo == "avg")
+                or not self.crop_im
+            ):
+                X.append(rgb.permute(0, 2, 3, 4, 1))
+
+        return X
+
+    def __data_generation(self, list_IDs_temp):
+        """Generate data containing batch_size samples.
+        X : (n_samples, *dim, n_channels)
+
+        Args:
+            list_IDs_temp (List): List of experiment Ids
+
+        Returns:
+            Tuple: Batch_size training samples
+                X: Input volumes
+                y_3d: Targets
+                rotangle: Rotation angle
+        Raises:
+            Exception: Invalid generator mode specified.
+        """
+        # Initialization
+        first_exp = int(self.list_IDs[0].split("_")[0])
+        X, y_3d, X_grid = self._init_vars(first_exp)
+
+        com_3ds = torch.zeros(
+            (self.batch_size, 3),
+            dtype=torch.float32,
+            device=self.device
+        )
+        
+        # Generate data
+        experimentIDs = []
+        for i, ID in enumerate(list_IDs_temp):
+            sampleID = int(ID.split("_")[1])
+            experimentID = int(ID.split("_")[0])
+            experimentIDs.append(experimentID)
+
+            # For 3D ground truth
+            this_y_3d = torch.as_tensor(
+                self.labels_3d[ID],
+                dtype=torch.float32,
+                device=self.device,
+            )
+            this_COM_3d = torch.as_tensor(
+                self.com3d[ID], dtype=torch.float32, device=self.device
+            )
+
+            com_3ds[i] = this_COM_3d
+
+            # Create and project the grid here,
+            (x_coord_3d, y_coord_3d, z_coord_3d), grid = self._generate_coord_grid(this_COM_3d)
+            X_grid[i] = grid
+
+            if self.mode == "3dprob":
+                for j in range(self.n_channels_out):
+                    y_3d[i, j] = torch.exp(
+                        -(
+                            (y_coord_3d - this_y_3d[1, j]) ** 2
+                            + (x_coord_3d - this_y_3d[0, j]) ** 2
+                            + (z_coord_3d - this_y_3d[2, j]) ** 2
+                        )
+                        / (2 * self.out_scale ** 2)
+                    )
+            
+            if self.mode == "coordinates":
+                if this_y_3d.shape == y_3d[i].shape:
+                    y_3d[i] = this_y_3d
+                else:
+                    msg = "Note: ignoring dimension mismatch in 3D labels"
+                    warnings.warn(msg)
+
+        # Compute projected images in parallel using multithreading
+        ts = time.time()
+        num_cams = len(self.camnames[experimentIDs[0]])
+        arglist = []
+
+        for c in range(num_cams):  
+            arglist.append([
+                X_grid, 
+                [self.camnames[experimentID][c] for experimentID in experimentIDs], 
+                list_IDs_temp, 
+                experimentIDs, 
+                com_3ds]
+            )
+        result = self.threadpool.starmap(self.project_grid, arglist)
+        
+        for c in range(num_cams):
+            for j in range(len(result[c])):
+                ic = c + j * num_cams
+                X[ic, ...] = result[c][j][0]
+        # print('MP took {} sec.'.format(time.time()-ts))
+        # breakpoint()
+        # adjust camera channels
+        X, y_3d = self._adjust_vol_channels(X, y_3d, first_exp, num_cams)
+
+        # tifdir = '/media/mynewdrive/datasets/dannce/social_rat/debug_social_volume2'
+        # if not os.path.exists(tifdir):
+        #     os.makedirs(tifdir)
+        # for j in range(5):
+        #     im = X.clone().cpu().numpy()[0, :, :, :, j*3:(j+1)*3]
+        #     im = processing.norm_im(im) * 255
+        #     im = im.astype("uint8")
+        #     of = os.path.join(
+        #             tifdir,
+        #             f"cam{j}.tif",
+        #         )
+        #     import imageio
+        #     imageio.mimwrite(of, np.transpose(im, [2, 0, 1, 3]))
+        # breakpoint()
 
         # 3dprob is required for *training* MAX networks
         if self.mode == "3dprob":
@@ -637,32 +1139,9 @@ class DataGenerator_3Dconv(DataGenerator):
             X = X[..., 0] * 0.2125 + X[..., 1] * 0.7154 + X[..., 2] * 0.0721
 
         # Convert pytorch tensors back to numpy array
-        ts = time.time()
-        if torch.is_tensor(X):
-            X = X.float().cpu().numpy()
-        if torch.is_tensor(y_3d):
-            y_3d = y_3d.cpu().numpy()
-        # print('Numpy took {} sec'.format(time.time() - ts))
+        X, y_3d, X_grid = self._convert_tensor_to_numpy(X, y_3d, X_grid)
 
-        if self.expval:
-            if torch.is_tensor(X_grid):
-                X_grid = X_grid.cpu().numpy()
-            if self.var_reg:
-                return (
-                    [processing.preprocess_3d(X), X_grid],
-                    [y_3d, torch.zeros((self.batch_size, 1))],
-                )
-
-            if self.norm_im:
-                # y_3d is in coordinates here.
-                return [processing.preprocess_3d(X), X_grid], y_3d
-            else:
-                return [X, X_grid], y_3d
-        else:
-            if self.norm_im:
-                return processing.preprocess_3d(X), y_3d
-            else:
-                return X, y_3d
+        return self._finalize_samples(X, y_3d, X_grid)
 
 class DataGenerator_3Dconv_frommem(torch.utils.data.Dataset):
     """Generate 3d conv data from memory.
@@ -722,8 +1201,6 @@ class DataGenerator_3Dconv_frommem(torch.utils.data.Dataset):
         heatmap_reg_coeff=0.01,
         aux_labels=None,
         temporal_chunk_list=None,
-        # separation_loss=False,
-        # symmetry_loss=False
     ):
         """Initialize data generator.
         """

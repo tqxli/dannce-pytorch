@@ -891,7 +891,9 @@ def cropcom(im, com, size=512):
     minlim_c = int(np.round(com[0])) - size // 2
     maxlim_c = int(np.round(com[0])) + size // 2
 
-    out = im[np.max([minlim_r, 0]) : maxlim_r, np.max([minlim_c, 0]) : maxlim_c, :]
+    crop_dim = (np.max([minlim_r, 0]), maxlim_r, np.max([minlim_c, 0]), maxlim_c)
+
+    out = im[crop_dim[0] : crop_dim[1], crop_dim[2] : crop_dim[3], :]
 
     dim = out.shape[2]
 
@@ -913,7 +915,7 @@ def cropcom(im, com, size=512):
             (out, np.zeros((out.shape[0], maxlim_c - im.shape[1], dim))), axis=1
         )
 
-    return out
+    return out, crop_dim
 
 
 def write_config(results_dir, configdict, message, filename="modelconfig.cfg"):
@@ -1266,10 +1268,11 @@ def write_sil_npy(uri, gen):
             sil = np.squeeze(extract_3d_sil(bch[0][0][j], 18))
             np.save(os.path.join(imdir, fname + ".npy"), sil)
 
-def extract_3d_sil(vol, upper_thres):
+def extract_3d_sil(vol):
     vol[vol > 0] = 1
     vol = np.sum(vol, axis=-1, keepdims=True)
 
+    # TODO: want max over each sample, instead of all
     upper_thres = np.max(vol)
 
     vol[vol < upper_thres] = 0
@@ -1291,7 +1294,7 @@ def extract_3d_sil_soft(vol, upper_thres, keeprange=3):
             100*np.sum((vol > 0))/len(vol.ravel())))
     return vol
 
-def load_volumes_into_mem(params, logger, partition, n_cams, generator, train=True, silhouette=False):
+def load_volumes_into_mem(params, logger, partition, n_cams, generator, train=True, silhouette=False, social=False):
     n_samples = len(partition["train_sampleIDs"]) if train else len(partition["valid_sampleIDs"]) 
     message = "Loading training data into memory" if train else "Loading validation data into memory"
     gridsize = tuple([params["nvox"]] * 3)
@@ -1307,15 +1310,34 @@ def load_volumes_into_mem(params, logger, partition, n_cams, generator, train=Tr
     else:
         y = np.empty((n_samples, *gridsize, params["n_channels_out"]), dtype="float32")
 
-    for i in range(n_samples):
-        print(i, end="\r")
-        rr = generator.__getitem__(i)
-        if params["expval"]:
-            X[i] = rr[0][0]
-            if not silhouette: 
-                X_grid[i], y[i] = rr[0][1], rr[1]
-        else:
-            X[i], y[i] = rr[0], rr[1]
+    if social:
+        X = np.reshape(X, (2, -1, *X.shape[1:]))
+        X_grid = np.reshape(X_grid, (2, -1, *X_grid.shape[1:]))
+        y = np.reshape(y, (2, -1, *y.shape[1:]))
+
+        for i in range(n_samples//2):
+            # breakpoint()
+            print(i, end="\r")
+            rr = generator.__getitem__(i)
+            for j in range(2):
+                X[j, i] = rr[0][0][j]
+                if not silhouette: 
+                    X_grid[j, i], y[j, i] = rr[0][1][j], rr[1][0][j]
+
+        X = np.reshape(X, (-1, *X.shape[2:]))
+        X_grid = np.reshape(X_grid, (-1, *X_grid.shape[2:]))
+        y = np.reshape(y, (-1, *y.shape[2:]))
+
+    else:
+        for i in range(n_samples):
+            print(i, end="\r")
+            rr = generator.__getitem__(i)
+            if params["expval"]:
+                X[i] = rr[0][0][0]
+                if not silhouette: 
+                    X_grid[i], y[i] = rr[0][1], rr[1][0]
+            else:
+                X[i], y[i] = rr[0], rr[1]
 
     if silhouette:
         logger.info("Now loading silhouettes")
@@ -1323,9 +1345,62 @@ def load_volumes_into_mem(params, logger, partition, n_cams, generator, train=Tr
         if params["soft_silhouette"]:
             X = extract_3d_sil_soft(X, params["chan_num"]*n_cams)
         else:
-            X = extract_3d_sil(X, params["chan_num"]*n_cams)
+            X = extract_3d_sil(X)
         
         return X_copy, None, X
     
     return X, X_grid, y
 
+def mask_to_bbox(mask):
+    bounding_boxes = np.zeros((4, ))
+    y, x, _ = np.where(mask != 0)
+    try:
+        bounding_boxes[0] = np.min(x)
+        bounding_boxes[1] = np.min(y)
+        bounding_boxes[2] = np.max(x)
+        bounding_boxes[3] = np.max(y)
+    except:
+        return bounding_boxes
+    return bounding_boxes
+
+def mask_iou(mask1, mask2):
+    """ compute iou between two binary masks
+    """
+    intersection = np.sum(mask1 * mask2)
+    if intersection == 0:
+        return 0.0
+    union = np.sum(np.logical_or(mask1, mask2).astype(np.uint8))
+    return intersection / union
+
+def mask_intersection(mask1, mask2):
+    return (mask1 * mask2)
+
+def bbox_iou(bb1, bb2):
+    x_left = max(bb1[0], bb2[0])
+    y_top = max(bb1[1], bb2[1])
+    x_right = min(bb1[2], bb2[2])
+    y_bottom = min(bb1[3], bb2[3])
+
+    if x_right < x_left or y_bottom < y_top:
+        return 0.0
+    intersection_area = (x_right - x_left) * (y_bottom - y_top)
+
+    bb1_area = (bb1['x2'] - bb1['x1']) * (bb1['y2'] - bb1['y1'])
+    bb2_area = (bb2['x2'] - bb2['x1']) * (bb2['y2'] - bb2['y1'])
+
+    iou = intersection_area / float(bb1_area + bb2_area - intersection_area)
+
+    return iou
+
+def compute_support(coms, mask, support_region_size=10):
+    counts = []
+    for i in range(len(coms)):
+        index = coms[i].clone().cpu().int().numpy()
+        sp_l = np.maximum(0, index[1]-support_region_size)
+        sp_r = np.minimum(mask.shape[0], index[1]+support_region_size)
+        sp_t = np.maximum(0, index[0]-support_region_size)
+        sp_b = np.minimum(mask.shape[1], index[0]+support_region_size)
+
+        count = np.sum(mask[sp_l:sp_r, sp_t:sp_b, 0])
+        counts.append(count)
+    return np.array(counts)

@@ -172,7 +172,7 @@ class PairRepulsionLoss(BaseLoss):
         """
         bs, n_joints = kpts_pred.shape[0], kpts_pred.shape[-1]
         
-        kpts_pred = kpts_pred.reshape(-1, 2, *kpts_pred.shape[1:]).permute(1, 0, 2, 3)
+        kpts_pred = kpts_pred.reshape(2, -1, *kpts_pred.shape[1:]) # [n_pairs, 2, 3, n_joints]
 
         # compute the distance between each joint of animal 1 and all joints of animal 2
         a1 = kpts_pred[0].repeat(1, 1, n_joints) # [n, 3, n_joints^2]
@@ -182,7 +182,7 @@ class PairRepulsionLoss(BaseLoss):
         dist = diffsqr.sum(1).sqrt() # [bs, n_joints^2] 
         dist = torch.maximum(self.delta - dist, torch.zeros_like(dist))
         
-        return self.loss_weight * (dist.sum() / n_joints / bs)
+        return self.loss_weight * (dist.sum() / bs)
 
 
 class SilhouetteLoss(BaseLoss):
@@ -203,11 +203,3 @@ class SilhouetteLoss(BaseLoss):
         return self.loss_weight * sil
 
 
-# def silhouette_loss(kpts_gt, kpts_pred):
-#     # y_true and y_pred will both have shape
-#     # (n_batch, width, height, n_keypts)
-#     reduce_axes = (1, 2, 3)
-#     sil = torch.sum(kpts_pred * kpts_gt, dim=reduce_axes)
-#     sil = -(sil+1e-12).log()
-    
-#     return sil.mean()

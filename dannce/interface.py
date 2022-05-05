@@ -121,6 +121,7 @@ def dannce_train(params: Dict):
     """
 
     params["multi_mode"] = False
+    params["depth"] = False
     # Default to 6 views but a smaller number of views can be specified in the
     # DANNCE config. If the legnth of the camera files list is smaller than
     # n_views, relevant lists will be duplicated in order to match n_views, if
@@ -365,6 +366,9 @@ def dannce_train(params: Dict):
                 segmentation_model=segmentation_model
             )
 
+            # train_generator = train_generator_sil
+            # valid_generator = valid_generator_sil
+
         # # We should be able to load everything into memory...
         n_cams = len(camnames[0])
         X_train, X_train_grid, y_train = processing.load_volumes_into_mem(params, logger, partition, n_cams, train_generator, train=True)
@@ -406,6 +410,8 @@ def dannce_train(params: Dict):
     y_train_aux = None
     y_valid_aux = None
     if params["use_silhouette"]:
+        # y_train_aux = None
+        # y_valid_aux = None
         _, _, y_train_aux = processing.load_volumes_into_mem(params, logger, partition, n_cams, train_generator_sil, train=True, silhouette=True)
         _, _, y_valid_aux = processing.load_volumes_into_mem(params, logger, partition, n_cams, valid_generator_sil, train=False, silhouette=True)
         # save_path = '/media/mynewdrive/datasets/ocpose'
@@ -444,11 +450,12 @@ def dannce_train(params: Dict):
         # concatenate RGB image volumes with silhouette volumes
         X_train = np.concatenate((X_train, y_train_aux, y_train_aux, y_train_aux), axis=-1)
         X_valid = np.concatenate((X_valid, y_valid_aux, y_valid_aux, y_valid_aux), axis=-1)
+        # X_train = X_train * y_train_aux
+        # X_valid = X_valid * y_valid_aux
         print("Input dimension is now {}".format(X_train.shape))
 
         params["use_silhouette"] = False
         print("Turn off silhouette loss.")
-
         y_train_aux = None
         y_valid_aux = None
 
@@ -1142,14 +1149,15 @@ def social_dannce_train(params):
     new_partition = {"train_sampleIDs": [], "valid_sampleIDs": []}
     all_sampleIDs = np.concatenate((partition["train_sampleIDs"], partition["valid_sampleIDs"]))
     for samp in partition["train_sampleIDs"]:
-        exp_id = int(samp.split("_")[0]) %2
+        exp_id = int(samp.split("_")[0])
         if exp_id % 2 == 0:
             new_partition["train_sampleIDs"].append(samp)
             new_partition["train_sampleIDs"].append(samp.replace(f"{exp_id}_", f"{exp_id+1}_"))
     new_partition["train_sampleIDs"] = np.array(sorted(new_partition["train_sampleIDs"]))
     new_partition["valid_sampleIDs"] = np.array(sorted(list(set(all_sampleIDs) - set(new_partition["train_sampleIDs"]))))
-
     partition = new_partition
+
+    logger.info("\nTRAIN:VALIDATION SPLIT = {}:{}\n".format(len(partition["train_sampleIDs"]), len(partition["valid_sampleIDs"])))
 
     if params["use_npy"]:
         # mono conversion will happen from RGB npy files, and the generator
@@ -1208,11 +1216,11 @@ def social_dannce_train(params):
                             com3d_dict,
                             tifdirs]
 
-        train_generator = generator.DataGenerator_3Dconv(
+        train_generator = generator.DataGenerator_3Dconv_social(
             *train_gen_params,
             **valid_params
         )
-        valid_generator = generator.DataGenerator_3Dconv(
+        valid_generator = generator.DataGenerator_3Dconv_social(
             *valid_gen_params,
             **valid_params
         )
@@ -1241,8 +1249,8 @@ def social_dannce_train(params):
 
         # # We should be able to load everything into memory...
         n_cams = len(camnames[0])
-        X_train, X_train_grid, y_train = processing.load_volumes_into_mem(params, logger, partition, n_cams, train_generator, train=True)
-        X_valid, X_valid_grid, y_valid = processing.load_volumes_into_mem(params, logger, partition, n_cams, valid_generator, train=False)
+        X_train, X_train_grid, y_train = processing.load_volumes_into_mem(params, logger, partition, n_cams, train_generator, train=True, social=True)
+        X_valid, X_valid_grid, y_valid = processing.load_volumes_into_mem(params, logger, partition, n_cams, valid_generator, train=False, social=True)
 
         if params["debug_volume_tifdir"] is not None:
             # When this option is toggled in the config, rather than
@@ -1353,12 +1361,19 @@ def social_dannce_train(params):
 
     genfunc = generator.DataGenerator_Social
     n_animals = 2
-    X_train = X_train.reshape((-1, n_animals, *X_train.shape[1:]))
-    X_train_grid = X_train_grid.reshape((-1, n_animals, *X_train_grid.shape[1:]))
-    y_train = y_train.reshape((-1, n_animals, *y_train.shape[1:]))
-    X_valid = X_valid.reshape((-1, n_animals, *X_valid.shape[1:]))
-    X_valid_grid = X_valid_grid.reshape((-1, n_animals, *X_valid_grid.shape[1:]))
-    y_valid = y_valid.reshape((-1, n_animals, *y_valid.shape[1:]))
+    X_train = X_train.reshape((n_animals, -1, *X_train.shape[1:]))
+    X_train_grid = X_train_grid.reshape((n_animals, -1, *X_train_grid.shape[1:]))
+    y_train = y_train.reshape((n_animals, -1, *y_train.shape[1:]))
+    X_valid = X_valid.reshape((n_animals, -1, *X_valid.shape[1:]))
+    X_valid_grid = X_valid_grid.reshape((n_animals, -1, *X_valid_grid.shape[1:]))
+    y_valid = y_valid.reshape((n_animals, -1, *y_valid.shape[1:]))
+
+    X_train = np.transpose(X_train, (1, 0, 2, 3, 4, 5))
+    X_train_grid = np.transpose(X_train_grid, (1, 0, 2, 3))
+    y_train = np.transpose(y_train, (1, 0, 2, 3))
+    X_valid = np.transpose(X_valid, (1, 0, 2, 3, 4, 5))
+    X_valid_grid = np.transpose(X_valid_grid, (1, 0, 2, 3))
+    y_valid = np.transpose(y_valid, (1, 0, 2, 3))
 
     args_train = {
         "list_IDs": np.arange(len(partition["train_sampleIDs"])),
