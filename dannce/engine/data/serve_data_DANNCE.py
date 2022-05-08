@@ -670,6 +670,39 @@ def setup_dataloaders(train_dataset, valid_dataset, params):
     )
     return train_dataloader, valid_dataloader
 
+NPY_DIRNAMES = ["image_volumes", "grid_volumes", "targets"]
+def examine_npy_training(params, samples):
+    npydir, missing_npydir = {}, {}
 
+    for e in range(len(params["exp"])):
+        # for social, cannot use the same default npy volume dir for both animals
+        label3d_name = os.path.basename(params["experiment"][e]["label3d_file"]).split(".mat")[0]
+        npy_folder = params["experiment"][e]["npy_vol_dir"] + "_" + label3d_name
+        npydir[e] = npy_folder
+
+        # create missing npy directories
+        if not os.path.exists(npydir[e]):
+            missing_npydir[e] = npydir[e]
+            for dir in NPY_DIRNAMES:
+                os.makedirs(os.path.join(npydir[e], dir)) 
+        else:
+            for dir in NPY_DIRNAMES:
+                dirpath = os.path.join(npydir[e], dir)
+                if (not os.path.exists(dirpath)) or (len(os.listdir(dirpath)) == 0):
+                    missing_npydir[e] = npydir[e]
+                    os.makedirs(dirpath, exist_ok=True)
+
+    missing_samples = [samp for samp in samples if int(samp.split("_")[0]) in list(missing_npydir.keys())]
+    
+    # check any other missing npy samples
+    for samp in list(set(samples) - set(missing_samples)):
+        e, sampleID = int(samp.split("_")[0]), samp.split("_")[1]
+        if not os.path.exists(os.path.join(npydir[e], "image_volumes", f"0_{sampleID}.npy")):
+            missing_samples.append(samp)
+            missing_npydir[e] = npydir[e]
+
+    missing_samples = np.array(sorted(missing_samples))
+
+    return npydir, missing_npydir, missing_samples
 
 

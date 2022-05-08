@@ -101,16 +101,11 @@ _param_defaults_dannce = {
     "huber-delta": 1.35,            #Change Adapted from implementation by Rob
     "avg+max": None,
     ## changes made to temporal
-    "temporal_chunk_size": None,
-    "temporal_loss_weight": None,
     "support_exp": None,
     "n_support_chunks": None,
     "unlabeled_temp": 0,
     "silhouette_loss_weight": None,
-    "separation_loss_weight": None,
-    "separation_delta": None,
     "use_silhouette_in_volume": None,
-    "symmetry_loss_weight": None
 }
 _param_defaults_com = {
     "dsmode": "nn",

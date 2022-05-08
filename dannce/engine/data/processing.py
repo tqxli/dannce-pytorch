@@ -22,7 +22,7 @@ import yaml
 import shutil
 import time
 from typing import Dict
-# from tensorflow.keras.models import Model
+import pickle
 
 
 def write_debug(
@@ -139,6 +139,12 @@ def initialize_vids(params, datadict, e, vids, pathonly=True, vidkey="viddir"):
         else:
             vids[params["experiment"][e]["camnames"][i]] = r
 
+    return vids
+
+def initialize_all_vids(params, datadict, exps, pathonly=True, vidkey="viddir"):
+    vids = {}
+    for e in exps:
+        vids = initialize_vids(params, datadict, e, vids, pathonly, vidkey)
     return vids
 
 def copy_config(results_dir, main_config, io_config):
@@ -500,14 +506,14 @@ def trim_COM_pickle(fpath, start_sample, end_sample, opath=None):
     return sd
 
 
-def save_params(outdir, params):
+def save_params_pickle(params):
     """
-    Save copy of params to outdir as .mat file
+    save copy of params as pickle for reproducibility.
     """
-    sio.savemat(os.path.join(outdir, "copy_params.mat"), prepare_save_metadata(params))
+    handle = open(os.path.join(params["dannce_train_dir"], "params.pickle"), "wb")
+    pickle.dump(params, handle)
 
     return True
-
 
 def make_none_safe(pdict):
     if isinstance(pdict, dict):
@@ -1350,6 +1356,43 @@ def load_volumes_into_mem(params, logger, partition, n_cams, generator, train=Tr
         return X_copy, None, X
     
     return X, X_grid, y
+
+def save_volumes_into_npy(params, npy_generator, missing_samples, missing_npydir, npydir, logger):
+    logger.info("Generating missing npy files ...")
+    for i, samp in enumerate(missing_samples):
+        exp = int(samp.split("_")[0])
+        save_root = missing_npydir[exp]
+        fname = "0_{}.npy".format(samp.split("_")[1])
+
+        rr = npy_generator.__getitem__(i)
+        print(i, end="\r")
+        np.save(os.path.join(save_root, "image_volumes", fname), rr[0][0][0].astype("uint8"))
+        np.save(os.path.join(save_root, "grid_volumes", fname), rr[0][1][0])
+        np.save(os.path.join(save_root, "targets", fname), rr[1][0])
+    
+    samples = remove_samples_npy(npydir, samples, params)
+    logger.info("{} samples ready for npy training.".format(len(samples)))
+
+def save_volumes_into_tif(params, tifdir, X, sampleIDs, n_cams, logger):
+    if not os.path.exists(tifdir):
+        os.makedirs(tifdir)
+    logger.info("Dump training volumes to {}".format(tifdir))
+    for i in range(X.shape[0]):
+        for j in range(n_cams):
+            im = X[
+                i,
+                :,
+                :,
+                :,
+                j * params["chan_num"] : (j + 1) * params["chan_num"],
+            ]
+            im = norm_im(im) * 255
+            im = im.astype("uint8")
+            of = os.path.join(
+                tifdir,
+                sampleIDs[i] + "_cam" + str(j) + ".tif",
+            )
+            imageio.mimwrite(of, np.transpose(im, [2, 0, 1, 3]))
 
 def mask_to_bbox(mask):
     bounding_boxes = np.zeros((4, ))

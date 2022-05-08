@@ -1,5 +1,6 @@
 """Handle training and prediction for DANNCE and COM networks."""
 from audioop import avg
+from email.mime import base
 import sys
 from matplotlib.pyplot import axis
 import numpy as np
@@ -28,6 +29,7 @@ import os, psutil, csv
 
 import torch
 from dannce.engine.models.nets import initialize_model
+from dannce.engine.models.segmentation import get_instance_segmentation_model
 from dannce.engine.trainer.dannce_trainer import DannceTrainer
 from dannce.config import print_and_set
 from dannce.engine.logging.logger import setup_logging, get_logger
@@ -38,6 +40,7 @@ _DEFAULT_VIDDIR = "videos"
 _DEFAULT_VIDDIR_SIL = "videos_sil"
 _DEFAULT_COMSTRING = "COM"
 _DEFAULT_COMFILENAME = "com3d.mat"
+_DEFAULT_SEG_MODEL = '/home/tianqingli/dl-projects/social-rat/rat-inst-seg/exps/logdir/train_social_rat_mask_rcnn@2022-02-25-14-10/checkpoints/checkpoint_ep14.pth'
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "1"
 
 
@@ -119,14 +122,17 @@ def dannce_train(params: Dict):
     Raises:
         Exception: Error if training mode is invalid.
     """
-
+    # turn off currently unavailable features
     params["multi_mode"] = False
     params["depth"] = False
+
     # Default to 6 views but a smaller number of views can be specified in the
     # DANNCE config. If the legnth of the camera files list is smaller than
     # n_views, relevant lists will be duplicated in order to match n_views, if
     # possible.
     params["n_views"] = int(params["n_views"])
+
+    # turn on flags for losses that require changes in inputs
     if params["use_silhouette_in_volume"]:
         params["use_silhouette"] = True
         params["n_rand_views"] = None
@@ -145,30 +151,28 @@ def dannce_train(params: Dict):
     setup_logging(params["dannce_train_dir"])
     logger = get_logger("training.log", verbosity=2)
 
-    # dump parameters
-    logger.info(params)
-
     # set GPU ID
     # Temporarily commented out to test on dsplus gpu
     # if not params["multi_gpu_train"]:
     # os.environ["CUDA_VISIBLE_DEVICES"] = params["gpu_id"]
 
-    samples = []
-    datadict = {}
-    datadict_3d = {}
-    com3d_dict = {}
-    cameras = {}
-    camnames = {}
+    # load in necessary exp & data information
     exps = params["exp"]
     num_experiments = len(exps)
     params["experiment"] = {}
-    total_chunks = {}
-    temporal_chunks = {}
+
+    samples = [] # training sample identifiers
+    datadict, datadict_3d, com3d_dict = {}, {}, {} # labels
+    cameras, camnames = {}, {} # camera
+    total_chunks = {} # video chunks
+    temporal_chunks = {} # for temporal training
 
     for e, expdict in enumerate(exps):
 
+        # load basic exp info
         exp = processing.load_expdict(params, e, expdict, _DEFAULT_VIDDIR, _DEFAULT_VIDDIR_SIL, logger)
 
+        # load corresponding 2D & 3D labels, COMs
         (
             exp,
             samples_,
@@ -179,7 +183,7 @@ def dannce_train(params: Dict):
             temporal_chunks_
         ) = do_COM_load(exp, expdict, e, params)
 
-        print("Using {} samples total.".format(len(samples_)))
+        logger.info("Using {} samples total.".format(len(samples_)))
 
         (
             samples,
@@ -204,14 +208,10 @@ def dannce_train(params: Dict):
         cameras[e] = cameras_
         camnames[e] = exp["camnames"]
         logger.info("Using the following cameras: {}".format(camnames[e]))
+
         params["experiment"][e] = exp
         for name, chunk in exp["chunks"].items():
             total_chunks[name] = chunk
-
-    dannce_train_dir = params["dannce_train_dir"]
-
-    # Dump the params into file for reproducibility
-    # processing.save_params(dannce_train_dir, params)
 
     # Additionally, to keep videos unique across experiments, need to add
     # experiment labels in other places. E.g. experiment 0 CameraE's "camname"
@@ -220,80 +220,35 @@ def dannce_train(params: Dict):
     cameras, datadict, params = serve_data_DANNCE.prepend_experiment(
         params, datadict, num_experiments, camnames, cameras
     )
+
     samples = np.array(samples)
+
+    # Dump the params into file for reproducibility
+    processing.save_params_pickle(params)
+    logger.info(params)
+
+    # Setup additional variables for later use
     n_cams = len(camnames[0])
+    dannce_train_dir = params["dannce_train_dir"]
+    outmode = "coordinates" if params["expval"] else "3dprob"
+    cam3_train = True if params["cam3_train"] else False # only use 3 cameras for training
+    tifdirs = []  # Training from single images not yet supported in this demo
 
+    # Two possible data loading schemes:
+    # (i) Directly use pre-saved npy volumes
+    # (ii) Load images from video files into memory and generate the samples needed for training
+    vid_exps = np.arange(num_experiments)
     if params["use_npy"]:
-        # Add all npy volume directories to list, to be used by generator
-        dirnames = ["image_volumes", "grid_volumes", "targets"]
-        npydir, missing_npydir = {}, {}
-
-        for e in range(num_experiments):
-            # for social, cannot use the same default npy volume dir for both animals
-            label3d_name = os.path.basename(params["experiment"][e]["label3d_file"]).split(".mat")[0]
-            npy_folder = params["experiment"][e]["npy_vol_dir"] + "_" + label3d_name
-            npydir[e] = npy_folder
-
-            # create missing npy directories
-            if not os.path.exists(npydir[e]):
-                missing_npydir[e] = npydir[e]
-                for dir in dirnames:
-                    os.makedirs(os.path.join(npydir[e], dir)) 
-            else:
-                for dir in dirnames:
-                    dirpath = os.path.join(npydir[e], dir)
-                    if (not os.path.exists(dirpath)) or (len(os.listdir(dirpath)) == 0):
-                        missing_npydir[e] = npydir[e]
-                        os.makedirs(dirpath, exist_ok=True)
-
-        missing_samples = [samp for samp in samples if int(samp.split("_")[0]) in list(missing_npydir.keys())]
-        
-        # check any other missing npy samples
-        for samp in list(set(samples) - set(missing_samples)):
-            e, sampleID = int(samp.split("_")[0]), samp.split("_")[1]
-            if not os.path.exists(os.path.join(npydir[e], "image_volumes", f"0_{sampleID}.npy")):
-                missing_samples.append(samp)
-                missing_npydir[e] = npydir[e]
-
-        missing_samples = np.array(sorted(missing_samples))
+        npydir, missing_npydir, missing_samples = serve_data_DANNCE.examine_npy_training(params, samples)
 
         if len(missing_samples) != 0:
-            print("{} npy files for experiments {} are missing.".format(len(missing_samples), list(missing_npydir.keys())))
-            
-            vids = {}
-            for e in list(missing_npydir.keys()):
-                vids = processing.initialize_vids(params, datadict, e, vids, pathonly=True)
+            logger.info("{} npy files for experiments {} are missing.".format(len(missing_samples), list(missing_npydir.keys())))
+            vid_exps = list(missing_npydir.keys())
         else:
-            print("No missing npy files. Ready for training.")
-    else:
-        # Initialize video objects
-        vids = {}
-        vids_sil = {}
-        for e in range(num_experiments):
-            if params["immode"] == "vid":
-                # if params["use_silhouette"]:
-                #     vids_sil = processing.initialize_vids(
-                #         params, datadict, e, vids_sil, pathonly=True, vidkey="viddir_sil"
-                #     )
-                vids = processing.initialize_vids(
-                    params, datadict, e, vids, pathonly=True
-                )
-
-    # Parameters
-    if params["expval"]:
-        outmode = "coordinates"
-    else:
-        outmode = "3dprob"
-
-    gridsize = tuple([params["nvox"]] * 3)
-
-    # When this true, the data generator will shuffle the cameras and then select the first 3,
-    # to feed to a native 3 camera model
-    cam3_train = params["cam3_train"]
-    if params["cam3_train"]:
-        cam3_train = True
-    else:
-        cam3_train = False
+            logger.info("No missing npy files. Ready for training.")
+    
+    # initialize needed videos
+    vids = processing.initialize_all_vids(params, datadict, vid_exps, pathonly=True)
 
     # make train/valid splits
     partition = processing.make_data_splits(
@@ -303,46 +258,50 @@ def dannce_train(params: Dict):
 
     segmentation_model = None
 
+    base_params = {
+        "dim_in": (
+            params["crop_height"][1] - params["crop_height"][0],
+            params["crop_width"][1] - params["crop_width"][0],
+        ),
+        "n_channels_in": params["n_channels_in"],
+        "batch_size": 1,
+        "n_channels_out": params["new_n_channels_out"],
+        "out_scale": params["sigma"],
+        "crop_width": params["crop_width"],
+        "crop_height": params["crop_height"],
+        "vmin": params["vmin"],
+        "vmax": params["vmax"],
+        "nvox": params["nvox"],
+        "interp": params["interp"],
+        "depth": params["depth"],
+        "mode": outmode,
+        "camnames": camnames,
+        "immode": params["immode"],
+        "shuffle": False,  # will shuffle later
+        "rotation": False,  # will rotate later if desired
+        "vidreaders": vids,
+        "distort": True,
+        "crop_im": False,
+        "chunks": total_chunks,
+        "mono": params["mono"],
+        "mirror": params["mirror"],
+    }
+
     if params["use_npy"]:
         # mono conversion will happen from RGB npy files, and the generator
-        # needs to b aware that the npy files contain RGB content
+        # needs to be aware that the npy files contain RGB content
         params["chan_num"] = params["n_channels_in"]
 
         if len(missing_samples) != 0:
-            valid_params = {
-                "dim_in": (
-                    params["crop_height"][1] - params["crop_height"][0],
-                    params["crop_width"][1] - params["crop_width"][0],
-                ),
-                "n_channels_in": params["n_channels_in"],
-                "batch_size": 1,
-                "n_channels_out": params["new_n_channels_out"],
-                "out_scale": params["sigma"],
-                "crop_width": params["crop_width"],
-                "crop_height": params["crop_height"],
-                "vmin": params["vmin"],
-                "vmax": params["vmax"],
-                "nvox": params["nvox"],
-                "interp": params["interp"],
-                "depth": params["depth"],
+            spec_params = {
                 "channel_combo": None,
-                "mode": "coordinates",
-                "camnames": camnames,
-                "immode": params["immode"],
-                "shuffle": False,
-                "rotation": False,
-                "vidreaders": vids,
-                "distort": True,
-                "expval": True,
-                "crop_im": False,
-                "chunks": total_chunks,
-                "mono": params["mono"],
-                "mirror": params["mirror"],
                 "predict_flag": False,
-                "norm_im": False
+                "norm_im": False,
+                "expval": True,
             }
 
-            tifdirs = []
+            valid_params = {**base_params, **spec_params}
+
             npy_generator = generator.DataGenerator_3Dconv(
                 missing_samples,
                 datadict,
@@ -353,58 +312,19 @@ def dannce_train(params: Dict):
                 tifdirs,
                 **valid_params
             )
-            print("Generating missing npy files ...")
-            for i, samp in enumerate(missing_samples):
-                exp = int(samp.split("_")[0])
-                save_root = missing_npydir[exp]
-                fname = "0_{}.npy".format(samp.split("_")[1])
-
-                rr = npy_generator.__getitem__(i)
-                print(i, end="\r")
-                np.save(os.path.join(save_root, "image_volumes", fname), rr[0][0][0].astype("uint8"))
-                np.save(os.path.join(save_root, "grid_volumes", fname), rr[0][1][0])
-                np.save(os.path.join(save_root, "targets", fname), rr[1][0])
-            
-            samples = processing.remove_samples_npy(npydir, samples, params)
-            print("{} samples ready for npy training.".format(len(samples)))
+            processing.save_volumes_into_npy(params, npy_generator, missing_samples, missing_npydir, npydir, logger)
     else:
         # Used to initialize arrays for mono, and also in *frommem (the final generator)
         params["chan_num"] = 1 if params["mono"] else params["n_channels_in"]
 
-        valid_params = {
-            "dim_in": (
-                params["crop_height"][1] - params["crop_height"][0],
-                params["crop_width"][1] - params["crop_width"][0],
-            ),
-            "n_channels_in": params["n_channels_in"],
-            "batch_size": 1,
-            "n_channels_out": params["new_n_channels_out"],
-            "out_scale": params["sigma"],
-            "crop_width": params["crop_width"],
-            "crop_height": params["crop_height"],
-            "vmin": params["vmin"],
-            "vmax": params["vmax"],
-            "nvox": params["nvox"],
-            "interp": params["interp"],
-            "depth": params["depth"],
-            "channel_combo": params["channel_combo"],
-            "mode": outmode,
-            "camnames": camnames,
-            "immode": params["immode"],
-            "shuffle": False,  # We will shuffle later
-            "rotation": False,  # We will rotate later if desired
-            "vidreaders": vids,
-            "distort": True,
+        spec_params = {
+            "channel_combo":  params["channel_combo"],
             "expval": params["expval"],
-            "crop_im": False,
-            "chunks": total_chunks,
-            "mono": params["mono"],
-            "mirror": params["mirror"],
         }
 
-        # Setup a generator that will read videos and labels
-        tifdirs = []  # Training from single images not yet supported in this demo
+        valid_params = {**base_params, **spec_params}
 
+        # Setup a generator that will read videos and labels
         train_gen_params = [partition["train_sampleIDs"],
                             datadict,
                             datadict_3d,
@@ -428,27 +348,21 @@ def dannce_train(params: Dict):
             *valid_gen_params,
             **valid_params
         )
-
         
+        # option for foreground animal segmentation
         if params["use_silhouette"]:
             valid_params_sil = deepcopy(valid_params)
             valid_params_sil["vidreaders"] = vids #vids_sil
 
-            # # Set this to false so that all of our voxels stay positive, allowing us
-            # # to convert to binary below
+            # ensure voxel values stay positive, allowing conversion to binary below
             valid_params_sil["norm_im"] = False
-
-            # # expval gets set to True here sop that even in MAX mode the
-            # # silhouette generator behaves in a predictable way
             valid_params_sil["expval"] = True
 
-            checkpoint_path = '/home/tianqingli/dl-projects/social-rat/rat-inst-seg/exps/logdir/train_social_rat_mask_rcnn@2022-02-25-14-10/checkpoints/checkpoint_ep14.pth'
-            from dannce.engine.models.segmentation import get_instance_segmentation_model
-            segmentation_model = get_instance_segmentation_model(2)
-            checkpoints = torch.load(checkpoint_path)
-            segmentation_model.load_state_dict(checkpoints["state_dict"])
+            # prepare segmentation model
+            segmentation_model = get_instance_segmentation_model(num_classes=2)
+            checkpoints = torch.load(_DEFAULT_SEG_MODEL)["state_dict"]
+            segmentation_model.load_state_dict(checkpoints)
             segmentation_model.eval()
-
             segmentation_model = segmentation_model.to("cuda:0")
 
             train_generator_sil = generator.DataGenerator_3Dconv(
@@ -463,38 +377,15 @@ def dannce_train(params: Dict):
                 segmentation_model=segmentation_model
             )
 
-            # train_generator = train_generator_sil
-            # valid_generator = valid_generator_sil
-
-        # # We should be able to load everything into memory...
+        # load everything into memory
         X_train, X_train_grid, y_train = processing.load_volumes_into_mem(params, logger, partition, n_cams, train_generator, train=True)
         X_valid, X_valid_grid, y_valid = processing.load_volumes_into_mem(params, logger, partition, n_cams, valid_generator, train=False)
         
         if params["debug_volume_tifdir"] is not None:
             # When this option is toggled in the config, rather than
             # training, the image volumes are dumped to tif stacks.
-            # This can be used for debugging problems with calibration or
-            # COM estimation
-            tifdir = params["debug_volume_tifdir"]
-            if not os.path.exists(tifdir):
-                os.makedirs(tifdir)
-            print("Dump training volumes to {}".format(tifdir))
-            for i in range(X_train.shape[0]):
-                for j in range(n_cams):
-                    im = X_train[
-                        i,
-                        :,
-                        :,
-                        :,
-                        j * params["chan_num"] : (j + 1) * params["chan_num"],
-                    ]
-                    im = processing.norm_im(im) * 255
-                    im = im.astype("uint8")
-                    of = os.path.join(
-                        tifdir,
-                        partition["train_sampleIDs"][i] + "_cam" + str(j) + ".tif",
-                    )
-                    imageio.mimwrite(of, np.transpose(im, [2, 0, 1, 3]))
+            # This can be used for debugging problems with calibration or COM estimation
+            processing.save_volumes_into_tif(params, params["debug_volume_tifdir"], X_train, partition["train_sampleIDs"], n_cams, logger)
             return
 
     # For AVG+MAX training, need to update the expval flag in the generators
@@ -503,38 +394,14 @@ def dannce_train(params: Dict):
     if params["avg+max"] is not None and params["use_silhouette"]:
         print("******Cannot combine AVG+MAX with silhouette - Using ONLY silhouette*******")
 
-    y_train_aux = None
-    y_valid_aux = None
+    y_train_aux, y_valid_aux = None, None
     if params["use_silhouette"]:
-        # y_train_aux = None
-        # y_valid_aux = None
         _, _, y_train_aux = processing.load_volumes_into_mem(params, logger, partition, n_cams, train_generator_sil, train=True, silhouette=True)
         _, _, y_valid_aux = processing.load_volumes_into_mem(params, logger, partition, n_cams, valid_generator_sil, train=False, silhouette=True)
-        # save_path = '/media/mynewdrive/datasets/ocpose'
-        # np.save(os.path.join(save_path, 'X_train_sil'), y_train_aux)
-        # np.save(os.path.join(save_path, 'X_valid_sil'), y_valid_aux)
-        # return
-        # tifdir = 'silhouette_debug'
-        # if not os.path.exists(tifdir):
-        #     os.makedirs(tifdir)
-        # print("Dump silhouette volumes to {}".format(tifdir))
-        # for i in range(sil.shape[0]):
-        #     for j in range(n_cams):
-        #         im = sil[
-        #             i,
-        #             :,
-        #             :,
-        #             :,
-        #             j * params["chan_num"] : (j + 1) * params["chan_num"],
-        #         ]
-        #         # im *= 255
-        #         im = processing.norm_im(im) * 255
-        #         im = im.astype("uint8")
-        #         of = os.path.join(
-        #             tifdir,
-        #             partition["train_sampleIDs"][i] + "_cam" + str(j) + ".tif",
-        #         )
-        #         imageio.mimwrite(of, np.transpose(im, [2, 0, 1, 3]))
+        
+        if segmentation_model is not None:
+            del segmentation_model
+        # processing.save_volumes_into_tif(params, "debug_sil_volumes", y_train_aux, partition["train_sampleIDs"], n_cams, logger)
         # return
 
     elif params["avg+max"] is not None:
@@ -546,18 +413,13 @@ def dannce_train(params: Dict):
         # concatenate RGB image volumes with silhouette volumes
         X_train = np.concatenate((X_train, y_train_aux, y_train_aux, y_train_aux), axis=-1)
         X_valid = np.concatenate((X_valid, y_valid_aux, y_valid_aux, y_valid_aux), axis=-1)
-        # X_train = X_train * y_train_aux
-        # X_valid = X_valid * y_valid_aux
-        print("Input dimension is now {}".format(X_train.shape))
+        logger.info("Input dimension is now {}".format(X_train.shape))
 
         params["use_silhouette"] = False
-        print("Turn off silhouette loss.")
-        y_train_aux = None
-        y_valid_aux = None
+        logger.info("Turn off silhouette loss.")
+        y_train_aux, y_valid_aux = None, None
 
-    if segmentation_model is not None:
-        del segmentation_model
-    # Now we can generate from memory with shuffling, rotation, etc.
+    # We apply data augmentation with another data generator class
     randflag = params["channel_combo"] == "random"
 
     if cam3_train:
@@ -599,7 +461,6 @@ def dannce_train(params: Dict):
         "n_rand_views": params["n_rand_views"],
     }
     shared_args_valid = {
-        # "batch_size": params["batch_size"],
         "rotation": False,
         "augment_hue": False,
         "augment_brightness": False,
@@ -610,6 +471,7 @@ def dannce_train(params: Dict):
         "n_rand_views": params["n_rand_views"] if cam3_train else None,
         "random": True if cam3_train else False,
     }
+
     if params["use_npy"]:
         genfunc = generator.DataGenerator_3Dconv_npy
         args_train = {
@@ -625,7 +487,6 @@ def dannce_train(params: Dict):
             "mono": params["mono"],
             "aux_labels": y_train_aux,
             "temporal_chunk_list": partition["train_chunks"] if params["use_temporal"] else None,
-            # "separation_loss": params["use_separation"]
         }
 
         args_valid = {
@@ -672,18 +533,16 @@ def dannce_train(params: Dict):
             "temporal_chunk_list": partition["valid_chunks"] if params["use_temporal"] else None
         }
     
+    # initialize data generators and dataloaders
     train_generator = genfunc(**args_train)
     valid_generator = genfunc(**args_valid)
 
-    train_dataloader, valid_dataloader = serve_data_DANNCE.setup_dataloaders(
-        train_generator, valid_generator, params)
+    train_dataloader, valid_dataloader = serve_data_DANNCE.setup_dataloaders(train_generator, valid_generator, params)
     
-    # Build net
+    # Build network
     logger.info("Initializing Network...")
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
-    # TODO: initialize optimizer in a getattr way
-    # TODO: lr scheduler
     if params["train_mode"] == "new":
         model = initialize_model(params, n_cams, device)
         model_params = [p for p in model.parameters() if p.requires_grad]
