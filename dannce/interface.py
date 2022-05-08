@@ -168,7 +168,6 @@ def dannce_train(params: Dict):
     for e, expdict in enumerate(exps):
 
         exp = processing.load_expdict(params, e, expdict, _DEFAULT_VIDDIR, _DEFAULT_VIDDIR_SIL, logger)
-        # training = not(e in params["valid_exp"])
 
         (
             exp,
@@ -222,14 +221,50 @@ def dannce_train(params: Dict):
         params, datadict, num_experiments, camnames, cameras
     )
     samples = np.array(samples)
+    n_cams = len(camnames[0])
 
     if params["use_npy"]:
         # Add all npy volume directories to list, to be used by generator
-        npydir = {}
-        for e in range(num_experiments):
-            npydir[e] = params["experiment"][e]["npy_vol_dir"]
+        dirnames = ["image_volumes", "grid_volumes", "targets"]
+        npydir, missing_npydir = {}, {}
 
-        samples = processing.remove_samples_npy(npydir, samples, params)
+        for e in range(num_experiments):
+            # for social, cannot use the same default npy volume dir for both animals
+            label3d_name = os.path.basename(params["experiment"][e]["label3d_file"]).split(".mat")[0]
+            npy_folder = params["experiment"][e]["npy_vol_dir"] + "_" + label3d_name
+            npydir[e] = npy_folder
+
+            # create missing npy directories
+            if not os.path.exists(npydir[e]):
+                missing_npydir[e] = npydir[e]
+                for dir in dirnames:
+                    os.makedirs(os.path.join(npydir[e], dir)) 
+            else:
+                for dir in dirnames:
+                    dirpath = os.path.join(npydir[e], dir)
+                    if (not os.path.exists(dirpath)) or (len(os.listdir(dirpath)) == 0):
+                        missing_npydir[e] = npydir[e]
+                        os.makedirs(dirpath, exist_ok=True)
+
+        missing_samples = [samp for samp in samples if int(samp.split("_")[0]) in list(missing_npydir.keys())]
+        
+        # check any other missing npy samples
+        for samp in list(set(samples) - set(missing_samples)):
+            e, sampleID = int(samp.split("_")[0]), samp.split("_")[1]
+            if not os.path.exists(os.path.join(npydir[e], "image_volumes", f"0_{sampleID}.npy")):
+                missing_samples.append(samp)
+                missing_npydir[e] = npydir[e]
+
+        missing_samples = np.array(sorted(missing_samples))
+
+        if len(missing_samples) != 0:
+            print("{} npy files for experiments {} are missing.".format(len(missing_samples), list(missing_npydir.keys())))
+            
+            vids = {}
+            for e in list(missing_npydir.keys()):
+                vids = processing.initialize_vids(params, datadict, e, vids, pathonly=True)
+        else:
+            print("No missing npy files. Ready for training.")
     else:
         # Initialize video objects
         vids = {}
@@ -266,10 +301,72 @@ def dannce_train(params: Dict):
         temporal_chunks=temporal_chunks)
     logger.info("\nTRAIN:VALIDATION SPLIT = {}:{}\n".format(len(partition["train_sampleIDs"]), len(partition["valid_sampleIDs"])))
 
+    segmentation_model = None
+
     if params["use_npy"]:
         # mono conversion will happen from RGB npy files, and the generator
         # needs to b aware that the npy files contain RGB content
         params["chan_num"] = params["n_channels_in"]
+
+        if len(missing_samples) != 0:
+            valid_params = {
+                "dim_in": (
+                    params["crop_height"][1] - params["crop_height"][0],
+                    params["crop_width"][1] - params["crop_width"][0],
+                ),
+                "n_channels_in": params["n_channels_in"],
+                "batch_size": 1,
+                "n_channels_out": params["new_n_channels_out"],
+                "out_scale": params["sigma"],
+                "crop_width": params["crop_width"],
+                "crop_height": params["crop_height"],
+                "vmin": params["vmin"],
+                "vmax": params["vmax"],
+                "nvox": params["nvox"],
+                "interp": params["interp"],
+                "depth": params["depth"],
+                "channel_combo": None,
+                "mode": "coordinates",
+                "camnames": camnames,
+                "immode": params["immode"],
+                "shuffle": False,
+                "rotation": False,
+                "vidreaders": vids,
+                "distort": True,
+                "expval": True,
+                "crop_im": False,
+                "chunks": total_chunks,
+                "mono": params["mono"],
+                "mirror": params["mirror"],
+                "predict_flag": False,
+                "norm_im": False
+            }
+
+            tifdirs = []
+            npy_generator = generator.DataGenerator_3Dconv(
+                missing_samples,
+                datadict,
+                datadict_3d,
+                cameras,
+                missing_samples,
+                com3d_dict,
+                tifdirs,
+                **valid_params
+            )
+            print("Generating missing npy files ...")
+            for i, samp in enumerate(missing_samples):
+                exp = int(samp.split("_")[0])
+                save_root = missing_npydir[exp]
+                fname = "0_{}.npy".format(samp.split("_")[1])
+
+                rr = npy_generator.__getitem__(i)
+                print(i, end="\r")
+                np.save(os.path.join(save_root, "image_volumes", fname), rr[0][0][0].astype("uint8"))
+                np.save(os.path.join(save_root, "grid_volumes", fname), rr[0][1][0])
+                np.save(os.path.join(save_root, "targets", fname), rr[1][0])
+            
+            samples = processing.remove_samples_npy(npydir, samples, params)
+            print("{} samples ready for npy training.".format(len(samples)))
     else:
         # Used to initialize arrays for mono, and also in *frommem (the final generator)
         params["chan_num"] = 1 if params["mono"] else params["n_channels_in"]
@@ -332,7 +429,7 @@ def dannce_train(params: Dict):
             **valid_params
         )
 
-        segmentation_model = None
+        
         if params["use_silhouette"]:
             valid_params_sil = deepcopy(valid_params)
             valid_params_sil["vidreaders"] = vids #vids_sil
@@ -370,7 +467,6 @@ def dannce_train(params: Dict):
             # valid_generator = valid_generator_sil
 
         # # We should be able to load everything into memory...
-        n_cams = len(camnames[0])
         X_train, X_train_grid, y_train = processing.load_volumes_into_mem(params, logger, partition, n_cams, train_generator, train=True)
         X_valid, X_valid_grid, y_valid = processing.load_volumes_into_mem(params, logger, partition, n_cams, valid_generator, train=False)
         
@@ -529,7 +625,7 @@ def dannce_train(params: Dict):
             "mono": params["mono"],
             "aux_labels": y_train_aux,
             "temporal_chunk_list": partition["train_chunks"] if params["use_temporal"] else None,
-            "separation_loss": params["use_separation"]
+            # "separation_loss": params["use_separation"]
         }
 
         args_valid = {

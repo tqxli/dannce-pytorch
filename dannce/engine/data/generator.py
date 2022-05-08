@@ -264,7 +264,7 @@ class DataGenerator_3Dconv(DataGenerator):
 
         ts = time.time()
 
-        for i, ID in enumerate(list_IDs):
+        for ID in list_IDs:
             experimentID = int(ID.split("_")[0])
             for camname in self.camnames[experimentID]:
                 # M only needs to be computed once for each camera
@@ -277,6 +277,8 @@ class DataGenerator_3Dconv(DataGenerator):
                 self.camera_params[experimentID][camname]["M"] = M
 
         print("Init took {} sec.".format(time.time() - ts))
+
+        self.pj_method = self.pj_grid_mirror if self.mirror else self.pj_grid
 
     def __getitem__(self, index: int):
         """Generate one batch of data.
@@ -296,7 +298,7 @@ class DataGenerator_3Dconv(DataGenerator):
 
         return X, y
 
-    def project_grid(self, X_grid, camname, ID, experimentID):
+    def pj_grid(self, X_grid, camname, ID, experimentID):
         """Projects 3D voxel centers and sample images as projected 2D pixel coordinates
 
         Args:
@@ -382,65 +384,13 @@ class DataGenerator_3Dconv(DataGenerator):
         # print('Frame loading took {} sec.'.format(time.time() - ts))
 
         if self.segmentation_model is not None:
-            #cropped_img, crop_dim = processing.cropcom(thisim.copy(), com.clone().cpu().numpy(), size=256)
             input = [torchvision.transforms.functional.to_tensor(thisim.copy()).to(self.device,  dtype=torch.float)]
             prediction = self.segmentation_model(input)[0]
             
-            mask1 = prediction["masks"][0].permute(1, 2, 0).detach().cpu().numpy()
-            mask1 = (mask1 >= 0.5).astype(np.uint8)
-            # bbox1 = processing.mask_to_bbox(mask1)
-            # com1 = [(bbox1[0]+bbox1[2])/2, (bbox1[1]+bbox1[3])/2]
-
-            mask_flag = True
-            try:
-                mask2 = prediction["masks"][1].permute(1, 2, 0).detach().cpu().numpy()
-                mask2 = (mask2 >= 0.5).astype(np.uint8)
-            except:
-                mask2 = np.ones_like(mask1)
-                mask_flag = False
-            # bbox2 = processing.mask_to_bbox(mask2)
-
-            # print("Mask area before: ", np.sum(mask1), np.sum(mask2))
-            if mask_flag:
-                mask_intersect = processing.mask_intersection(mask1, mask2)
-                mask1 -= mask_intersect
-                mask2 -= mask_intersect
-            # print("Mask area after: ", np.sum(mask1), np.sum(mask2))
-
-            # if (mask_iou(mask1, mask2) > 0.5):
-            #     mask_flag = False
-            #     mask2 = np.ones_like(mask2)
-                # com2 = [(bbox2[0]+bbox2[2])/2, (bbox2[1]+bbox2[3])/2]
-
-            index = com.clone().cpu().int().numpy()
-            support_region_size = 10
-            sp_l = np.maximum(0, index[1]-support_region_size)
-            sp_r = np.minimum(mask1.shape[0], index[1]+support_region_size)
-            sp_t = np.maximum(0, index[0]-support_region_size)
-            sp_b = np.minimum(mask1.shape[1], index[0]+support_region_size)
-
-
-            count1 = np.sum(mask1[sp_l:sp_r, sp_t:sp_b, 0])
-            count2 = np.sum(mask2[sp_l:sp_r, sp_t:sp_b, 0])
-            # print("Support regions: ", count1, count2)
-            # print(np.sqrt((com1[0]-index[0])**2 + (com1[1]-index[1])**2),  np.sqrt((com2[0]-index[0])**2 + (com2[1]-index[1])**2))
+            mask = prediction["masks"][0].permute(1, 2, 0).detach().cpu().numpy()
+            mask = (mask >= 0.5).astype(np.uint8)
             
-            # bboxs = [bbox1, bbox2]
-
-            diff = np.abs(count1-count2)
-            if (mask_flag):
-                if (count1 >= count2) and diff / count1 >= 0.5:
-                    mask = mask1
-                else:
-                    mask = mask2
-                # if np.min([np.abs(index[1]-bboxs[inst][0]), np.abs(index[1]-bboxs[inst][2]), np.abs(index[0]-bboxs[inst][1]), np.abs(index[0]-bboxs[inst][3])]) < 15:
-                #     print("COM too close to the boundary")
-                #     mask = np.ones_like(mask)
-            else:
-                mask = np.ones_like(mask1)
-            
-            # thisim *= mask
-            thisim = mask
+            thisim = mask # thisim *= mask
 
         ts = time.time()
         proj_grid = ops.project_to2d(
@@ -554,6 +504,32 @@ class DataGenerator_3Dconv(DataGenerator):
 
         return (x_coord_3d, y_coord_3d, z_coord_3d), grid
 
+    def _generate_targets(self, i, y_3d, this_y_3d, coords_3d):
+        if self.mode == "3dprob":
+            # generate Gaussian targets
+            for j in range(self.n_channels_out):
+                y_3d[i, j] = torch.exp(
+                    -(
+                        (coords_3d[1] - this_y_3d[1, j]) ** 2
+                        + (coords_3d[0] - this_y_3d[0, j]) ** 2
+                        + (coords_3d[2] - this_y_3d[2, j]) ** 2
+                    )
+                    / (2 * self.out_scale ** 2)
+                )
+                # When the voxel grid is coarse, we will likely miss
+                # the peak of the probability distribution, as it
+                # will lie somewhere in the middle of a large voxel.
+                # So here we renormalize to [~, 1]
+        
+        if self.mode == "coordinates":
+            if this_y_3d.shape == y_3d[i].shape:
+                y_3d[i] = this_y_3d
+            else:
+                msg = "Note: ignoring dimension mismatch in 3D labels"
+                warnings.warn(msg)
+        
+        return y_3d
+
     def _adjust_vol_channels(self, X, y_3d, first_exp, num_cams):
         if self.multicam:
             X = X.reshape(
@@ -582,7 +558,7 @@ class DataGenerator_3Dconv(DataGenerator):
             y_3d = y_3d.repeat(num_cams, 1, 1, 1, 1)
         
         return X, y_3d
-
+ 
     def _convert_tensor_to_numpy(self, X, y_3d, X_grid):
         # ts = time.time()
         if torch.is_tensor(X):
@@ -630,12 +606,11 @@ class DataGenerator_3Dconv(DataGenerator):
 
         # Generate data
         for i, ID in enumerate(list_IDs_temp):
-            sampleID = int(ID.split("_")[1])
             experimentID = int(ID.split("_")[0])
+            num_cams = len(self.camnames[experimentID])
 
-            # For 3D ground truth
-            this_y_3d = torch.as_tensor(
-                self.labels_3d[ID],
+            # For 3D ground truth (keypoints, COM)
+            this_y_3d = torch.as_tensor(self.labels_3d[ID],
                 dtype=torch.float32,
                 device=self.device,
             )
@@ -646,39 +621,19 @@ class DataGenerator_3Dconv(DataGenerator):
             )
 
             # Create and project the grid here,
-            (x_coord_3d, y_coord_3d, z_coord_3d), grid = self._generate_coord_grid(this_COM_3d)
+            coords_3d, grid = self._generate_coord_grid(this_COM_3d)
             X_grid[i] = grid
             
-            if self.mode == "3dprob":
-                for j in range(self.n_channels_out):
-                    y_3d[i, j] = torch.exp(
-                        -(
-                            (y_coord_3d - this_y_3d[1, j]) ** 2
-                            + (x_coord_3d - this_y_3d[0, j]) ** 2
-                            + (z_coord_3d - this_y_3d[2, j]) ** 2
-                        )
-                        / (2 * self.out_scale ** 2)
-                    )
-                    # When the voxel grid is coarse, we will likely miss
-                    # the peak of the probability distribution, as it
-                    # will lie somewhere in the middle of a large voxel.
-                    # So here we renormalize to [~, 1]
-            # breakpoint()
-            if self.mode == "coordinates":
-                if this_y_3d.shape == y_3d[i].shape:
-                    y_3d[i] = this_y_3d
-                else:
-                    msg = "Note: ignoring dimension mismatch in 3D labels"
-                    warnings.warn(msg)
+            # Generate training targets
+            y_3d = self._generate_targets(i, y_3d, this_y_3d, coords_3d)
 
             # Compute projected images in parallel using multithreading
-            ts = time.time()
-            num_cams = len(self.camnames[experimentID])
+            # ts = time.time()
             arglist = []
             if self.mirror:
                 # Here we only load the video once, and then parallelize the projection
                 # and sampling after mirror flipping. For setups that collect views
-                # in a single imgae with the use of mirrors
+                # in a single image with the use of mirrors
                 loadim = self.load_frame.load_vid_frame(
                     self.labels[ID]["frames"][self.camnames[experimentID][0]],
                     self.camnames[experimentID][0],
@@ -687,24 +642,22 @@ class DataGenerator_3Dconv(DataGenerator):
                     self.crop_height[0] : self.crop_height[1],
                     self.crop_width[0] : self.crop_width[1],
                 ]
-                for c in range(num_cams):
-                    arglist.append(
-                        [X_grid[i], self.camnames[experimentID][c], ID, experimentID, loadim]
-                    )
-                result = self.threadpool.starmap(self.pj_grid_mirror, arglist)
-            else:
-                for c in range(num_cams):
-                    arglist.append(
-                        [X_grid[i], self.camnames[experimentID][c], ID, experimentID]
-                    )
-                result = self.threadpool.starmap(self.project_grid, arglist)
 
             for c in range(num_cams):
-                ic = c + i * len(self.camnames[experimentID])
+                args = [X_grid[i], self.camnames[experimentID][c], ID, experimentID]
+                if self.mirror:
+                    args.append(loadim)
+                
+                arglist.append(args)
+
+            result = self.threadpool.starmap(self.pj_method, arglist)
+
+            for c in range(num_cams):
+                ic = c + i * num_cams
                 X[ic, :, :, :, :] = result[c]
             # print('MP took {} sec.'.format(time.time()-ts))
 
-        # adjust camera channels
+        # adjust volume channels
         X, y_3d = self._adjust_vol_channels(X, y_3d, first_exp, num_cams)
         
         # 3dprob is required for *training* MAX networks
@@ -773,7 +726,6 @@ class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
         return X, y
 
     def project_grid(self, X_grids, camnames, IDs, experimentIDs, com_3ds):
-        import matplotlib.pyplot as plt
         """Projects 3D voxel centers and sample images as projected 2D pixel coordinates
 
         Args:
@@ -799,11 +751,6 @@ class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
             self.crop_width[0] : self.crop_width[1],
         ]
         
-        # if int(camnames[0].split('_')[-1].split('Camera')[-1]) == 1:
-        #     plt.imsave(
-        #         '/media/mynewdrive/datasets/dannce/social_rat/debug_im/'+IDs[0]+'.jpg',
-        #         thisim
-        #     )
         for i in range(self.n_instances):
             this_y = torch.as_tensor(
                 self.labels[IDs[i]]["data"][camnames[i]],
@@ -819,17 +766,7 @@ class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
             this_y[0, :] = this_y[0, :] - self.crop_width[0]
             this_y[1, :] = this_y[1, :] - self.crop_height[0]
             com = torch.mean(this_y, axis=1)
-            
-            # thisim = self.load_frame.load_vid_frame(
-            #     self.labels[IDs[i]]["frames"][camnames[i]],
-            #     camnames[i],
-            #     extension=self.extension,
-            # )[
-            #     self.crop_height[0] : self.crop_height[1],
-            #     self.crop_width[0] : self.crop_width[1],
-            # ]
 
-            # this_ys.append(this_y)
             coms.append(com)
             com_precrops.append(com_precrop)
             thisims.append(thisim)
@@ -1051,7 +988,6 @@ class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
         # Generate data
         experimentIDs = []
         for i, ID in enumerate(list_IDs_temp):
-            sampleID = int(ID.split("_")[1])
             experimentID = int(ID.split("_")[0])
             experimentIDs.append(experimentID)
 
@@ -1062,32 +998,19 @@ class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
                 device=self.device,
             )
             this_COM_3d = torch.as_tensor(
-                self.com3d[ID], dtype=torch.float32, device=self.device
+                self.com3d[ID], 
+                dtype=torch.float32, 
+                device=self.device
             )
 
             com_3ds[i] = this_COM_3d
 
             # Create and project the grid here,
-            (x_coord_3d, y_coord_3d, z_coord_3d), grid = self._generate_coord_grid(this_COM_3d)
+            coords_3d, grid = self._generate_coord_grid(this_COM_3d)
             X_grid[i] = grid
 
-            if self.mode == "3dprob":
-                for j in range(self.n_channels_out):
-                    y_3d[i, j] = torch.exp(
-                        -(
-                            (y_coord_3d - this_y_3d[1, j]) ** 2
-                            + (x_coord_3d - this_y_3d[0, j]) ** 2
-                            + (z_coord_3d - this_y_3d[2, j]) ** 2
-                        )
-                        / (2 * self.out_scale ** 2)
-                    )
-            
-            if self.mode == "coordinates":
-                if this_y_3d.shape == y_3d[i].shape:
-                    y_3d[i] = this_y_3d
-                else:
-                    msg = "Note: ignoring dimension mismatch in 3D labels"
-                    warnings.warn(msg)
+            # Generate training targets
+            y_3d = self._generate_targets(i, y_3d, this_y_3d, coords_3d)
 
         # Compute projected images in parallel using multithreading
         ts = time.time()
@@ -1109,24 +1032,9 @@ class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
                 ic = c + j * num_cams
                 X[ic, ...] = result[c][j][0]
         # print('MP took {} sec.'.format(time.time()-ts))
-        # breakpoint()
+
         # adjust camera channels
         X, y_3d = self._adjust_vol_channels(X, y_3d, first_exp, num_cams)
-
-        # tifdir = '/media/mynewdrive/datasets/dannce/social_rat/debug_social_volume2'
-        # if not os.path.exists(tifdir):
-        #     os.makedirs(tifdir)
-        # for j in range(5):
-        #     im = X.clone().cpu().numpy()[0, :, :, :, j*3:(j+1)*3]
-        #     im = processing.norm_im(im) * 255
-        #     im = im.astype("uint8")
-        #     of = os.path.join(
-        #             tifdir,
-        #             f"cam{j}.tif",
-        #         )
-        #     import imageio
-        #     imageio.mimwrite(of, np.transpose(im, [2, 0, 1, 3]))
-        # breakpoint()
 
         # 3dprob is required for *training* MAX networks
         if self.mode == "3dprob":
@@ -1561,6 +1469,14 @@ class DataGenerator_3Dconv_frommem(torch.utils.data.Dataset):
         grid_d = int(np.round(X_grid.shape[1] ** (1 / 3)))
         inds = np.unravel_index(inds, (grid_d, grid_d, grid_d))
         return np.stack(inds, axis=1)
+    
+    def _convert_numpy_to_tensor(self, X, X_grid, y_3d, aux):
+        if X_grid is not None:
+            X_grid = torch.from_numpy(X_grid)
+        if aux is not None:
+            aux = torch.from_numpy(aux).permute(0, 4, 1, 2, 3)
+
+        return torch.from_numpy(X).permute(0, 4, 1, 2, 3), X_grid, torch.from_numpy(y_3d), aux
 
     def __data_generation(self, list_IDs_temp):
         """
@@ -1603,14 +1519,7 @@ class DataGenerator_3Dconv_frommem(torch.utils.data.Dataset):
         # Randomly re-order, if desired
         X = self.do_random(X)
         
-        # shape of outputs:
-        # X: [temporal_chunk_size, H, W, D, n_cam*chan_num]
-        if X_grid is not None:
-            X_grid = torch.from_numpy(X_grid)
-        if aux is not None:
-            aux = torch.from_numpy(aux).permute(0, 4, 1, 2, 3)
-
-        return torch.from_numpy(X).permute(0, 4, 1, 2, 3), X_grid, torch.from_numpy(y_3d), aux
+        return self._convert_numpy_to_tensor(X, X_grid, y_3d, aux)
     
     def compute_avg_bone_length(self):
         return
@@ -1828,10 +1737,9 @@ class DataGenerator_3Dconv_npy(DataGenerator_3Dconv_frommem):
             else:
                 y_3d = np.tile(y_3d, [ncam, 1, 1, 1, 1])
 
-        # TODO: confirm that this line is redundant
         X = processing.preprocess_3d(X) 
 
-        return X, X_grid, y_3d, aux
+        return self._convert_numpy_to_tensor(X, X_grid, y_3d, aux)
 
 class DataGenerator_Social(DataGenerator_3Dconv_frommem):
     def __init__(
