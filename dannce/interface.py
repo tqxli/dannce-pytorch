@@ -243,7 +243,6 @@ def dannce_train(params: Dict):
 
         if len(missing_samples) != 0:
             logger.info("{} npy files for experiments {} are missing.".format(len(missing_samples), list(missing_npydir.keys())))
-            vid_exps = list(missing_npydir.keys())
         else:
             logger.info("No missing npy files. Ready for training.")
     
@@ -312,7 +311,7 @@ def dannce_train(params: Dict):
                 tifdirs,
                 **valid_params
             )
-            processing.save_volumes_into_npy(params, npy_generator, missing_samples, missing_npydir, npydir, logger)
+            processing.save_volumes_into_npy(params, npy_generator, missing_samples, missing_npydir, samples, npydir, logger)
     else:
         # Used to initialize arrays for mono, and also in *frommem (the final generator)
         params["chan_num"] = 1 if params["mono"] else params["n_channels_in"]

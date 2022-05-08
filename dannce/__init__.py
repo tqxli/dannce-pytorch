@@ -104,8 +104,9 @@ _param_defaults_dannce = {
     "support_exp": None,
     "n_support_chunks": None,
     "unlabeled_temp": 0,
-    "silhouette_loss_weight": None,
-    "use_silhouette_in_volume": None,
+    "use_temporal": False,
+    "use_silhouette": False,
+    "use_silhouette_in_volume": False,
 }
 _param_defaults_com = {
     "dsmode": "nn",

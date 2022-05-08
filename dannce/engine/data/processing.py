@@ -1357,7 +1357,7 @@ def load_volumes_into_mem(params, logger, partition, n_cams, generator, train=Tr
     
     return X, X_grid, y
 
-def save_volumes_into_npy(params, npy_generator, missing_samples, missing_npydir, npydir, logger):
+def save_volumes_into_npy(params, npy_generator, missing_samples, missing_npydir, samples, npydir, logger):
     logger.info("Generating missing npy files ...")
     for i, samp in enumerate(missing_samples):
         exp = int(samp.split("_")[0])
