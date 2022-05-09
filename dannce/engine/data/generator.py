@@ -1,6 +1,7 @@
 """Generator module for dannce training.
 """
 import os
+from unittest.mock import NonCallableMagicMock
 import numpy as np
 from dannce.engine.data import processing as processing
 from dannce.engine.data import ops as ops
@@ -1568,6 +1569,7 @@ class DataGenerator_3Dconv_npy(DataGenerator_3Dconv_frommem):
         mono=False,
         cam1=False,    
         sigma=10,
+        pairs=None,
         **kwargs
     ):
         """Generates 3d conv data from npy files.
@@ -1602,6 +1604,20 @@ class DataGenerator_3Dconv_npy(DataGenerator_3Dconv_frommem):
         self.prefeat = prefeat
         self.sigma = sigma
 
+        if pairs is not None:
+            self.pairs = pairs
+            self.temporal_chunk_size = len(self.pairs[0])
+
+    def __len__(self):
+        if self.temporal_chunk_list is not None:
+           return len(self.temporal_chunk_list)
+        
+        if self.pairs is not None:
+            return len(self.pairs)
+
+        return len(self.list_IDs)
+
+
     def __getitem__(self, index):
         """Generate one batch of data.
 
@@ -1623,6 +1639,8 @@ class DataGenerator_3Dconv_npy(DataGenerator_3Dconv_frommem):
         #     list_IDs_temp = [self.list_IDs[k] for k in indexes]
         if self.temporal_chunk_list is not None:
             list_IDs_temp = self.temporal_chunk_list[index]
+        elif self.pairs is not None:
+            list_IDs_temp = self.pairs[index]
         else:
             list_IDs_temp = [self.list_IDs[index]]
         # Generate data
@@ -1787,4 +1805,4 @@ class DataGenerator_Social(DataGenerator_3Dconv_frommem):
         if aux is not None:
             aux = torch.from_numpy(aux)
 
-        return torch.from_numpy(X).permute(0, 4, 1, 2, 3), X_grid, torch.from_numpy(y_3d), aux 
+        return torch.from_numpy(X).permute(0, 4, 1, 2, 3), X_grid, torch.from_numpy(y_3d), aux

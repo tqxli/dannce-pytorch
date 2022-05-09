@@ -143,6 +143,9 @@ def dannce_train(params: Dict):
     if "TemporalLoss" in params["loss"].keys():
         params["use_temporal"] = True
         params["temporal_chunk_size"] = params["loss"]["TemporalLoss"]["temporal_chunk_size"]
+    
+    if "PairRepulsionLoss" in params["loss"].keys():
+        params["social_training"] = True
 
     # Make the training directory if it does not exist.
     make_folder("dannce_train_dir", params)
@@ -253,6 +256,9 @@ def dannce_train(params: Dict):
     partition = processing.make_data_splits(
         samples, params, dannce_train_dir, num_experiments, 
         temporal_chunks=temporal_chunks)
+    if params["social_training"]:
+        partition, pairs = processing.resplit_social(partition)
+
     logger.info("\nTRAIN:VALIDATION SPLIT = {}:{}\n".format(len(partition["train_sampleIDs"]), len(partition["valid_sampleIDs"])))
 
     segmentation_model = None
@@ -315,6 +321,10 @@ def dannce_train(params: Dict):
     else:
         # Used to initialize arrays for mono, and also in *frommem (the final generator)
         params["chan_num"] = 1 if params["mono"] else params["n_channels_in"]
+        if params["social_training"]:
+            genfunc = generator.DataGenerator_3Dconv_social
+        else:
+            genfunc = generator.DataGenerator_3Dconv
 
         spec_params = {
             "channel_combo":  params["channel_combo"],
@@ -339,14 +349,8 @@ def dannce_train(params: Dict):
                             com3d_dict,
                             tifdirs]
 
-        train_generator = generator.DataGenerator_3Dconv(
-            *train_gen_params,
-            **valid_params
-        )
-        valid_generator = generator.DataGenerator_3Dconv(
-            *valid_gen_params,
-            **valid_params
-        )
+        train_generator = genfunc(*train_gen_params, **valid_params)
+        valid_generator = genfunc(*valid_gen_params, **valid_params)
         
         # option for foreground animal segmentation
         if params["use_silhouette"]:
@@ -380,6 +384,10 @@ def dannce_train(params: Dict):
         X_train, X_train_grid, y_train = processing.load_volumes_into_mem(params, logger, partition, n_cams, train_generator, train=True)
         X_valid, X_valid_grid, y_valid = processing.load_volumes_into_mem(params, logger, partition, n_cams, valid_generator, train=False)
         
+        if params["social_training"]:
+            X_train, X_train_grid, y_train = processing.align_social_data(X_train, X_train_grid, y_train)
+            X_valid, X_valid_grid, y_valid = processing.align_social_data(X_valid, X_valid_grid, y_valid)
+
         if params["debug_volume_tifdir"] is not None:
             # When this option is toggled in the config, rather than
             # training, the image volumes are dumped to tif stacks.
@@ -502,6 +510,11 @@ def dannce_train(params: Dict):
             "mono": params["mono"],
             "temporal_chunk_list": partition["valid_chunks"] if params["use_temporal"] else None
         }
+
+        if params["social_training"]:
+            args_train = {**args_train, "pairs": pairs["train_pairs"]}
+            args_valid = {**args_valid, "pairs": pairs["valid_pairs"]}
+
     else:
         genfunc = generator.DataGenerator_3Dconv_frommem
         args_train = {
@@ -1096,20 +1109,8 @@ def social_dannce_train(params):
     partition = processing.make_data_splits(
         samples, params, dannce_train_dir, num_experiments, 
         temporal_chunks=temporal_chunks)
-
-    # the partition needs to be aligned for both animals
-    # for now, manually put exps as consecutive pairs, 
-    # i.e. [exp1_instance0, exp1_instance1, exp2_instance0, exp2_instance1, ...]
-    new_partition = {"train_sampleIDs": [], "valid_sampleIDs": []}
-    all_sampleIDs = np.concatenate((partition["train_sampleIDs"], partition["valid_sampleIDs"]))
-    for samp in partition["train_sampleIDs"]:
-        exp_id = int(samp.split("_")[0])
-        if exp_id % 2 == 0:
-            new_partition["train_sampleIDs"].append(samp)
-            new_partition["train_sampleIDs"].append(samp.replace(f"{exp_id}_", f"{exp_id+1}_"))
-    new_partition["train_sampleIDs"] = np.array(sorted(new_partition["train_sampleIDs"]))
-    new_partition["valid_sampleIDs"] = np.array(sorted(list(set(all_sampleIDs) - set(new_partition["train_sampleIDs"]))))
-    partition = new_partition
+    
+    partition, pairs = processing.resplit_social(partition)
 
     logger.info("\nTRAIN:VALIDATION SPLIT = {}:{}\n".format(len(partition["train_sampleIDs"]), len(partition["valid_sampleIDs"])))
 

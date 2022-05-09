@@ -98,7 +98,6 @@ _param_defaults_dannce = {
     "heatmap_reg": False,
     "heatmap_reg_coeff": 0.01,
     "save_pred_targets": False,
-    "huber-delta": 1.35,            #Change Adapted from implementation by Rob
     "avg+max": None,
     ## changes made to temporal
     "support_exp": None,
@@ -107,6 +106,8 @@ _param_defaults_dannce = {
     "use_temporal": False,
     "use_silhouette": False,
     "use_silhouette_in_volume": False,
+    ## social
+    "social_training": False
 }
 _param_defaults_com = {
     "dsmode": "nn",

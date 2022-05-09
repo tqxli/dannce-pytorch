@@ -365,6 +365,43 @@ def make_data_splits(samples, params, results_dir, num_experiments, temporal_chu
     
     return partition
 
+def resplit_social(partition):
+    # the partition needs to be aligned for both animals
+    # for now, manually put exps as consecutive pairs, 
+    # i.e. [exp1_instance0, exp1_instance1, exp2_instance0, exp2_instance1, ...]
+    new_partition = {"train_sampleIDs": [], "valid_sampleIDs": []}
+    pairs = {"train_pairs": [], "valid_pairs": []}
+
+    all_sampleIDs = np.concatenate((partition["train_sampleIDs"], partition["valid_sampleIDs"]))
+    for samp in partition["train_sampleIDs"]:
+        exp_id = int(samp.split("_")[0])
+        if exp_id % 2 == 0:
+            paired = samp.replace(f"{exp_id}_", f"{exp_id+1}_")
+            new_partition["train_sampleIDs"].append(samp)
+            new_partition["train_sampleIDs"].append(paired)
+            pairs["train_pairs"].append([samp, paired])
+
+    new_partition["train_sampleIDs"] = np.array(sorted(new_partition["train_sampleIDs"]))
+    new_partition["valid_sampleIDs"] = np.array(sorted(list(set(all_sampleIDs) - set(new_partition["train_sampleIDs"]))))
+
+    for samp in new_partition["valid_sampleIDs"]:
+        exp_id = int(samp.split("_")[0])
+        if exp_id % 2 == 0:
+            paired = samp.replace(f"{exp_id}_", f"{exp_id+1}_")
+            pairs["valid_pairs"].append([samp, paired])
+    
+    return new_partition, pairs
+
+def align_social_data(X, X_grid, y, n_animals=2):
+    X = X.reshape((n_animals, -1, *X.shape[1:]))
+    X_grid = X_grid.reshape((n_animals, -1, *X_grid.shape[1:]))
+    y = y.reshape((n_animals, -1, *y.shape[1:]))
+
+    X = np.transpose(X, (1, 0, 2, 3, 4, 5))
+    X_grid = np.transpose(X_grid, (1, 0, 2, 3))
+    y = np.transpose(y, (1, 0, 2, 3))
+
+    return X, X_grid, y
 
 def __initAvgMax(t, g, o, params):
     """

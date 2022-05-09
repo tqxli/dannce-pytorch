@@ -657,6 +657,8 @@ def setup_dataloaders(train_dataset, valid_dataset, params):
     # current implementation returns chunked data
     if params["use_temporal"]:
         valid_batch_size = params["batch_size"] // params["temporal_chunk_size"]
+    elif params["social_training"]:
+        valid_batch_size = params["batch_size"] // 2
     else:
         valid_batch_size = params["batch_size"] 
 
