@@ -1,10 +1,8 @@
 """Generator module for dannce training.
 """
 import os
-from unittest.mock import NonCallableMagicMock
 import numpy as np
-from dannce.engine.data import processing as processing
-from dannce.engine.data import ops as ops
+from dannce.engine.data import processing, ops
 from dannce.engine.data.video import LoadVideoFrame
 import warnings
 import time
@@ -32,8 +30,7 @@ DataGenerator_3Dconv_frommem and its children: return chunked (minimum 1), augme
 """
 
 class DataGenerator(torch.utils.data.Dataset):
-    """Generate data for Keras.
-
+    """
     Attributes:
         batch_size (int): Batch size to generate
         camnames (List): List of camera names.
@@ -257,7 +254,6 @@ class DataGenerator_3Dconv(DataGenerator):
         # If saving npy as uint8 rather than training directly, dont normalize
         self.norm_im = norm_im
 
-        # importing torch here allows other modes to run without pytorch installed
         self.device = torch.device("cuda:" + self.gpu_id)
 
         self.threadpool = ThreadPool(len(self.camnames[0]))
@@ -391,7 +387,7 @@ class DataGenerator_3Dconv(DataGenerator):
             mask = prediction["masks"][0].permute(1, 2, 0).detach().cpu().numpy()
             mask = (mask >= 0.5).astype(np.uint8)
             
-            thisim = mask # thisim *= mask
+            thisim *= mask # return the segmented foreground object
 
         ts = time.time()
         proj_grid = ops.project_to2d(
@@ -587,9 +583,7 @@ class DataGenerator_3Dconv(DataGenerator):
         return inputs, targets
 
     def __data_generation(self, list_IDs_temp):
-        """Generate data containing batch_size samples.
-        X : (n_samples, *dim, n_channels)
-
+        """
         Args:
             list_IDs_temp (List): List of experiment Ids
 
@@ -597,7 +591,6 @@ class DataGenerator_3Dconv(DataGenerator):
             Tuple: Batch_size training samples
                 X: Input volumes
                 y_3d: Targets
-                rotangle: Rotation angle
         Raises:
             Exception: Invalid generator mode specified.
         """
@@ -726,7 +719,7 @@ class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
 
         return X, y
 
-    def project_grid(self, X_grids, camnames, IDs, experimentIDs, com_3ds):
+    def proj_grid(self, X_grids, camnames, IDs, experimentIDs, com_3ds):
         """Projects 3D voxel centers and sample images as projected 2D pixel coordinates
 
         Args:
@@ -823,30 +816,30 @@ class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
                 else:
                     thisims[i] = processing.cropcom(thisims[i], coms[i], size=self.dim_in[0])[0] 
         # print('Frame loading took {} sec.'.format(time.time() - ts))
+        
+        # compute 3D COMs in camera coordinate frame for occlusion check
+        com_3ds_cam = ops.world_to_cam(
+            com_3ds.clone(), 
+            self.camera_params[experimentIDs[0]][camnames[0]]["M"],
+            self.device
+        ).detach().cpu().numpy()
+        # com_3ds_proj = com_3ds_cam[:, :2] / com_3ds_cam[:, 2:]
 
+        # check depths
+        instance_front = np.argmin(com_3ds_cam[:, 2])
+        occlusion_scores = np.zeros((self.n_instances)) # the foreground animal is not occluded
+
+        # check overlap region
+        bb1 = [com_3ds_cam[0, 0]+self.vmin, com_3ds_cam[0, 1]+self.vmin, com_3ds_cam[0, 0]+self.vmax, com_3ds_cam[0, 1]+self.vmax]
+        bb2 = [com_3ds_cam[1, 0]+self.vmin, com_3ds_cam[1, 1]+self.vmin, com_3ds_cam[1, 0]+self.vmax, com_3ds_cam[1, 1]+self.vmax]
+        
+        occlusion_scores[instance_front] = processing.bbox_iou(bb1, bb2)
+        
         if self.segmentation_model is not None:
-            # compute 3D COMs in camera coordinates for occlusion check
-            com_3ds_cam = ops.world_to_cam(
-                com_3ds.clone(), 
-                self.camera_params[experimentIDs[0]][camnames[0]]["M"],
-                self.device
-            ).detach().cpu().numpy()
-            
-            # com_3ds_proj = com_3ds_cam[:, :2] / com_3ds_cam[:, 2:]
-
-            # check depths
-            instance_front = np.argmin(com_3ds_cam[:, 2])
-
-            # check overlap region
-            bb1 = [com_3ds_cam[0, 0]+self.vmin, com_3ds_cam[0, 1]+self.vmin, com_3ds_cam[0, 0]+self.vmax, com_3ds_cam[0, 1]+self.vmax]
-            bb2 = [com_3ds_cam[1, 0]+self.vmin, com_3ds_cam[1, 1]+self.vmin, com_3ds_cam[1, 0]+self.vmax, com_3ds_cam[1, 1]+self.vmax]
-            
-            iou = processing.bbox_iou(bb1, bb2)
-            occlusion_flag = (iou > 0.8)
             # if there is no occlusion, 
             # the model should be able to detect `n_instances`` masks 
             # in this specific camera view, with high confidence (score > 0.9)
-
+            occlusion_flag = (occlusion_scores[instance_front] > 0.8)
             # initialize masks as ones ==> no influence if no masks predicted
             masks = np.ones((self.n_instances, *thisims[0].shape[:2], 1))
 
@@ -936,21 +929,6 @@ class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
                 proj_grid[:, 1] = proj_grid[:, 1] - self.crop_height[0]
 
             rgb = ops.sample_grid(thisims[i], proj_grid, self.device, method=self.interp)
-            # print('Sample grid {} sec.'.format(time.time() - ts))
-            
-            # tifdir = '/media/mynewdrive/datasets/dannce/social_rat_debug_social_volume2'
-            # if not os.path.exists(tifdir):
-            #     os.makedirs(tifdir)
-            # im = rgb.permute(0, 2, 3, 4, 1).clone()[0].cpu().numpy()
-            # im = processing.norm_im(im) * 255
-            # im = im.astype("uint8")
-            # of = os.path.join(
-            #         tifdir,
-            #         IDs[i] + camnames[i] + ".tif",
-            #     )
-            # import imageio
-            # imageio.mimwrite(of, np.transpose(im, [2, 0, 1, 3]))
-            # breakpoint()
 
             if (
                 ~torch.any(torch.isnan(com_precrops[i]))
@@ -959,7 +937,7 @@ class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
             ):
                 X.append(rgb.permute(0, 2, 3, 4, 1))
 
-        return X
+        return X, occlusion_scores
 
     def __data_generation(self, list_IDs_temp):
         """Generate data containing batch_size samples.
@@ -978,11 +956,17 @@ class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
         """
         # Initialization
         first_exp = int(self.list_IDs[0].split("_")[0])
+        num_cams = len(self.camnames[experimentIDs[0]])
         X, y_3d, X_grid = self._init_vars(first_exp)
 
         com_3ds = torch.zeros(
             (self.batch_size, 3),
             dtype=torch.float32,
+            device=self.device
+        )
+        occlusion_scores = torch.zeros(
+            (self.batch_size, num_cams), 
+            dtype=torch.float32, 
             device=self.device
         )
         
@@ -1015,7 +999,6 @@ class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
 
         # Compute projected images in parallel using multithreading
         ts = time.time()
-        num_cams = len(self.camnames[experimentIDs[0]])
         arglist = []
 
         for c in range(num_cams):  
@@ -1026,12 +1009,13 @@ class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
                 experimentIDs, 
                 com_3ds]
             )
-        result = self.threadpool.starmap(self.project_grid, arglist)
+        result = self.threadpool.starmap(self.proj_grid, arglist)
         
         for c in range(num_cams):
             for j in range(len(result[c])):
                 ic = c + j * num_cams
                 X[ic, ...] = result[c][j][0]
+                occlusion_scores[j, c] = result[c][j][1]
         # print('MP took {} sec.'.format(time.time()-ts))
 
         # adjust camera channels
@@ -1110,6 +1094,7 @@ class DataGenerator_3Dconv_frommem(torch.utils.data.Dataset):
         heatmap_reg_coeff=0.01,
         aux_labels=None,
         temporal_chunk_list=None,
+        occlusion=False,
     ):
         """Initialize data generator.
         """
@@ -1147,6 +1132,10 @@ class DataGenerator_3Dconv_frommem(torch.utils.data.Dataset):
         self.temporal_chunk_size = 1
 
         self._update_temporal_batch_size()
+
+        self.occlusion = occlusion
+        if self.occlusion:
+            assert aux_labels is not None, "Missing aux labels for occlusion training."
 
     def __len__(self):
         """Denote the number of batches per epoch.
@@ -1426,6 +1415,14 @@ class DataGenerator_3Dconv_frommem(torch.utils.data.Dataset):
             pass
             ##TODO: implement mirror augmentation for max and avg+max modes
 
+        if self.occlusion:
+            if np.random.rand() > 0.5:
+                occlusion_idx = np.random.choice(self.__len__())
+                rand_cam = np.random.choice(int(X.shape[-1] // self.chan_num)-1)
+                foreground_obj = self.aux_labels[occlusion_idx:(occlusion_idx+1), :, :, :, rand_cam*3:(rand_cam+1)*3]
+                occluded_area = (foreground_obj != -1)
+                X[..., rand_cam*3:(rand_cam+1)*3][occluded_area] = foreground_obj[occluded_area]
+                
         return X, X_grid, y_3d, aux
 
     def do_random(self, X):
@@ -1504,8 +1501,8 @@ class DataGenerator_3Dconv_frommem(torch.utils.data.Dataset):
             X_grid = None
 
         # Only used for AVG+MAX mode
-        if self.aux_labels is not None:
-            aux = np.zeros((*X.shape[:4], y_3d.shape[-1]))
+        if (not self.occlusion) and (self.aux_labels is not None):
+            aux = np.zeros((self.temporal_chunk_size, *self.aux_labels.shape[1:]))
         else:
             aux = None
 
@@ -1604,8 +1601,8 @@ class DataGenerator_3Dconv_npy(DataGenerator_3Dconv_frommem):
         self.prefeat = prefeat
         self.sigma = sigma
 
-        if pairs is not None:
-            self.pairs = pairs
+        self.pairs = pairs
+        if self.pairs is not None:
             self.temporal_chunk_size = len(self.pairs[0])
 
     def __len__(self):
