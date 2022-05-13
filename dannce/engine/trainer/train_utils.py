@@ -1,5 +1,6 @@
 import dannce.engine.models.loss as custom_losses
 import dannce.engine.models.metrics as custom_metrics
+import numpy as np
 # import pandas as pd
 
 def prepare_batch(batch, device):
@@ -29,8 +30,10 @@ class LossHelper:
         for k, lossfcn in self.loss_fcns.items():
             if k == "GaussianRegLoss":
                 loss_val = lossfcn(kpts_gt, kpts_pred, heatmaps, grid_centers)
-            elif k == 'SilhouetteLoss':
+            elif k == 'SilhouetteLoss' or k == 'ReconstructionLoss':
                 loss_val = lossfcn(aux, heatmaps)
+            elif k == 'VarianceLoss':
+                loss_val = lossfcn(kpts_pred, heatmaps, grid_centers)
             else:
                 loss_val = lossfcn(kpts_gt, kpts_pred)
             total_loss.append(loss_val)
@@ -53,6 +56,8 @@ class MetricHelper:
             self.metrics[met] = getattr(custom_metrics, met)
         
     def evaluate(self, kpts_gt, kpts_pred):
+        # perform NaN masking ONCE before metric computation
+        kpts_pred, kpts_gt = self.mask_nan(kpts_pred, kpts_gt)
         metric_dict = {}
         for met in self.metric_names:
             metric_dict[met] = self.metrics[met](kpts_pred, kpts_gt)
@@ -62,6 +67,23 @@ class MetricHelper:
     @property
     def names(self):
         return self.metric_names
+    
+    @classmethod
+    def mask_nan(self, pred, gt):
+        """
+        pred, gt: [bs, 3, n_joints]
+        """
+        pred = np.transpose(pred.copy(), (1, 0, 2))
+        gt = np.transpose(gt.copy(), (1, 0, 2)) #[3, bs, n_joints]
+        pred = np.reshape(pred, (3, -1))
+        gt = np.reshape(gt, (3, -1)) #[3, bs*n_joints]
+
+        gi = np.where(~np.isnan(np.sum(gt, axis=0)))[0] #[bs*n_joints]
+
+        pred = pred[:, gi]
+        gt = gt[:, gi] #[3, bs*n_joints]
+
+        return pred, gt
 
 
 # class MetricTracker:

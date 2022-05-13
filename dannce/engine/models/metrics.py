@@ -18,7 +18,10 @@ def euclidean_distance_3D(predicted, target):
     often referred to as "Protocol #1" in many papers.
     """
     assert predicted.shape == target.shape
-    return nanmean_infmean(np.sqrt(((target - predicted) ** 2).sum(1)).flatten())
+    assert predicted.shape[0] == 3
+    
+    mpjpe = np.linalg.norm((target - predicted), ord=2, axis=0)
+    return nanmean_infmean(mpjpe)
 
 def p_mpjpe(predicted, target, pmax=None, thresh=None, error=True, scale=False):
     """
