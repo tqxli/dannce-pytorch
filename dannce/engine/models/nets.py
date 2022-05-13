@@ -111,6 +111,10 @@ def initialize_model(params, n_cams, device):
         model_params = {**model_params, "residual": False, "norm_upsampling": True}
     elif params["net_type"] == "v2v":
         model_params = {**model_params, "residual": True, "norm_upsampling": True}
+    elif params["net_type"] == "autoencoder":
+        model_params["input_channels"] = model_params["input_channels"] - 3
+        model_params["output_channels"] = 3
+        model_params = {**model_params, "residual": True, "norm_upsampling": True}
 
     model = DANNCE(**model_params)
 

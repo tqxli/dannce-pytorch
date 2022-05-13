@@ -1,13 +1,59 @@
 """Operations for dannce."""
-from matplotlib.pyplot import grid
 import numpy as np
-from scipy.interpolate import RegularGridInterpolator
 import cv2
 import time
-from typing import Text, List, Dict, Tuple, Union
+from typing import Text
 import torch
 import torch.nn.functional as F
 
+class Camera:
+    def __init__(self, R, t, K, tdist, rdist, name=""):
+        self.R = np.array(R).copy()
+        assert self.R.shape == (3, 3)
+
+        self.t = np.array(t).copy()
+        assert self.t.shape == (1, 3)
+
+        self.K = np.array(K).copy()
+        assert self.K.shape == (3, 3)
+
+        self.M = np.concatenate((R, t), axis=0) @ self.K 
+
+        self.tdist = tdist
+        self.rdist = rdist
+
+        self.name = name
+
+    def update_after_crop(self, bbox):
+        left, upper, right, lower = bbox
+
+        cx, cy = self.K[2, 0], self.K[2, 1]
+
+        new_cx = cx - left
+        new_cy = cy - upper
+
+        self.K[2, 0], self.K[2, 1] = new_cx, new_cy
+
+    def update_after_resize(self, image_shape, new_image_shape):
+        height, width = image_shape
+        new_height, new_width = new_image_shape
+
+        fx, fy, cx, cy = self.K[0, 0], self.K[1, 1], self.K[2, 0], self.K[2, 1]
+
+        new_fx = fx * (new_width / width)
+        new_fy = fy * (new_height / height)
+        new_cx = cx * (new_width / width)
+        new_cy = cy * (new_height / height)
+
+        self.K[0, 0], self.K[1, 1], self.K[2, 0], self.K[2, 1] = new_fx, new_fy, new_cx, new_cy
+    
+    @property
+    def camera_matrix(self):
+        return self.extrinsics.dot(self.K)
+
+    @property
+    def extrinsics(self):
+        return np.concatenate((self.R, self.t), axis=0)
 
 def camera_matrix(K: np.ndarray, R: np.ndarray, t: np.ndarray) -> np.ndarray:
     """Derive the camera matrix.
