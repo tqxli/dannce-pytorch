@@ -14,6 +14,10 @@ import torch
 import torchvision
 import torchvision.transforms.functional as TF
 
+import matplotlib
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
+
 MISSING_KEYPOINTS_MSG = (
     "If mirror augmentation is used, the right_keypoints indices and left_keypoints "
     + "indices must be specified as well. "
@@ -735,7 +739,8 @@ class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
 
         # Need this copy so that this_y does not change
         thisims, coms, com_precrops = [], [], []
-        
+
+        # only load the frame once for all animals present
         thisim = self.load_frame.load_vid_frame(
             self.labels[IDs[0]]["frames"][camnames[0]],
             camnames[0],
@@ -802,6 +807,58 @@ class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
             X_grid, camname, ID, experimentID, com, com_precrop, passim
         )
 
+    def visualize_2d(self, im, IDs, camnames, camcoords, bb1, bb2, scores, savedir='./vis_occlusion/2021_07_03_M2_M3'):
+        if not os.path.exists(savedir):
+            os.makedirs(savedir)
+
+        depths = camcoords[:, 2]
+        fname = IDs[0].split("_")[-1] + "_" + camnames[0].split("_")[-1] + ".jpg"
+        fig, ax = plt.subplots(1, 1)
+        ax.imshow(im)
+        ax.set_title("B: {:.2f}, {:.2f} | R: {:.2f}, {:.2f}".format(depths[0], scores[0], depths[1], scores[1]))
+        # Create a Rectangle patch
+        rect1 = patches.Rectangle((bb1[0], bb1[1]), bb1[2]-bb1[0], bb1[3]-bb1[1], linewidth=1, edgecolor='b', facecolor='none')
+        rect2 = patches.Rectangle((bb2[0], bb2[1]), bb2[2]-bb2[0], bb2[3]-bb2[1], linewidth=1, edgecolor='r', facecolor='none')
+
+        # Add the patch to the Axes
+        ax.add_patch(rect1)
+        ax.add_patch(rect2)
+        fig.savefig(os.path.join(savedir, fname))
+        plt.close(fig)
+    
+    @classmethod
+    def apply_mask(self, image, mask, color, alpha=0.3):
+        """Apply the given mask to the image.
+        """
+        for c in range(3):
+            image[:, :, c] = np.where(mask == 1,
+                                    image[:, :, c] *
+                                    (1 - alpha) + alpha * color[c] * 255,
+                                    image[:, :, c])
+        return image
+
+    def visualize_mask(self, IDs, camnames, im, masks, coms, msg, savedir='./vis_occlusion_masks'):
+        colors = [(0, 255, 125), (252, 51, 51)]
+        if not os.path.exists(savedir):
+            print("Saving to ", savedir)
+            os.makedirs(savedir)
+        fname = IDs[0].split("_")[-1] + "_" + camnames[0].split("_")[-1] + ".jpg"
+
+        fig, ax = plt.subplots(1, 1)
+        for i, mask in enumerate(masks):
+            im = self.apply_mask(im, np.squeeze(mask), colors[i])
+        ax.imshow(im)
+
+        com1 = coms[0]
+        com2 = coms[1]
+        ax.scatter(x=com1[0], y=com1[1], color="blue")
+        ax.scatter(x=com2[0], y=com2[1], color="red")
+
+        ax.set_title(msg)
+        
+        fig.savefig(os.path.join(savedir, fname))
+        plt.close(fig)
+
     def pj_grid_post(self, X_grids, camnames, IDs, experimentIDs, coms, com_precrops, thisims, com_3ds):
         # separate the porjection and sampling into its own function so that
         # when mirror == True, this can be called directly
@@ -817,29 +874,35 @@ class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
                     thisims[i] = processing.cropcom(thisims[i], coms[i], size=self.dim_in[0])[0] 
         # print('Frame loading took {} sec.'.format(time.time() - ts))
         
-        # compute 3D COMs in camera coordinate frame for occlusion check
+        # convert 3D COMs into camera coordinate frame for occlusion check
         com_3ds_cam = ops.world_to_cam(
             com_3ds.clone(), 
             self.camera_params[experimentIDs[0]][camnames[0]]["M"],
             self.device
         ).detach().cpu().numpy()
-        # com_3ds_proj = com_3ds_cam[:, :2] / com_3ds_cam[:, 2:]
+        depths = com_3ds_cam[:, 2]
+        com_2ds_pix = com_3ds_cam[:, :2] / com_3ds_cam[:, 2:]
+
+        # generate bounding boxes in pixel coordinates
+        # this only APPROXIMATES the occlusion between different animals
+        w, h = 200, 150
+        bb1 = [com_2ds_pix[0, 0]-w, com_2ds_pix[0, 1]-h, com_2ds_pix[0, 0]+w, com_2ds_pix[0, 1]+h]
+        bb2 = [com_2ds_pix[1, 0]-w, com_2ds_pix[1, 1]-h, com_2ds_pix[1, 0]+w, com_2ds_pix[1, 1]+h]
 
         # check depths
-        instance_front = np.argmin(com_3ds_cam[:, 2])
-        occlusion_scores = np.zeros((self.n_instances)) # the foreground animal is not occluded
+        instance_front, instance_back = np.argmin(depths), np.argmax(depths)
+        occlusion_scores = np.ones((self.n_instances)) # the foreground animal is not occluded
 
         # check overlap region
-        bb1 = [com_3ds_cam[0, 0]+self.vmin, com_3ds_cam[0, 1]+self.vmin, com_3ds_cam[0, 0]+self.vmax, com_3ds_cam[0, 1]+self.vmax]
-        bb2 = [com_3ds_cam[1, 0]+self.vmin, com_3ds_cam[1, 1]+self.vmin, com_3ds_cam[1, 0]+self.vmax, com_3ds_cam[1, 1]+self.vmax]
-        
-        occlusion_scores[instance_front] = processing.bbox_iou(bb1, bb2)
+        occlusion_scores[instance_back] = processing.bbox_iou(bb1, bb2)
+
+        # self.visualize_2d(thisims[0], IDs, camnames, com_3ds_cam, bb1, bb2, occlusion_scores)
         
         if self.segmentation_model is not None:
             # if there is no occlusion, 
             # the model should be able to detect `n_instances`` masks 
             # in this specific camera view, with high confidence (score > 0.9)
-            occlusion_flag = (occlusion_scores[instance_front] > 0.8)
+            # occlusion_flag = (occlusion_scores[instance_front] > 0.8)
             # initialize masks as ones ==> no influence if no masks predicted
             masks = np.ones((self.n_instances, *thisims[0].shape[:2], 1))
 
@@ -847,9 +910,9 @@ class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
             input = [torchvision.transforms.functional.to_tensor(thisims[0].copy()).to(self.device,  dtype=torch.float)]
             prediction = self.segmentation_model(input)[0]
             # filter by confidence scores
-            filtering_by_scores = (prediction["scores"] > 0.9)
+            filtering_by_scores = (prediction["scores"] > 0.85)
             raw_masks = prediction["masks"][filtering_by_scores]
-            print(f"{len(raw_masks)} masks detected.")
+            # print(f"{len(raw_masks)} masks detected.")
             if len(raw_masks) > self.n_instances:
                 raw_masks = raw_masks[:self.n_instances]
 
@@ -861,42 +924,49 @@ class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
             masks_unordered = np.stack(masks_unordered)
 
             # mask matching
+            msg = ""
             if len(raw_masks) == 0:
-                print("No mask predicted.")
+                msg = "No mask predicted."
             
             elif len(raw_masks) < self.n_instances:
-                counts = processing.compute_support(coms, masks_unordered[0])
+                counts = processing.compute_support(com_2ds_pix, masks_unordered[0])
                 assignment = np.argmax(counts)
                 masks[assignment] = masks_unordered[0]
                 
-                if occlusion_flag and (assignment == instance_front):
-                    print("Severe occlusion; mask only predicted on animal at front.")
-                    non_assignment =((np.arange(len(raw_masks)) != assignment))
-                    masks[non_assignment] = (masks_unordered[0] == 0).astype(np.uint8)
+                if assignment == instance_front:
+                    msg = "Mask only predicted on the foreground animal."
+                    non_assignment =((np.arange(self.n_instances)) != assignment)
+                    # masks[non_assignment] = (masks_unordered[0] == 0).astype(np.uint8)
                 else:
-                    print("Mask only predicted on animal behind.")
+                    msg = "Mask only predicted on animal behind."
 
             elif len(raw_masks) == self.n_instances:
                 # remove intersected region
-                mask_intersect = processing.mask_intersection(masks_unordered[0], masks_unordered[1])
-                masks_unordered = [mask-mask_intersect for mask in masks_unordered]
+                # mask_intersect = processing.mask_intersection(masks_unordered[0], masks_unordered[1])
+                # masks_unordered = [mask-mask_intersect for mask in masks_unordered]
             
-                counts0 = processing.compute_support(coms, masks_unordered[0])
-                counts1 = processing.compute_support(coms, masks_unordered[1])
+                counts0 = processing.compute_support(com_2ds_pix, masks_unordered[0])
+                counts1 = processing.compute_support(com_2ds_pix, masks_unordered[1])
                 
                 assignment0 = np.argmax(counts0)
                 assignment1 = np.argmax(counts1)
 
                 if assignment0 != assignment1:
                     # perfect matching
+                    msg = "Perfect matching."
                     masks[assignment0] = masks_unordered[0]
                     masks[assignment1] = masks_unordered[1]
-                elif occlusion_flag and (assignment0 == instance_front):
-                    print("Mask ambiguity. Assume the higher confidence mask belongds to the front.")
+                elif (assignment0 == instance_front):
+                    msg = "Mask ambiguity. Assume the higher confidence mask belongs to the front."
                     masks[instance_front] = masks_unordered[0]
-
+                    masks[instance_back] = masks_unordered[1]
+                else:
+                    msg = "Mask ambiguity."
+            
+            # self.visualize_mask(IDs, camnames, thisims[0].copy(), masks, com_2ds_pix, msg)            
             for i, im in enumerate(thisims):
-                thisims[i] = im * masks[i]
+                # thisims[i] = im * masks[i]
+                thisims[i] = np.tile(masks[i], (1, 1, 3))
 
         X = []
         for i in range(self.n_instances):
@@ -956,17 +1026,12 @@ class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
         """
         # Initialization
         first_exp = int(self.list_IDs[0].split("_")[0])
-        num_cams = len(self.camnames[experimentIDs[0]])
+
         X, y_3d, X_grid = self._init_vars(first_exp)
 
         com_3ds = torch.zeros(
             (self.batch_size, 3),
             dtype=torch.float32,
-            device=self.device
-        )
-        occlusion_scores = torch.zeros(
-            (self.batch_size, num_cams), 
-            dtype=torch.float32, 
             device=self.device
         )
         
@@ -1001,6 +1066,9 @@ class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
         ts = time.time()
         arglist = []
 
+        num_cams = len(self.camnames[experimentIDs[0]])
+        occlusion_scores = np.zeros((self.batch_size, num_cams, 2), dtype=float)
+
         for c in range(num_cams):  
             arglist.append([
                 X_grid, 
@@ -1012,10 +1080,10 @@ class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
         result = self.threadpool.starmap(self.proj_grid, arglist)
         
         for c in range(num_cams):
-            for j in range(len(result[c])):
+            for j in range(self.n_instances):
                 ic = c + j * num_cams
-                X[ic, ...] = result[c][j][0]
-                occlusion_scores[j, c] = result[c][j][1]
+                X[ic, ...] = result[c][0][j][0] #[H, W, D, C]
+                occlusion_scores[j, c] = result[c][1] # [2]
         # print('MP took {} sec.'.format(time.time()-ts))
 
         # adjust camera channels

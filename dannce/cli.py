@@ -543,6 +543,12 @@ def add_dannce_shared_args(
     )
 
     parser.add_argument(
+        "--use-silhouette",
+        type=ast.literal_eval,
+        dest="use_silhouette",
+    )
+
+    parser.add_argument(
         "--use-silhouette-in-volume",
         default=False,
         type=ast.literal_eval,

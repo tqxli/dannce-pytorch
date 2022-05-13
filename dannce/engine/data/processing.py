@@ -17,6 +17,8 @@ import warnings
 
 # matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from skimage import measure
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
 import yaml
 import shutil
@@ -392,16 +394,20 @@ def resplit_social(partition):
     
     return new_partition, pairs
 
-def align_social_data(X, X_grid, y, n_animals=2):
+def align_social_data(X, X_grid, y, aux, n_animals=2):
     X = X.reshape((n_animals, -1, *X.shape[1:]))
     X_grid = X_grid.reshape((n_animals, -1, *X_grid.shape[1:]))
     y = y.reshape((n_animals, -1, *y.shape[1:]))
+    if aux is not None:
+        aux = aux.reshape((n_animals, -1, *aux.shape[1:]))
 
     X = np.transpose(X, (1, 0, 2, 3, 4, 5))
     X_grid = np.transpose(X_grid, (1, 0, 2, 3))
     y = np.transpose(y, (1, 0, 2, 3))
+    if aux is not None:
+        aux = np.transpose(aux, (1, 0, 2, 3, 4, 5)) 
 
-    return X, X_grid, y
+    return X, X_grid, y, aux
 
 def __initAvgMax(t, g, o, params):
     """
@@ -1312,6 +1318,9 @@ def write_sil_npy(uri, gen):
             np.save(os.path.join(imdir, fname + ".npy"), sil)
 
 def extract_3d_sil(vol):
+    """
+    vol: [n_samples, H, W, D, C*n_cam]
+    """
     vol[vol > 0] = 1
     vol = np.sum(vol, axis=-1, keepdims=True)
 
@@ -1325,10 +1334,11 @@ def extract_3d_sil(vol):
             100*np.sum(vol)/len(vol.ravel())))
     return vol
 
-def extract_3d_sil_soft(vol, upper_thres, keeprange=3):
+def extract_3d_sil_soft(vol, keeprange=3):
     vol[vol > 0] = 1
     vol = np.sum(vol, axis=-1, keepdims=True)
 
+    upper_thres = np.max(vol)
     lower_thres = upper_thres - keeprange
     vol[vol <= lower_thres] = 0
     vol[vol > 0] = (vol[vol > 0] - lower_thres) / keeprange
@@ -1345,7 +1355,7 @@ def load_volumes_into_mem(params, logger, partition, n_cams, generator, train=Tr
     X = np.empty((n_samples, *gridsize, params["chan_num"]*n_cams), dtype="float32")
     logger.info(message)
 
-    X_grid = None
+    X_grid, y = None, None
     if params["expval"]:
         if not silhouette: 
             y = np.empty((n_samples, 3, params["n_channels_out"]), dtype="float32")
@@ -1355,8 +1365,10 @@ def load_volumes_into_mem(params, logger, partition, n_cams, generator, train=Tr
 
     if social:
         X = np.reshape(X, (2, -1, *X.shape[1:]))
-        X_grid = np.reshape(X_grid, (2, -1, *X_grid.shape[1:]))
-        y = np.reshape(y, (2, -1, *y.shape[1:]))
+        if X_grid is not None:
+            X_grid = np.reshape(X_grid, (2, -1, *X_grid.shape[1:]))
+        if y is not None:
+            y = np.reshape(y, (2, -1, *y.shape[1:]))
 
         for i in range(n_samples//2):
             # breakpoint()
@@ -1368,8 +1380,10 @@ def load_volumes_into_mem(params, logger, partition, n_cams, generator, train=Tr
                     X_grid[j, i], y[j, i] = rr[0][1][j], rr[1][0][j]
 
         X = np.reshape(X, (-1, *X.shape[2:]))
-        X_grid = np.reshape(X_grid, (-1, *X_grid.shape[2:]))
-        y = np.reshape(y, (-1, *y.shape[2:]))
+        if X_grid is not None:
+            X_grid = np.reshape(X_grid, (-1, *X_grid.shape[2:]))
+        if y is not None:
+            y = np.reshape(y, (-1, *y.shape[2:]))
 
     else:
         for i in range(n_samples):
@@ -1386,7 +1400,7 @@ def load_volumes_into_mem(params, logger, partition, n_cams, generator, train=Tr
         logger.info("Now loading silhouettes")
         X_copy = X.copy()
         if params["soft_silhouette"]:
-            X = extract_3d_sil_soft(X, params["chan_num"]*n_cams)
+            X = extract_3d_sil_soft(X)
         else:
             X = extract_3d_sil(X)
         
@@ -1431,6 +1445,48 @@ def save_volumes_into_tif(params, tifdir, X, sampleIDs, n_cams, logger):
             )
             imageio.mimwrite(of, np.transpose(im, [2, 0, 1, 3]))
 
+def save_visual_hull(aux, sampleIDs, savedir='./visual_hull'):
+    if not os.path.exists(savedir):
+        os.makedirs(savedir)
+
+    for i in range(aux.shape[0]):
+        intersection = np.squeeze(aux[i].astype(np.float32))
+
+        # apply marching cubes algorithm
+        verts, faces, normals, values = measure.marching_cubes(intersection, 0.0)
+        # print('Number of vertices: ', verts.shape[0])
+
+        # save predictions
+        fig = plt.figure(figsize=(10, 10))
+        ax = fig.add_subplot(111, projection='3d')
+
+        # Fancy indexing: `verts[faces]` to generate a collection of triangles
+        mesh = Poly3DCollection(verts[faces])
+        mesh.set_edgecolor('k')
+        ax.add_collection3d(mesh)
+
+        min_limit, max_limit = np.min(verts), np.max(verts)
+
+        ax.set_xlim(min_limit, max_limit)  
+        ax.set_ylim(min_limit, max_limit)  
+        ax.set_zlim(min_limit, max_limit)  
+
+        of = os.path.join(savedir, sampleIDs[i])
+        fig.savefig(of)
+        plt.close(fig)
+
+def save_train_volumes(params, tifdir, generator, n_cams):
+    if not os.path.exists(tifdir):
+        os.makedirs(tifdir)
+    for i in range(len(generator)):
+        X = generator.__getitem__(i)[0][0].permute(1, 2, 3, 0).numpy()
+        for j in range(n_cams):
+            im = X[...,j * params["chan_num"] : (j + 1) * params["chan_num"]]
+            im = norm_im(im) * 255
+            im = im.astype("uint8")
+            of = os.path.join(tifdir,f"{i}_cam{j}.tif")
+            imageio.mimwrite(of, np.transpose(im, [2, 0, 1, 3]))
+
 def mask_to_bbox(mask):
     bounding_boxes = np.zeros((4, ))
     y, x, _ = np.where(mask != 0)
@@ -1465,8 +1521,8 @@ def bbox_iou(bb1, bb2):
         return 0.0
     intersection_area = (x_right - x_left) * (y_bottom - y_top)
 
-    bb1_area = (bb1['x2'] - bb1['x1']) * (bb1['y2'] - bb1['y1'])
-    bb2_area = (bb2['x2'] - bb2['x1']) * (bb2['y2'] - bb2['y1'])
+    bb1_area = (bb1[0] - bb1[2]) * (bb1[1] - bb1[3])
+    bb2_area = (bb2[0] - bb2[2]) * (bb2[1] - bb2[3])
 
     iou = intersection_area / float(bb1_area + bb2_area - intersection_area)
 
@@ -1475,12 +1531,12 @@ def bbox_iou(bb1, bb2):
 def compute_support(coms, mask, support_region_size=10):
     counts = []
     for i in range(len(coms)):
-        index = coms[i].clone().cpu().int().numpy()
+        index = coms[i] #.clone().cpu().int().numpy()
         sp_l = np.maximum(0, index[1]-support_region_size)
         sp_r = np.minimum(mask.shape[0], index[1]+support_region_size)
         sp_t = np.maximum(0, index[0]-support_region_size)
         sp_b = np.minimum(mask.shape[1], index[0]+support_region_size)
 
-        count = np.sum(mask[sp_l:sp_r, sp_t:sp_b, 0])
+        count = np.sum(mask[int(sp_l):int(sp_r), int(sp_t):int(sp_b), 0])
         counts.append(count)
     return np.array(counts)
