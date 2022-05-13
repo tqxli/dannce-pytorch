@@ -39,7 +39,7 @@ _DEFAULT_VIDDIR = "videos"
 _DEFAULT_VIDDIR_SIL = "videos_sil"
 _DEFAULT_COMSTRING = "COM"
 _DEFAULT_COMFILENAME = "com3d.mat"
-_DEFAULT_SEG_MODEL = '/home/tianqingli/dl-projects/social-rat/rat-inst-seg/exps/logdir/train_social_rat_mask_rcnn@2022-02-25-14-10/checkpoints/checkpoint_ep14.pth'
+_DEFAULT_SEG_MODEL = 'weights/maskrcnn.pth'
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "1"
 
 
