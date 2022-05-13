@@ -14,7 +14,6 @@ from datetime import datetime
 
 import dannce.engine.data.serve_data_DANNCE as serve_data_DANNCE
 import dannce.engine.data.generator as generator
-# import dannce.engine.data.generator_aux as generator_aux
 import dannce.engine.data.processing as processing
 from dannce.engine.data.processing import savedata_tomat, savedata_expval
 from dannce.engine.data import ops, io
@@ -24,8 +23,8 @@ from dannce import (
     _param_defaults_com,
 )
 import dannce.engine.inference as inference
-from typing import List, Dict, Text
-import os, psutil, csv
+from typing import Dict, Text
+import os, psutil
 
 import torch
 from dannce.engine.models.nets import initialize_model
@@ -292,22 +291,26 @@ def dannce_train(params: Dict):
         "mirror": params["mirror"],
     }
 
+    if params["social_training"]:
+        genfunc = generator.DataGenerator_3Dconv_social
+    else:
+        genfunc = generator.DataGenerator_3Dconv
+
     if params["use_npy"]:
         # mono conversion will happen from RGB npy files, and the generator
         # needs to be aware that the npy files contain RGB content
         params["chan_num"] = params["n_channels_in"]
+        spec_params = {
+            "channel_combo": None,
+            "predict_flag": False,
+            "norm_im": False,
+            "expval": True,
+        }
+
+        valid_params = {**base_params, **spec_params}
 
         if len(missing_samples) != 0:
-            spec_params = {
-                "channel_combo": None,
-                "predict_flag": False,
-                "norm_im": False,
-                "expval": True,
-            }
-
-            valid_params = {**base_params, **spec_params}
-
-            npy_generator = generator.DataGenerator_3Dconv(
+            npy_generator = genfunc(
                 missing_samples,
                 datadict,
                 datadict_3d,
@@ -317,14 +320,10 @@ def dannce_train(params: Dict):
                 tifdirs,
                 **valid_params
             )
-            processing.save_volumes_into_npy(params, npy_generator, missing_samples, missing_npydir, samples, npydir, logger)
+            processing.save_volumes_into_npy(params, npy_generator, missing_npydir, samples, logger)
     else:
         # Used to initialize arrays for mono, and also in *frommem (the final generator)
         params["chan_num"] = 1 if params["mono"] else params["n_channels_in"]
-        if params["social_training"]:
-            genfunc = generator.DataGenerator_3Dconv_social
-        else:
-            genfunc = generator.DataGenerator_3Dconv
 
         spec_params = {
             "channel_combo":  params["channel_combo"],
@@ -351,35 +350,6 @@ def dannce_train(params: Dict):
 
         train_generator = genfunc(*train_gen_params, **valid_params)
         valid_generator = genfunc(*valid_gen_params, **valid_params)
-        
-        # option for foreground animal segmentation
-        if params["use_silhouette"]:
-            genfunc_sil = generator.DataGenerator_3Dconv_social if params["social_training"] else generator.DataGenerator_3Dconv
-            valid_params_sil = deepcopy(valid_params)
-            valid_params_sil["vidreaders"] = vids #vids_sil
-
-            # ensure voxel values stay positive, allowing conversion to binary below
-            valid_params_sil["norm_im"] = False
-            valid_params_sil["expval"] = True
-
-            # prepare segmentation model
-            segmentation_model = get_instance_segmentation_model(num_classes=2)
-            checkpoints = torch.load(_DEFAULT_SEG_MODEL)["state_dict"]
-            segmentation_model.load_state_dict(checkpoints)
-            segmentation_model.eval()
-            segmentation_model = segmentation_model.to("cuda:0")
-
-            train_generator_sil = genfunc_sil(
-                *train_gen_params,
-                **valid_params_sil,
-                segmentation_model=segmentation_model 
-            )
-
-            valid_generator_sil = genfunc_sil(
-                *valid_gen_params,
-                **valid_params_sil,
-                segmentation_model=segmentation_model
-            )
 
         # load everything into memory
         X_train, X_train_grid, y_train = processing.load_volumes_into_mem(params, logger, partition, n_cams, train_generator, train=True, social=params["social_training"])
@@ -392,45 +362,94 @@ def dannce_train(params: Dict):
             processing.save_volumes_into_tif(params, params["debug_volume_tifdir"], X_train, partition["train_sampleIDs"], n_cams, logger)
             return
 
+    # option for foreground animal segmentation
+    y_train_aux, y_valid_aux = None, None
+    if params["use_silhouette"]:
+        valid_params_sil = deepcopy(valid_params)
+        valid_params_sil["vidreaders"] = vids #vids_sil
+
+        # ensure voxel values stay positive, allowing conversion to binary below
+        valid_params_sil["norm_im"] = False
+        valid_params_sil["expval"] = True
+
+        # prepare segmentation model
+        segmentation_model = get_instance_segmentation_model(num_classes=2)
+        checkpoints = torch.load(_DEFAULT_SEG_MODEL)["state_dict"]
+        segmentation_model.load_state_dict(checkpoints)
+        segmentation_model.eval()
+        segmentation_model = segmentation_model.to("cuda:0")
+
+        if params["use_npy"]:
+            npydir, missing_npydir, missing_samples = serve_data_DANNCE.examine_npy_training(params, samples, aux=True)
+
+            if len(missing_samples) != 0:
+                logger.info("{} aux npy files for experiments {} are missing.".format(len(missing_samples), list(missing_npydir.keys())))
+            else:
+                logger.info("No missing aux npy files. Ready for training.")
+
+            if len(missing_samples) != 0:
+                npy_generator = genfunc(
+                    missing_samples,
+                    datadict,
+                    datadict_3d,
+                    cameras,
+                    missing_samples,
+                    com3d_dict,
+                    tifdirs,
+                    segmentation_model=segmentation_model,
+                    **valid_params_sil
+                )
+                processing.save_volumes_into_npy(params, npy_generator, missing_npydir, samples, logger, silhouette=True)
+        else:
+            train_generator_sil = genfunc(
+                *train_gen_params,
+                **valid_params_sil,
+                segmentation_model=segmentation_model 
+            )
+
+            valid_generator_sil = genfunc(
+                *valid_gen_params,
+                **valid_params_sil,
+                segmentation_model=segmentation_model
+            )
+
+            _, _, y_train_aux = processing.load_volumes_into_mem(
+                params, logger, partition, n_cams, train_generator_sil, 
+                train=True, silhouette=True, social=params["social_training"]
+            )
+            _, _, y_valid_aux = processing.load_volumes_into_mem(
+                params, logger, partition, n_cams, valid_generator_sil, 
+                train=False, silhouette=True,social=params["social_training"]
+            )
+            if segmentation_model is not None:
+                del segmentation_model
+
+            if params["use_silhouette_in_volume"]:
+                # concatenate RGB image volumes with silhouette volumes
+                X_train = np.concatenate((X_train, y_train_aux, y_train_aux, y_train_aux), axis=-1)
+                X_valid = np.concatenate((X_valid, y_valid_aux, y_valid_aux, y_valid_aux), axis=-1)
+                logger.info("Input dimension is now {}".format(X_train.shape))
+
+                params["use_silhouette"] = False
+                logger.info("Turn off silhouette loss.")
+                y_train_aux, y_valid_aux = None, None
+            
+            if params["social_training"]:
+                X_train, X_train_grid, y_train, y_train_aux = processing.align_social_data(X_train, X_train_grid, y_train, y_train_aux)
+                X_valid, X_valid_grid, y_valid, y_valid_aux = processing.align_social_data(X_valid, X_valid_grid, y_valid, y_valid_aux)
+            # processing.save_visual_hull(y_train_aux, partition["train_sampleIDs"])
+            # return
+
     # For AVG+MAX training, need to update the expval flag in the generators
     # and re-generate the 3D training targets
     # TODO: Add code to infer_params
     if params["avg+max"] is not None and params["use_silhouette"]:
         print("******Cannot combine AVG+MAX with silhouette - Using ONLY silhouette*******")
 
-    y_train_aux, y_valid_aux = None, None
-    if params["use_silhouette"]:
-        _, _, y_train_aux = processing.load_volumes_into_mem(
-            params, logger, partition, n_cams, train_generator_sil, 
-            train=True, silhouette=True, social=params["social_training"]
-        )
-        _, _, y_valid_aux = processing.load_volumes_into_mem(
-            params, logger, partition, n_cams, valid_generator_sil, 
-            train=False, silhouette=True,social=params["social_training"]
-        )
-        if segmentation_model is not None:
-            del segmentation_model
-        # processing.save_visual_hull(y_train_aux, partition["train_sampleIDs"])
-        # return
-
     elif params["avg+max"] is not None:
         y_train_aux, y_valid_aux = processing.initAvgMax(
             y_train, y_valid, X_train_grid, X_valid_grid, params
         )
-
-    if params["use_silhouette_in_volume"]:
-        # concatenate RGB image volumes with silhouette volumes
-        X_train = np.concatenate((X_train, y_train_aux, y_train_aux, y_train_aux), axis=-1)
-        X_valid = np.concatenate((X_valid, y_valid_aux, y_valid_aux, y_valid_aux), axis=-1)
-        logger.info("Input dimension is now {}".format(X_train.shape))
-
-        params["use_silhouette"] = False
-        logger.info("Turn off silhouette loss.")
-        y_train_aux, y_valid_aux = None, None
-
-    if params["social_training"]:
-        X_train, X_train_grid, y_train, y_train_aux = processing.align_social_data(X_train, X_train_grid, y_train, y_train_aux)
-        X_valid, X_valid_grid, y_valid, y_valid_aux = processing.align_social_data(X_valid, X_valid_grid, y_valid, y_valid_aux)
 
     # We apply data augmentation with another data generator class
     randflag = params["channel_combo"] == "random"
@@ -499,6 +518,7 @@ def dannce_train(params: Dict):
             "sigma": params["sigma"],
             "mono": params["mono"],
             "aux_labels": y_train_aux,
+            "aux": params["use_silhouette"],
             "temporal_chunk_list": partition["train_chunks"] if params["use_temporal"] else None,
         }
 
@@ -507,6 +527,7 @@ def dannce_train(params: Dict):
             "labels_3d": datadict_3d,
             "npydir": npydir,
             "aux_labels": y_valid_aux,
+            "aux": params["use_silhouette"],
         }
         args_valid = {
             **args_valid,

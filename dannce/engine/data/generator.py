@@ -1630,6 +1630,8 @@ class DataGenerator_3Dconv_npy(DataGenerator_3Dconv_frommem):
         # batch_size,
         imdir="image_volumes",
         griddir="grid_volumes",
+        aux=False,
+        auxdir="visual_hulls",
         prefeat=False,        
         mono=False,
         cam1=False,    
@@ -1655,10 +1657,8 @@ class DataGenerator_3Dconv_npy(DataGenerator_3Dconv_frommem):
             list_IDs=list_IDs,
             data=None,
             labels=None,
-            # batch_size=batch_size,
             **kwargs
         )
-        # self.list_IDs = list_IDs
         self.labels_3d = labels_3d
         self.npydir = npydir
         self.griddir = griddir
@@ -1668,6 +1668,8 @@ class DataGenerator_3Dconv_npy(DataGenerator_3Dconv_frommem):
         #self.replace = replace
         self.prefeat = prefeat
         self.sigma = sigma
+        self.auxdir = auxdir
+        self.aux = aux
 
         self.pairs = pairs
         if self.pairs is not None:
@@ -1694,14 +1696,6 @@ class DataGenerator_3Dconv_npy(DataGenerator_3Dconv_frommem):
                 X (np.ndarray): Input volume
                 y (np.ndarray): Target
         """
-        # if self.temporal_chunk_list is not None:
-        #     i = index * self.temporal_batch_size
-        #     indexes = self.indexes[i : i + self.temporal_batch_size]
-        #     indexes = list(np.concatenate([self.temporal_chunk_list[k] for k in indexes], axis=0))
-        #     list_IDs_temp = [self.list_IDs[k] for k in indexes]
-        # else: 
-        #     indexes = self.indexes[index * self.batch_size : (index + 1) * self.batch_size]
-        #     list_IDs_temp = [self.list_IDs[k] for k in indexes]
         if self.temporal_chunk_list is not None:
             list_IDs_temp = self.temporal_chunk_list[index]
         elif self.pairs is not None:
@@ -1732,6 +1726,7 @@ class DataGenerator_3Dconv_npy(DataGenerator_3Dconv_frommem):
         X = []
         y_3d = []
         X_grid = []
+        aux = []
 
         for i, ID in enumerate(list_IDs_temp):
             # Need to look up the experiment ID to get the correct directory
@@ -1752,10 +1747,18 @@ class DataGenerator_3Dconv_npy(DataGenerator_3Dconv_frommem):
                 )
             )
 
+            if self.aux:
+                aux.append(
+                    np.load(os.path.join(self.npydir[eID], self.auxdir, "0_" + sID + ".npy")
+                ).astype("float32")
+                )
+
         X = np.stack(X)
         y_3d = np.stack(y_3d)
 
         X_grid = np.stack(X_grid)
+        aux = np.stack(aux) if len(aux) != 0 else None
+
         if not self.expval:
             y_3d_max = np.zeros(
                 (self.temporal_chunk_size, self.nvox, self.nvox, self.nvox, y_3d.shape[-1])
@@ -1800,7 +1803,7 @@ class DataGenerator_3Dconv_npy(DataGenerator_3Dconv_frommem):
 
         ncam = int(X.shape[-1] // self.chan_num)
 
-        X, X_grid, y_3d, aux = self.do_augmentation(X, X_grid, y_3d)
+        X, X_grid, y_3d, aux = self.do_augmentation(X, X_grid, y_3d, aux)
 
         # Randomly re-order, if desired
         X = self.do_random(X)

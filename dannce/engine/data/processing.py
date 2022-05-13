@@ -1352,7 +1352,11 @@ def load_volumes_into_mem(params, logger, partition, n_cams, generator, train=Tr
     message = "Loading training data into memory" if train else "Loading validation data into memory"
     gridsize = tuple([params["nvox"]] * 3)
 
-    X = np.empty((n_samples, *gridsize, params["chan_num"]*n_cams), dtype="float32")
+    # initialize vars
+    if silhouette:
+        X = np.empty((n_samples, *gridsize, 1), dtype="float32")
+    else:
+        X = np.empty((n_samples, *gridsize, params["chan_num"]*n_cams), dtype="float32")
     logger.info(message)
 
     X_grid, y = None, None
@@ -1363,6 +1367,7 @@ def load_volumes_into_mem(params, logger, partition, n_cams, generator, train=Tr
     else:
         y = np.empty((n_samples, *gridsize, params["n_channels_out"]), dtype="float32")
 
+    # load data from generator
     if social:
         X = np.reshape(X, (2, -1, *X.shape[1:]))
         if X_grid is not None:
@@ -1371,13 +1376,15 @@ def load_volumes_into_mem(params, logger, partition, n_cams, generator, train=Tr
             y = np.reshape(y, (2, -1, *y.shape[1:]))
 
         for i in range(n_samples//2):
-            # breakpoint()
             print(i, end="\r")
             rr = generator.__getitem__(i)
             for j in range(2):
-                X[j, i] = rr[0][0][j]
+                vol = rr[0][0][j]
                 if not silhouette: 
+                    X[j, i] = vol
                     X_grid[j, i], y[j, i] = rr[0][1][j], rr[1][0][j]
+                else:
+                    X[j, i] = extract_3d_sil(vol)
 
         X = np.reshape(X, (-1, *X.shape[2:]))
         if X_grid is not None:
@@ -1390,38 +1397,58 @@ def load_volumes_into_mem(params, logger, partition, n_cams, generator, train=Tr
             print(i, end="\r")
             rr = generator.__getitem__(i)
             if params["expval"]:
-                X[i] = rr[0][0][0]
+                vol = rr[0][0][0]
                 if not silhouette: 
+                    X[i] = vol
                     X_grid[i], y[i] = rr[0][1], rr[1][0]
+                else:
+                    X[i] = extract_3d_sil(vol)
             else:
                 X[i], y[i] = rr[0], rr[1]
 
     if silhouette:
-        logger.info("Now loading silhouettes")
-        X_copy = X.copy()
-        if params["soft_silhouette"]:
-            X = extract_3d_sil_soft(X)
-        else:
-            X = extract_3d_sil(X)
-        
-        return X_copy, None, X
+        logger.info("Now loading binary silhouettes")        
+        return None, None, X
     
     return X, X_grid, y
 
-def save_volumes_into_npy(params, npy_generator, missing_samples, missing_npydir, samples, npydir, logger):
+def save_volumes_into_npy(params, npy_generator, missing_npydir, samples, logger, silhouette=False):
     logger.info("Generating missing npy files ...")
-    for i, samp in enumerate(missing_samples):
-        exp = int(samp.split("_")[0])
-        save_root = missing_npydir[exp]
+    for i, samp in enumerate(npy_generator.list_IDs):
         fname = "0_{}.npy".format(samp.split("_")[1])
-
         rr = npy_generator.__getitem__(i)
         print(i, end="\r")
-        np.save(os.path.join(save_root, "image_volumes", fname), rr[0][0][0].astype("uint8"))
-        np.save(os.path.join(save_root, "grid_volumes", fname), rr[0][1][0])
-        np.save(os.path.join(save_root, "targets", fname), rr[1][0])
+
+        if params["social_training"]:
+            for j in range(npy_generator.n_instances):
+                exp = int(samp.split("_")[0]) + j
+                save_root = missing_npydir[exp]
+
+                if not silhouette:
+                    X = rr[0][0][j].astype("uint8")
+                    X_grid, y = rr[0][1][j], rr[1][0][j]
+
+                    np.save(os.path.join(save_root, "image_volumes", fname), X)
+                    np.save(os.path.join(save_root, "grid_volumes", fname), X_grid)
+                    np.save(os.path.join(save_root, "targets", fname), y) 
+                else:
+                    sil = extract_3d_sil(rr[0][0][j].astype("uint8"))
+                    np.save(os.path.join(save_root, "visual_hulls", fname), sil)
+        else:
+            exp = int(samp.split("_")[0])
+            save_root = missing_npydir[exp]
+            
+            X, X_grid, y = rr[0][0][0].astype("uint8"), rr[0][1][0], rr[1][0] 
+            
+            if not silhouette:
+                np.save(os.path.join(save_root, "image_volumes", fname), X)
+                np.save(os.path.join(save_root, "grid_volumes", fname), X_grid)
+                np.save(os.path.join(save_root, "targets", fname), y) 
+            else:
+                sil = extract_3d_sil(X)
+                np.save(os.path.join(save_root, "visual_hulls", fname), sil) 
     
-    samples = remove_samples_npy(npydir, samples, params)
+    # samples = remove_samples_npy(npydir, samples, params)
     logger.info("{} samples ready for npy training.".format(len(samples)))
 
 def save_volumes_into_tif(params, tifdir, X, sampleIDs, n_cams, logger):

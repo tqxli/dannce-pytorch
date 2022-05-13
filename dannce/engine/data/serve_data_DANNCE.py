@@ -1,4 +1,5 @@
 """Define routines for reading/structuring input data for DANNCE."""
+from posixpath import dirname
 from random import sample
 import numpy as np
 import scipy.io as sio
@@ -673,7 +674,11 @@ def setup_dataloaders(train_dataset, valid_dataset, params):
     return train_dataloader, valid_dataloader
 
 NPY_DIRNAMES = ["image_volumes", "grid_volumes", "targets"]
-def examine_npy_training(params, samples):
+AUX_NPY_DIRNAMES = ["visual_hulls"]
+
+def examine_npy_training(params, samples, aux=False):
+    TO_BE_EXAMINED = AUX_NPY_DIRNAMES if aux else NPY_DIRNAMES
+
     npydir, missing_npydir = {}, {}
 
     for e in range(len(params["exp"])):
@@ -688,7 +693,7 @@ def examine_npy_training(params, samples):
             for dir in NPY_DIRNAMES:
                 os.makedirs(os.path.join(npydir[e], dir)) 
         else:
-            for dir in NPY_DIRNAMES:
+            for dir in TO_BE_EXAMINED:
                 dirpath = os.path.join(npydir[e], dir)
                 if (not os.path.exists(dirpath)) or (len(os.listdir(dirpath)) == 0):
                     missing_npydir[e] = npydir[e]
