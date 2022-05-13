@@ -4,6 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from dannce.engine.models.body_limb import SYMMETRY
 from dannce.engine.models.vis import draw_voxels
+from dannce.engine.data import ops
 
 ##################################################################################################
 # UTIL_FUNCTIONS
@@ -23,7 +24,7 @@ def compute_mask_nan_loss(loss_fcn, kpts_gt, kpts_pred):
     # when ground truth is all NaN for certain reasons, do not compute loss since it results in NaN
     if notnan == 0:
         # print("Found all NaN ground truth")
-        return kpts_pred.new_zeros((), requires_grad=False)
+        return kpts_pred.new_zeros((), requires_grad=True)
     
     return loss_fcn(kpts_gt[notnan_gt], kpts_pred[notnan_gt]) / notnan
 
@@ -46,6 +47,14 @@ class L2Loss(BaseLoss):
 
     def forward(self, kpts_gt, kpts_pred):
         loss = compute_mask_nan_loss(nn.MSELoss(reduction="sum"), kpts_gt, kpts_pred)
+        return self.loss_weight * loss
+
+class ReconstructionLoss(BaseLoss):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def forward(self, gt, pred):
+        loss = F.mse_loss(gt, pred)
         return self.loss_weight * loss
 
 class L1Loss(BaseLoss):
@@ -190,16 +199,39 @@ class SilhouetteLoss(BaseLoss):
         super().__init__(**kwargs)
         self.delta = delta
     
-    def forward(self, y_true, y_pred):
+    def forward(self, vh, heatmaps, reduce_axes=[2, 3, 4]):
         """
-        [bs, H, W, D, n_joints]
+        vh, heatmaps: [bs, n_joints, H, W, D]
+        Heatmap is not softmaxed.
         """
-        reduce_axes = [1, 2, 3]
-        sil = torch.sum(y_pred * y_true, axis=reduce_axes)
+        prob = ops.spatial_softmax(heatmaps)
+
+        sil = torch.sum(vh * prob, axis=reduce_axes)
         sil = torch.mean(-(sil + 1e-12).log())
         if torch.isnan(sil):
-            sil = sil.new_zeros(())
+            sil = sil.new_zeros((), requires_grad=True)
         
         return self.loss_weight * sil
 
+class VarianceLoss(BaseLoss):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+    
+    def forward(self, kpts_pred, heatmaps, grids):
+        """
+        heatmaps: [bs, n_joints, h, w, d]
+        grid: [bs, h*w*d, 3]
+        kpts_pred: [bs, 3, n_joints]
+        """
+        prob = ops.spatial_softmax(heatmaps)
 
+        gridsize = prob.shape[2:]
+        grids = grids.reshape(grids.shape[0], 1, *gridsize, 3) #[bs, 1, h, w, d, 3]
+        kpts_pred = kpts_pred.permute(0, 2, 1).unsqueeze(2).unsqueeze(2).unsqueeze(2)  #[bs, n_joints, 1, 1, 1, 3]
+
+        diff = torch.sum((grids - kpts_pred).sqrt(), dim=-1) #[bs, n_joints, h, w, d]
+        diff *= prob
+
+        loss = self.loss_weight * torch.mean(torch.sum(diff, dim=[2, 3, 4]))
+
+        return loss if not torch.isnan(loss) else loss.new_zeros((), requires_grad=True)
