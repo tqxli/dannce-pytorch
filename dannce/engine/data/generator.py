@@ -1865,9 +1865,5 @@ class DataGenerator_Social(DataGenerator_3Dconv_frommem):
         
         # shape of outputs:
         # X: [temporal_chunk_size, H, W, D, n_cam*chan_num]
-        if X_grid is not None:
-            X_grid = torch.from_numpy(X_grid)
-        if aux is not None:
-            aux = torch.from_numpy(aux)
 
-        return torch.from_numpy(X).permute(0, 4, 1, 2, 3), X_grid, torch.from_numpy(y_3d), aux
+        return self._convert_numpy_to_tensor(X, X_grid, y_3d, aux)
