@@ -3,9 +3,7 @@ import numpy as np
 from dannce.engine.data import processing
 import warnings
 
-import tensorflow as tf
 import torch
-import torchvision
 import torchvision.transforms.functional as TF
 
 MISSING_KEYPOINTS_MSG = (
@@ -15,14 +13,13 @@ MISSING_KEYPOINTS_MSG = (
     + "set right_keypoints: [0, 2] and left_keypoints: [1, 3] in the config file"
 )
 
-class DataGenerator_3Dconv_frommem(torch.utils.data.Dataset):
+class PoseDatasetFromMem(torch.utils.data.Dataset):
     """Generate 3d conv data from memory.
 
     Attributes:
         augment_brightness (bool): If True, applies brightness augmentation
         augment_continuous_rotation (bool): If True, applies rotation augmentation in increments smaller than 90 degrees
         augment_hue (bool): If True, applies hue augmentation
-        batch_size (int): Batch size
         bright_val (float): Brightness augmentation range (-bright_val, bright_val), as fraction of raw image brightness
         chan_num (int): Number of input channels
         data (np.ndarray): Image volumes
@@ -81,7 +78,6 @@ class DataGenerator_3Dconv_frommem(torch.utils.data.Dataset):
         self.data = data
         self.labels = labels
         self.rotation = rotation
-        # self.batch_size = batch_size
         self.random = random
         self.chan_num = chan_num
         self.shuffle = shuffle
@@ -108,9 +104,6 @@ class DataGenerator_3Dconv_frommem(torch.utils.data.Dataset):
         self.heatmap_reg_coeff = heatmap_reg_coeff
         self.aux_labels = aux_labels
         self.temporal_chunk_list = temporal_chunk_list
-        self.temporal_chunk_size = 1
-
-        self._update_temporal_batch_size()
 
         self.occlusion = occlusion
         if self.occlusion:
@@ -119,6 +112,8 @@ class DataGenerator_3Dconv_frommem(torch.utils.data.Dataset):
         self.pairs = pairs
         if self.pairs is not None:
             self.temporal_chunk_size = len(self.pairs[0])
+        
+        self._update_temporal_batch_size()
 
     def __len__(self):
         """Denote the number of batches per epoch.
@@ -135,6 +130,7 @@ class DataGenerator_3Dconv_frommem(torch.utils.data.Dataset):
         return len(self.list_IDs)
     
     def _update_temporal_batch_size(self):
+        self.temporal_chunk_size = 1
         if self.temporal_chunk_list is not None:
             self.temporal_chunk_size = len(self.temporal_chunk_list[0])
 
@@ -248,47 +244,16 @@ class DataGenerator_3Dconv_frommem(torch.utils.data.Dataset):
             np.ndarray: rotated image volumes
             np.ndarray: rotated grid coordimates
         """
-        # rotangle = np.random.rand() * (2 * max_delta) - max_delta
-        # X = torch.as_tensor(X).reshape(*X.shape[:3], -1).permute(0, 3, 1, 2) # dimension [B, D*C, H, W]
-        # y_3d = torch.as_tensor(y_3d).reshape(y_3d.shape[:3], -1).permute(0, 3, 1, 2)
-        # for i in range(X.shape[0]):
-        #     X[i] = TF.affine(X[i], angle=rotangle)
-        #     y_3d[i] = TF.affine(y_3d[i], angle=rotangle)
-
-        # X = X.permute(0, 2, 3, 1).reshape(*X.shape[:3], X.shape[2], -1).numpy()
-        # y_3d = y_3d.permute(0, 2, 3, 1).reshape(*X.shape[:3], X.shape[2], -1).numpy()
-
-        # return X, y_3d
+        # torchvision.transforms.functional.affine - input: [..., H, W]
         rotangle = np.random.rand() * (2 * max_delta) - max_delta
-        X = tf.reshape(X, [X.shape[0], X.shape[1], X.shape[2], -1]).numpy()
-        y_3d = tf.reshape(y_3d, [y_3d.shape[0], y_3d.shape[1], y_3d.shape[2], -1]).numpy()
+        X = torch.from_numpy(X).reshape(*X.shape[:3], -1).permute(0, 3, 1, 2) # dimension [B, D*C, H, W]
+        y_3d = torch.from_numpy(y_3d).reshape(y_3d.shape[:3], -1).permute(0, 3, 1, 2)
         for i in range(X.shape[0]):
-            X[i] = tf.keras.preprocessing.image.apply_affine_transform(
-                X[i],
-                theta=rotangle,
-                row_axis=0,
-                col_axis=1,
-                channel_axis=2,
-                fill_mode="nearest",
-                cval=0.0,
-                order=1,
-            )
-            y_3d[i] = tf.keras.preprocessing.image.apply_affine_transform(
-                y_3d[i],
-                theta=rotangle,
-                row_axis=0,
-                col_axis=1,
-                channel_axis=2,
-                fill_mode="nearest",
-                cval=0.0,
-                order=1,
-            )
+            X[i] = TF.affine(X[i], angle=rotangle)
+            y_3d[i] = TF.affine(y_3d[i], angle=rotangle)
 
-        X = tf.reshape(X, [X.shape[0], X.shape[1], X.shape[2], X.shape[2], -1]).numpy()
-        y_3d = tf.reshape(
-            y_3d,
-            [y_3d.shape[0], y_3d.shape[1], y_3d.shape[2], y_3d.shape[2], -1],
-        ).numpy()
+        X = X.permute(0, 2, 3, 1).reshape(*X.shape[:3], X.shape[2], -1).numpy()
+        y_3d = y_3d.permute(0, 2, 3, 1).reshape(*X.shape[:3], X.shape[2], -1).numpy()
 
         return X, y_3d
 
@@ -360,18 +325,16 @@ class DataGenerator_3Dconv_frommem(torch.utils.data.Dataset):
                 )
 
         if self.augment_hue and self.chan_num == 3:
+            # […, 1 or 3, H, W]
             for n_cam in range(int(X.shape[-1] / self.chan_num)):
                 channel_ids = np.arange(
                     n_cam * self.chan_num,
                     n_cam * self.chan_num + self.chan_num,
                 )
-                X[..., channel_ids] = tf.image.random_hue(
-                    X[..., channel_ids], self.hue_val
-                )
-                #X_temp = torch.as_tensor(X[..., channel_ids]).permute(0, 3, 4, 1, 2)
-                #random_hue_val = float(torch.empty(1).uniform_(-self.hue_val, self.hue_val))
-                #X_temp = TF.adjust_hue(X_temp, random_hue_val)
-                #X[..., channel_ids] = X_temp.permute(0, 3, 4, 1, 2).numpy()
+                X_temp = torch.from_numpy(X[..., channel_ids]).permute(0, 3, 4, 1, 2) #[bs, D, 3, H, W]
+                random_hue_val = float(torch.empty(1).uniform_(-self.hue_val, self.hue_val))
+                X_temp = TF.adjust_hue(X_temp, random_hue_val)
+                X[..., channel_ids] = X_temp.permute(0, 3, 4, 1, 2).numpy()
 
         elif self.augment_hue:
             warnings.warn(
@@ -384,13 +347,10 @@ class DataGenerator_3Dconv_frommem(torch.utils.data.Dataset):
                     n_cam * self.chan_num,
                     n_cam * self.chan_num + self.chan_num,
                 )
-                X[..., channel_ids] = tf.image.random_brightness(
-                    X[..., channel_ids], self.bright_val
-                )
-                # X_temp = torch.as_tensor(X[..., channel_ids]).permute(0, 3, 4, 1, 2)
-                # random_bright_val = float(torch.empty(1).uniform_(1-self.bright_val, 1+self.bright_val))
-                # X_temp = TF.adjust_brightness(X_temp, random_bright_val)
-                #X[..., channel_ids] = X_temp.permute(0, 3, 4, 1, 2).numpy()
+                X_temp = torch.as_tensor(X[..., channel_ids]).permute(0, 3, 4, 1, 2)
+                random_bright_val = float(torch.empty(1).uniform_(1-self.bright_val, 1+self.bright_val))
+                X_temp = TF.adjust_brightness(X_temp, random_bright_val)
+                X[..., channel_ids] = X_temp.permute(0, 3, 4, 1, 2).numpy()
 
         if self.mirror_augmentation and self.expval and aux is None:
             if np.random.rand() > 0.5:
@@ -527,7 +487,7 @@ class DataGenerator_3Dconv_frommem(torch.utils.data.Dataset):
     def compute_avg_bone_length(self):
         return
 
-class DataGenerator_3Dconv_npy(DataGenerator_3Dconv_frommem):
+class PoseDatasetNPY(PoseDatasetFromMem):
     """Generates 3d conv data from npy files.
 
     Attributes:
@@ -590,7 +550,7 @@ class DataGenerator_3Dconv_npy(DataGenerator_3Dconv_frommem):
             prefeat (bool, optional): If True, prepares input for a network performing volume feature extraction before fusion
             sigma (float, optional): For MAX network, size of target Gaussian (mm)
         """
-        super(DataGenerator_3Dconv_npy, self).__init__(
+        super(PoseDatasetNPY, self).__init__(
             list_IDs=list_IDs,
             data=None,
             labels=None,

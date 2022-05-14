@@ -4,7 +4,6 @@ from random import sample
 import numpy as np
 import scipy.io as sio
 import torch
-from torch import chunk
 from dannce.engine.data import ops as ops
 from dannce.engine.data.io import load_camera_params, load_labels, load_sync
 import os

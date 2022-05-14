@@ -501,7 +501,7 @@ def dannce_train(params: Dict):
     }
 
     if params["use_npy"]:
-        genfunc = dataset.DataGenerator_3Dconv_npy
+        genfunc = dataset.PoseDatasetNPY
         args_train = {
             "list_IDs": partition["train_sampleIDs"],
             "labels_3d": datadict_3d,
@@ -535,7 +535,7 @@ def dannce_train(params: Dict):
         }
 
     else:
-        genfunc = dataset.DataGenerator_3Dconv_frommem
+        genfunc = dataset.PoseDatasetFromMem
         args_train = {
             "list_IDs": np.arange(len(partition["train_sampleIDs"])),
             "data": X_train,

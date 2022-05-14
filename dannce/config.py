@@ -103,33 +103,6 @@ def infer_params(params, dannce_net, prediction):
         if not prediction and params["train_mode"] is None:
             raise Exception("Need to specific train_mode for DANNCE training")
 
-        # if params["net_type"] == "AVG":
-        #     print_and_set(params, "expval", True)
-        # elif params["net_type"] == "MAX":
-        #     print_and_set(params, "expval", False)
-        # else:
-        #     raise Exception("{} not a valid net_type".format(params["net_type"]))
-
-        # if not prediction:
-        # if params["net_type"] == "AVG" and params["train_mode"] == "finetune":
-        #     print_and_set(params, "net", "finetune_AVG")
-        # elif params["net_type"] == "AVG":
-        #     # This is the network for training from scratch.
-        #     # This will also set the network for "continued", but that network
-        #     # will be ignored, as for continued training the full model file
-        #     # is loaded in without a call to construct the network. However, a value
-        #     # for params['net'] is still required for initialization
-        #     print_and_set(params, "net", "unet3d_big_expectedvalue")
-        # elif params["net_type"] == "MAX" and params["train_mode"] == "finetune":
-        #     print_and_set(params, "net", "finetune_MAX")
-        # elif params["net_type"] == "MAX":
-        #     print_and_set(params, "net", "unet3d_big")
-
-    # elif dannce_net and params["expval"] is None:
-    #     if "AVG" in params["net"] or "expected" in params["net"]:
-    #         print_and_set(params, "expval", True)
-    #     else:
-    #         print_and_set(params, "expval", False)
     print_and_set(params, "expval", True)
     if dannce_net:
         # infer crop_height and crop_width if None. Just use max dims of video, as
@@ -194,15 +167,6 @@ def infer_params(params, dannce_net, prediction):
 
         if params["n_rand_views"] == "None":
             print_and_set(params, "n_rand_views", None)
-        
-        # TEMPORAL_FLAG = (params["temporal_loss_weight"] is not None) and (params["temporal_chunk_size"] is not None) 
-        # print_and_set(params, "use_temporal", TEMPORAL_FLAG)
-        # print_and_set(params, "use_silhouette", params["silhouette_loss_weight"] is not None)
-
-        # SEPARATION_FLAG = (params["separation_loss_weight"] is not None) and (params["separation_delta"] is not None)
-        # print_and_set(params, "use_separation", SEPARATION_FLAG)
-
-        # print_and_set(params, "use_symmetry", params["symmetry_loss_weight"] is not None)
 
     # There will be strange behavior if using a mirror acquisition system and are cropping images
     if params["mirror"] and params["crop_height"][-1] != params["raw_im_h"]:

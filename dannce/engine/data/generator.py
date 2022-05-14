@@ -9,10 +9,8 @@ import time
 from multiprocessing.dummy import Pool as ThreadPool
 from typing import List, Dict, Tuple, Text
 
-import tensorflow as tf
 import torch
 import torchvision
-import torchvision.transforms.functional as TF
 
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
@@ -37,12 +35,6 @@ DataGenerator_3Dconv:
 
 DataGenerator_3Dconv_social:
     return different volumes associated with the same frame. 
-
-DataGenerator_3Dconv_frommem: 
-    return chunked (minimum 1), randomly augmented volumes from data in the memory.
-
-DataGenerator_3Dconv_npy:
-    return chunked augmented volumes after reading pre-saved npy data.
 """
 
 class DataGenerator(torch.utils.data.Dataset):
