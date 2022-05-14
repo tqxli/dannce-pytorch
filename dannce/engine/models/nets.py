@@ -120,3 +120,33 @@ def initialize_model(params, n_cams, device):
 
     model = model.to(device)
     return model
+
+def initialize_train(params, n_cams, device, logger):
+    """
+    Initialize model, load pretrained checkpoints if needed.
+    """
+    if params["train_mode"] == "new":
+        model = initialize_model(params, n_cams, device)
+        model_params = [p for p in model.parameters() if p.requires_grad]
+        optimizer = torch.optim.Adam(model_params, lr=params["lr"], eps=1e-7)
+
+    elif params["train_mode"] == "finetune" or params["train_mode"] == "continued":
+        checkpoints = torch.load(params["dannce_finetune_weights"])
+        model = initialize_model(checkpoints["params"], n_cams, device)
+        model.load_state_dict(checkpoints["state_dict"])
+
+        model_params = [p for p in model.parameters() if p.requires_grad]
+        
+        if params["train_mode"] == "continued":
+            optimizer = torch.optim.Adam(model_params)
+            optimizer.load_state_dict(checkpoints["optimizer"])
+        else:
+            optimizer = torch.optim.Adam(model_params, lr=params["lr"], eps=1e-7)
+    
+    lr_scheduler = None
+    if params["lr_scheduler"] is not None:
+        lr_scheduler_class = getattr(torch.optim.lr_scheduler, params["lr_scheduler"]["type"])
+        lr_scheduler = lr_scheduler_class(optimizer=optimizer, **params["lr_scheduler"]["args"], verbose=True)
+        logger.info("Using learning rate scheduler.")
+    
+    return model, optimizer, lr_scheduler

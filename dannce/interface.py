@@ -12,11 +12,8 @@ import time
 import gc
 from datetime import datetime
 
-import dannce.engine.data.serve_data_DANNCE as serve_data_DANNCE
-import dannce.engine.data.generator as generator
-import dannce.engine.data.processing as processing
+from dannce.engine.data import serve_data_DANNCE, dataset, generator, processing, ops, io
 from dannce.engine.data.processing import savedata_tomat, savedata_expval
-from dannce.engine.data import ops, io
 from dannce import (
     _param_defaults_dannce,
     _param_defaults_shared,
@@ -27,7 +24,7 @@ from typing import Dict, Text
 import os, psutil
 
 import torch
-from dannce.engine.models.nets import initialize_model
+from dannce.engine.models.nets import initialize_train, initialize_model
 from dannce.engine.models.segmentation import get_instance_segmentation_model
 from dannce.engine.trainer.dannce_trainer import DannceTrainer, AutoEncoderTrainer
 from dannce.config import print_and_set
@@ -477,7 +474,6 @@ def dannce_train(params: Dict):
         "heatmap_reg_coeff": params["heatmap_reg_coeff"],
     }
     shared_args_train = {
-        # "batch_size": params["batch_size"],
         "rotation": params["rotate"],
         "augment_hue": params["augment_hue"],
         "augment_brightness": params["augment_brightness"],
@@ -505,7 +501,7 @@ def dannce_train(params: Dict):
     }
 
     if params["use_npy"]:
-        genfunc = generator.DataGenerator_3Dconv_npy
+        genfunc = dataset.DataGenerator_3Dconv_npy
         args_train = {
             "list_IDs": partition["train_sampleIDs"],
             "labels_3d": datadict_3d,
@@ -538,15 +534,8 @@ def dannce_train(params: Dict):
             "temporal_chunk_list": partition["valid_chunks"] if params["use_temporal"] else None
         }
 
-        if params["social_training"]:
-            args_train = {**args_train, "pairs": pairs["train_pairs"]}
-            args_valid = {**args_valid, "pairs": pairs["valid_pairs"]}
-
     else:
-        if params["social_training"]:
-            genfunc = generator.DataGenerator_Social
-        else:
-            genfunc = generator.DataGenerator_3Dconv_frommem
+        genfunc = dataset.DataGenerator_3Dconv_frommem
         args_train = {
             "list_IDs": np.arange(len(partition["train_sampleIDs"])),
             "data": X_train,
@@ -575,7 +564,11 @@ def dannce_train(params: Dict):
             "temporal_chunk_list": partition["valid_chunks"] if params["use_temporal"] else None
         }
     
-    # initialize data generators and dataloaders
+    if params["social_training"]:
+        args_train = {**args_train, "pairs": pairs["train_pairs"]}
+        args_valid = {**args_valid, "pairs": pairs["valid_pairs"]}
+
+    # initialize datasets and dataloaders
     train_generator = genfunc(**args_train)
     valid_generator = genfunc(**args_valid)
 
@@ -593,30 +586,7 @@ def dannce_train(params: Dict):
     # Build network
     logger.info("Initializing Network...")
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
-
-    if params["train_mode"] == "new":
-        model = initialize_model(params, n_cams, device)
-        model_params = [p for p in model.parameters() if p.requires_grad]
-        optimizer = torch.optim.Adam(model_params, lr=params["lr"], eps=1e-7)
-
-    elif params["train_mode"] == "finetune" or params["train_mode"] == "continued":
-        checkpoints = torch.load(params["dannce_finetune_weights"])
-        model = initialize_model(checkpoints["params"], n_cams, device)
-        model.load_state_dict(checkpoints["state_dict"])
-
-        model_params = [p for p in model.parameters() if p.requires_grad]
-        
-        if params["train_mode"] == "continued":
-            optimizer = torch.optim.Adam(model_params)
-            optimizer.load_state_dict(checkpoints["optimizer"])
-        else:
-            optimizer = torch.optim.Adam(model_params, lr=params["lr"], eps=1e-7)
-    
-    lr_scheduler = None
-    if params["lr_scheduler"] is not None:
-        lr_scheduler_class = getattr(torch.optim.lr_scheduler, params["lr_scheduler"]["type"])
-        lr_scheduler = lr_scheduler_class(optimizer=optimizer, **params["lr_scheduler"]["args"], verbose=True)
-        logger.info("Using lr scheduler")
+    model, optimizer, lr_scheduler = initialize_train(params, n_cams, device, logger)
     logger.info("COMPLETE\n")
 
     # set up trainer
@@ -864,18 +834,8 @@ def setup_dannce_predict(params):
     # Depth disabled until next release.
     params["depth"] = False
     # Make the prediction directory if it does not exist.
-
-    # Load the appropriate loss function and network 
-    # try:
-    #     params["loss"] = getattr(losses, params["loss"])
-    # except AttributeError:
-    #     params["loss"] = getattr(keras_losses, params["loss"])
     
     params["net_name"] = params["net"]
-    # params["net"] = getattr(nets, params["net_name"])
-    # Default to 6 views but a smaller number of views can be specified in the DANNCE config.
-    # If the legnth of the camera files list is smaller than n_views, relevant lists will be
-    # duplicated in order to match n_views, if possible.
     params["n_views"] = int(params["n_views"])
 
     # While we can use experiment files for DANNCE training,
@@ -883,13 +843,7 @@ def setup_dannce_predict(params):
     # Grab the input file for prediction
     params["label3d_file"] = processing.grab_predict_label3d_file()
     params["base_exp_folder"] = os.path.dirname(params["label3d_file"])
-
-    # default to slow numpy backend if there is no predict_mode in config file. I.e. legacy support
-    # params["predict_mode"] = (
-    #     params["predict_mode"] if params["predict_mode"] is not None else "numpy"
-    # )
     params["multi_mode"] = False
-    # print("Using {} predict mode".format(params["predict_mode"]))
 
     print("Using camnames: {}".format(params["camnames"]))
     # Also add parent params under the 'experiment' key for compatibility
