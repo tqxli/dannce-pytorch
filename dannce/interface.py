@@ -1,8 +1,4 @@
 """Handle training and prediction for DANNCE and COM networks."""
-from audioop import avg
-from email.mime import base
-import sys
-from matplotlib.pyplot import axis
 import numpy as np
 import os
 from copy import deepcopy
@@ -431,11 +427,11 @@ def dannce_train(params: Dict):
                 logger.info("Turn off silhouette loss.")
                 y_train_aux, y_valid_aux = None, None
             
-            if params["social_training"]:
-                X_train, X_train_grid, y_train, y_train_aux = processing.align_social_data(X_train, X_train_grid, y_train, y_train_aux)
-                X_valid, X_valid_grid, y_valid, y_valid_aux = processing.align_social_data(X_valid, X_valid_grid, y_valid, y_valid_aux)
-            # processing.save_visual_hull(y_train_aux, partition["train_sampleIDs"])
-            # return
+    if (not params["use_npy"]) and (params["social_training"]):
+        X_train, X_train_grid, y_train, y_train_aux = processing.align_social_data(X_train, X_train_grid, y_train, y_train_aux)
+        X_valid, X_valid_grid, y_valid, y_valid_aux = processing.align_social_data(X_valid, X_valid_grid, y_valid, y_valid_aux)
+    # processing.save_visual_hull(y_train_aux, partition["train_sampleIDs"])
+    # return
 
     # For AVG+MAX training, need to update the expval flag in the generators
     # and re-generate the 3D training targets

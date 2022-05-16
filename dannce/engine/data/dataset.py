@@ -465,6 +465,7 @@ class PoseDatasetFromMem(torch.utils.data.Dataset):
                 if aux is not None:
                     aux[i] = self.aux_labels[ID]
         else:
+            ID = list_IDs_temp
             X = self.data[ID].copy()
             y_3d = self.labels[ID]
 
@@ -709,3 +710,16 @@ class PoseDatasetNPY(PoseDatasetFromMem):
         X = processing.preprocess_3d(X) 
 
         return self._convert_numpy_to_tensor(X, X_grid, y_3d, aux)
+    
+class ChunkedKeypointDataset(torch.utils.data.Dataset):
+    def __init__(
+        self,
+        labels_3d,
+    ):
+        self.labels_3d = labels_3d
+
+    def __len__(self):
+        return 
+    
+    def __getitem__(self,index):
+        return
