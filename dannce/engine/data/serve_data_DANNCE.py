@@ -215,8 +215,6 @@ def prepare_data(
         datadict[samples[i]] = {"data": data, "frames": frames}
         datadict_3d[samples[i]] = data_3d[i]
 
-    camera_params = load_camera_params(params["label3d_file"])
-    cameras = {name: camera_params[i] for i, name in enumerate(params["camnames"])}
     if return_cammat:
         camera_mats = {
             name: ops.camera_matrix(cam["K"], cam["r"], cam["t"])
@@ -672,7 +670,7 @@ def setup_dataloaders(train_dataset, valid_dataset, params):
     )
     return train_dataloader, valid_dataloader
 
-NPY_DIRNAMES = ["image_volumes", "grid_volumes", "targets"]
+NPY_DIRNAMES = ["image_volumes", "grid_volumes", "targets"] #, "occlusion_scores"]
 AUX_NPY_DIRNAMES = ["visual_hulls"]
 
 def examine_npy_training(params, samples, aux=False):
