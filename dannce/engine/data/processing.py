@@ -1430,7 +1430,10 @@ def save_volumes_into_npy(params, npy_generator, missing_npydir, samples, logger
 
                     np.save(os.path.join(save_root, "image_volumes", fname), X)
                     np.save(os.path.join(save_root, "grid_volumes", fname), X_grid)
-                    np.save(os.path.join(save_root, "targets", fname), y) 
+                    np.save(os.path.join(save_root, "targets", fname), y)
+                    
+                    if params["downscale_occluded_view"]:    
+                        np.save(os.path.join(save_root, "occlusion_scores", fname), rr[0][2][j]) 
                 else:
                     sil = extract_3d_sil(rr[0][0][j].astype("uint8"))
                     np.save(os.path.join(save_root, "visual_hulls", fname), sil)

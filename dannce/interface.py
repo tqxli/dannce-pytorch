@@ -298,6 +298,7 @@ def dannce_train(params: Dict):
             "predict_flag": False,
             "norm_im": False,
             "expval": True,
+            "occlusion": params["downscale_occluded_view"],
         }
 
         valid_params = {**base_params, **spec_params}
@@ -468,6 +469,7 @@ def dannce_train(params: Dict):
         "nvox": params["nvox"],
         "heatmap_reg": params["heatmap_reg"],
         "heatmap_reg_coeff": params["heatmap_reg_coeff"],
+        "occlusion": params["downscale_occluded_view"]
     }
     shared_args_train = {
         "rotation": params["rotate"],

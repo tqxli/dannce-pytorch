@@ -106,8 +106,8 @@ class PoseDatasetFromMem(torch.utils.data.Dataset):
         self.temporal_chunk_list = temporal_chunk_list
 
         self.occlusion = occlusion
-        if self.occlusion:
-            assert aux_labels is not None, "Missing aux labels for occlusion training."
+        # if self.occlusion:
+        #     assert aux_labels is not None, "Missing aux labels for occlusion training."
         
         self.pairs = pairs
         if self.pairs is not None:
@@ -365,13 +365,13 @@ class PoseDatasetFromMem(torch.utils.data.Dataset):
             pass
             ##TODO: implement mirror augmentation for max and avg+max modes
 
-        if self.occlusion:
-            if np.random.rand() > 0.5:
-                occlusion_idx = np.random.choice(self.__len__())
-                rand_cam = np.random.choice(int(X.shape[-1] // self.chan_num)-1)
-                foreground_obj = self.aux_labels[occlusion_idx:(occlusion_idx+1), :, :, :, rand_cam*3:(rand_cam+1)*3]
-                occluded_area = (foreground_obj != -1)
-                X[..., rand_cam*3:(rand_cam+1)*3][occluded_area] = foreground_obj[occluded_area]
+        # if self.occlusion:
+        #     if np.random.rand() > 0.5:
+        #         occlusion_idx = np.random.choice(self.__len__())
+        #         rand_cam = np.random.choice(int(X.shape[-1] // self.chan_num)-1)
+        #         foreground_obj = self.aux_labels[occlusion_idx:(occlusion_idx+1), :, :, :, rand_cam*3:(rand_cam+1)*3]
+        #         occluded_area = (foreground_obj != -1)
+        #         X[..., rand_cam*3:(rand_cam+1)*3][occluded_area] = foreground_obj[occluded_area]
                 
         return X, X_grid, y_3d, aux
 
@@ -590,6 +590,20 @@ class PoseDatasetNPY(PoseDatasetFromMem):
         X, X_grid, y_3d, aux = self.__data_generation(list_IDs_temp)
         return X, X_grid, y_3d, aux
 
+    def _downscale_occluded_views(self, X, occlusion_scores):
+        """
+        X: [H, W, D, n_cams*3]
+        occlusion_scores: [n_cams]
+        """
+        occluded_X = np.reshape(X.copy(), (*X.shape[:3], occlusion_scores.shape[-1], -1))
+        occlusion_scores = occlusion_scores[np.newaxis, np.newaxis, np.newaxis, :, np.newaxis]
+
+        occluded_X *= occlusion_scores
+
+        occluded_X = np.reshape(occluded_X, (*X.shape[:3], -1))
+
+        return occluded_X
+
     def __data_generation(self, list_IDs_temp):
         """Generate data containing batch_size samples.
         X : (n_samples, *dim, n_channels)
@@ -618,11 +632,14 @@ class PoseDatasetNPY(PoseDatasetFromMem):
             eID = int(IDkey[0])
             sID = IDkey[1]
 
-            X.append(
-                np.load(
-                    os.path.join(self.npydir[eID], self.imdir, "0_" + sID + ".npy")
+            vol = np.load(
+                os.path.join(self.npydir[eID], self.imdir, "0_" + sID + ".npy")
                 ).astype("float32")
-            )
+
+            if self.occlusion:
+                occlusion_scores = np.load(os.path.join(self.npydir[eID], 'occlusion_scores', "0_" + sID + ".npy")).astype("float32")
+                vol = self._downscale_occluded_views(vol, occlusion_scores)
+            X.append(vol)
 
             y_3d.append(self.labels_3d[ID])
             X_grid.append(

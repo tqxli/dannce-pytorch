@@ -670,11 +670,14 @@ def setup_dataloaders(train_dataset, valid_dataset, params):
     )
     return train_dataloader, valid_dataloader
 
-NPY_DIRNAMES = ["image_volumes", "grid_volumes", "targets"] #, "occlusion_scores"]
+NPY_DIRNAMES = ["image_volumes", "grid_volumes", "targets"]
+NPY_SOCIAL_DIRNAMES = ["occlusion_scores"]
 AUX_NPY_DIRNAMES = ["visual_hulls"]
 
 def examine_npy_training(params, samples, aux=False):
     TO_BE_EXAMINED = AUX_NPY_DIRNAMES if aux else NPY_DIRNAMES
+    if params["social_training"] and params["downscale_occluded_view"]:
+        TO_BE_EXAMINED = TO_BE_EXAMINED + NPY_SOCIAL_DIRNAMES
 
     npydir, missing_npydir = {}, {}
 

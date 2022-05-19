@@ -688,6 +688,7 @@ class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
         com3d: Dict,
         tifdirs: List,
         n_instances = 2,
+        occlusion=False,
         **kwargs
     ):
         DataGenerator_3Dconv.__init__(
@@ -704,6 +705,7 @@ class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
 
         self.n_instances = n_instances
         self.batch_size = n_instances
+        self.occlusion = occlusion
         self.list_IDs = [ID for ID in self.list_IDs if int(ID.split("_")[0]) % n_instances == 0]
 
     def __getitem__(self, index: int):
@@ -1071,7 +1073,7 @@ class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
         arglist = []
 
         num_cams = len(self.camnames[experimentIDs[0]])
-        occlusion_scores = np.zeros((self.batch_size, num_cams, 2), dtype=float)
+        occlusion_scores = np.zeros((self.batch_size, num_cams), dtype=float)
 
         for c in range(num_cams):  
             arglist.append([
@@ -1087,7 +1089,7 @@ class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
             for j in range(self.n_instances):
                 ic = c + j * num_cams
                 X[ic, ...] = result[c][0][j][0] #[H, W, D, C]
-                occlusion_scores[j, c] = result[c][1] # [2]
+            occlusion_scores[:, c] = result[c][1] # [2]
         # print('MP took {} sec.'.format(time.time()-ts))
 
         # adjust camera channels
@@ -1106,7 +1108,39 @@ class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
         # Convert pytorch tensors back to numpy array
         X, y_3d, X_grid = self._convert_tensor_to_numpy(X, y_3d, X_grid)
 
-        return self._finalize_samples(X, y_3d, X_grid)
+        return self._finalize_samples(X, y_3d, X_grid, occlusion_scores)
+    
+    def _downscale_occluded_views(self, X, occlusion_scores):
+        """
+        X: [BS, H, W, D, n_cams*3]
+        occlusion_scores: [BS, n_cams]
+        """
+        occluded_X = np.reshape(X.copy(), (*X.shape[:4], occlusion_scores.shape[-1], -1))
+        occlusion_scores = occlusion_scores[:, np.newaxis, np.newaxis, np.newaxis, :, np.newaxis]
+
+        occluded_X *= occlusion_scores
+
+        occluded_X = np.reshape(occluded_X, (*X.shape[:4], -1))
+
+        return occluded_X
+
+    def _finalize_samples(self, X, y_3d, X_grid, occlusion_scores):
+        if self.var_reg or self.norm_im:
+            X = processing.preprocess_3d(X)
+
+        inputs, targets = [X], [y_3d]
+
+        if self.expval:
+            inputs.append(X_grid)
+        
+        if self.occlusion:
+            #occluded_X = self._downscale_occluded_views(X, occlusion_scores)
+            inputs.append(occlusion_scores)
+        
+        if self.var_reg:
+            targets.append(torch.zeros((self.batch_size, 1)))
+        
+        return inputs, targets
 
 class MultiviewImageGenerator(DataGenerator_3Dconv):
     def __init__(self, *args, **kwargs):
