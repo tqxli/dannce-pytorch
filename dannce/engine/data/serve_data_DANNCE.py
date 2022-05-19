@@ -690,7 +690,7 @@ def examine_npy_training(params, samples, aux=False):
         # create missing npy directories
         if not os.path.exists(npydir[e]):
             missing_npydir[e] = npydir[e]
-            for dir in NPY_DIRNAMES:
+            for dir in TO_BE_EXAMINED:
                 os.makedirs(os.path.join(npydir[e], dir)) 
         else:
             for dir in TO_BE_EXAMINED:
