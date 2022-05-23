@@ -197,10 +197,10 @@ class PoseResNet(nn.Module):
         x = self.layer3(x)
         x = self.layer4(x)
 
-        x = self.deconv_layers(x)
-        x = self.final_layer(x)
+        features = self.deconv_layers(x)
+        heatmaps = self.final_layer(features)
 
-        return x
+        return features, heatmaps
 
     def init_weights(self, pretrained=''):
         this_dir = os.path.dirname(__file__)
@@ -237,17 +237,17 @@ class PoseResNet(nn.Module):
                     nn.init.normal_(m.weight, std=0.001)
                     nn.init.constant_(m.bias, 0)
         else:
-            logger.info('=> init weights from normal distribution')
+            logger.info('=> init weights from xavier normal distribution')
             for m in self.modules():
                 if isinstance(m, nn.Conv2d):
                     # nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-                    nn.init.normal_(m.weight, std=0.001)
+                    nn.init.xavier_normal_(m.weight)
                     # nn.init.constant_(m.bias, 0)
                 elif isinstance(m, nn.BatchNorm2d):
                     nn.init.constant_(m.weight, 1)
                     nn.init.constant_(m.bias, 0)
                 elif isinstance(m, nn.ConvTranspose2d):
-                    nn.init.normal_(m.weight, std=0.001)
+                    nn.init.xavier_normal_(m.weight)
                     if self.deconv_with_bias:
                         nn.init.constant_(m.bias, 0)
 
@@ -271,9 +271,8 @@ default_backbone_cfg.NETWORK = edict()
 default_backbone_cfg.NETWORK.PRETRAINED = ''
 default_backbone_cfg.NETWORK.PRETRAINED_BACKBONE = ''
 default_backbone_cfg.NETWORK.NUM_JOINTS = 22
-default_backbone_cfg.NETWORK.HEATMAP_SIZE = np.array([80, 80])
 
-def get_pose_net(cfg=default_backbone_cfg, is_train=True, **kwargs):
+def get_backbone(cfg=default_backbone_cfg, is_train=True, **kwargs):
     num_layers = cfg.POSE_RESNET.NUM_LAYERS
 
     block_class, layers = resnet_spec[num_layers]
@@ -284,3 +283,16 @@ def get_pose_net(cfg=default_backbone_cfg, is_train=True, **kwargs):
         model.init_weights(cfg.NETWORK.PRETRAINED)
 
     return model
+
+if __name__ == "__main__":
+    import time 
+
+    model = get_backbone().to("cuda")
+    input = torch.randn(2*6, 3, 512, 512).to("cuda")
+    
+    start = time.time()
+    features, heatmaps = model(input)
+    end = time.time()
+    print("Time: ", end-start)
+    print(features.shape)
+    print(heatmaps.shape)
