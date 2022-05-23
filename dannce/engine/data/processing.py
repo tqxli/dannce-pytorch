@@ -1,31 +1,25 @@
 """Processing functions for dannce."""
-from dataclasses import replace
 import numpy as np
-from skimage.color import rgb2gray
-from skimage.transform import downscale_local_mean as dsm
 import imageio
 import os
-import dannce.engine.data.serve_data_DANNCE as serve_data_DANNCE
 import PIL
 from six.moves import cPickle
-import scipy.io as sio
-from scipy.ndimage.filters import maximum_filter
-
-from dannce.engine.data import io
-import matplotlib
-import warnings
-
-# matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-from skimage import measure
-from mpl_toolkits.mplot3d.art3d import Poly3DCollection
-
 import yaml
 import shutil
-import time
 from typing import Dict
 import pickle
+from tqdm import tqdm
 
+import scipy.io as sio
+from scipy.ndimage.filters import maximum_filter
+from skimage import measure
+from skimage.color import rgb2gray
+from skimage.transform import downscale_local_mean as dsm
+
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+
+from dannce.engine.data import serve_data_DANNCE, io
 
 def write_debug(
     params: Dict,
@@ -1375,8 +1369,7 @@ def load_volumes_into_mem(params, logger, partition, n_cams, generator, train=Tr
         if y is not None:
             y = np.reshape(y, (2, -1, *y.shape[1:]))
 
-        for i in range(n_samples//2):
-            print(i, end="\r")
+        for i in tqdm(range(n_samples//2)):
             rr = generator.__getitem__(i)
             for j in range(2):
                 vol = rr[0][0][j]
@@ -1393,8 +1386,7 @@ def load_volumes_into_mem(params, logger, partition, n_cams, generator, train=Tr
             y = np.reshape(y, (-1, *y.shape[2:]))
 
     else:
-        for i in range(n_samples):
-            print(i, end="\r")
+        for i in tqdm(range(n_samples)):
             rr = generator.__getitem__(i)
             if params["expval"]:
                 vol = rr[0][0][0]
