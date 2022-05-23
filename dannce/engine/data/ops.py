@@ -8,19 +8,21 @@ import torch.nn.functional as F
 
 class Camera:
     def __init__(self, R, t, K, tdist, rdist, name=""):
-        self.R = np.array(R).copy()
+        self.R = torch.tensor(R).float() # rotation matrix
         assert self.R.shape == (3, 3)
 
-        self.t = np.array(t).copy()
+        self.t = torch.tensor(t).float() # translation vector
         assert self.t.shape == (1, 3)
 
-        self.K = np.array(K).copy()
+        self.K = torch.tensor(K).float() # intrinsic matrix
         assert self.K.shape == (3, 3)
 
-        self.M = np.concatenate((R, t), axis=0) @ self.K 
+        self.extrinsics = torch.cat((self.R, self.t), dim=0) # extrinsics
+        self.M = self.extrinsics @ self.K # camera matrix
 
-        self.tdist = tdist
-        self.rdist = rdist
+        # distortion
+        self.tdist = torch.tensor(tdist).squeeze().float()
+        self.rdist = torch.tensor(rdist).squeeze().float()
 
         self.name = name
 
@@ -47,13 +49,11 @@ class Camera:
 
         self.K[0, 0], self.K[1, 1], self.K[2, 0], self.K[2, 1] = new_fx, new_fy, new_cx, new_cy
     
-    @property
     def camera_matrix(self):
-        return self.extrinsics.dot(self.K)
+        return self.M
 
-    @property
     def extrinsics(self):
-        return np.concatenate((self.R, self.t), axis=0)
+        return self.extrinsics
 
 def camera_matrix(K: np.ndarray, R: np.ndarray, t: np.ndarray) -> np.ndarray:
     """Derive the camera matrix.
@@ -100,8 +100,7 @@ def sample_grid_nearest(
     """Unproject features."""
     # im_x, im_y are the x and y coordinates of each projected 3D position.
     # These are concatenated here for every image in each batch,
-
-    feats = torch.as_tensor(im.copy(), device=device)
+    feats = torch.as_tensor(im.copy(), device=device) if not torch.is_tensor(im) else im
     grid = projPts
     c = int(round(projPts.shape[0] ** (1 / 3.0)))
 
@@ -127,7 +126,7 @@ def sample_grid_linear(
     # im_x, im_y are the x and y coordinates of each projected 3D position.
     # These are concatenated here for every image in each batch,
 
-    feats = torch.as_tensor(im.copy(), device=device)
+    feats = torch.as_tensor(im.copy(), device=device) if not torch.is_tensor(im) else im
     grid = projPts
     c = int(round(projPts.shape[0] ** (1 / 3.0)))
 
@@ -397,11 +396,30 @@ def expected_value_3d(prob_map, grid_centers):
 
     return weighted_centers # [bs, 3, channels]
 
+def expected_value_2d(prob_map):
+    bs, channels, h, w = prob_map.shape
+
+    x_coord, y_coord = torch.meshgrid(torch.arange(h), torch.arange(w))
+    grid = torch.stack((
+        x_coord.transpose(1, 0).flatten(), 
+        y_coord.transpose(1, 0).flatten()), dim=-1
+    ).unsqueeze(0).unsqueeze(-1) #[1, h*w, 2, 1]
+
+    prob_map = prob_map.permute(0, 2, 3, 1).reshape(bs, -1, channels).unsqueeze(2) #[bs, h*w, 1, channels]
+    weighted_centers = prob_map * grid #[bs, h*w, 2, channels]
+
+    return weighted_centers.sum(1) #[bs, 2, channels]
+
+
 def spatial_softmax(feats):
-    bs, channels, h, w, d = feats.shape
+    """
+    can work with 2D or 3D
+    """
+    bs, channels= feats.shape[:2]
+    feat_shape = feats.shape[2:]
     feats = feats.reshape(bs, channels, -1)
     feats = F.softmax(feats, dim=-1)
-    return feats.reshape(bs, channels, h, w, d)
+    return feats.reshape(bs, channels, *feat_shape)
 
 
 def var_3d(prob_map, grid_centers, markerlocs):
