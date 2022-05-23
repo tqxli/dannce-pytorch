@@ -1,13 +1,17 @@
 """Generator module for dannce training.
 """
 import os
+from copy import deepcopy
 import numpy as np
+
 from dannce.engine.data import processing, ops
 from dannce.engine.data.video import LoadVideoFrame
+from dannce.engine.data.ops import Camera
 import warnings
 import time
 from multiprocessing.dummy import Pool as ThreadPool
 from typing import List, Dict, Tuple, Text
+import cv2
 
 import torch
 import torchvision
@@ -1144,28 +1148,114 @@ class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
 
 class MultiviewImageGenerator(DataGenerator_3Dconv):
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-    
-    def _load_im(self, ID, camname):
+        super(MultiviewImageGenerator, self).__init__(*args, **kwargs)
+        
+        self._get_camera_objs()
+
+    def _get_camera_objs(self):
+        self.camera_objs = {}
+        for experimentID in self.camera_params.keys():
+            self.camera_objs[experimentID] = {}
+
+            for camname in self.camnames[experimentID]:
+                param = self.camera_params[experimentID][camname]
+                self.camera_objs[experimentID][camname] = Camera(
+                    R=param["R"], t=param["t"], K=param["K"], 
+                    tdist=param["TDistort"], rdist=param["RDistort"]
+                )
+
+    def _load_im(self, ID, camname, experimentID, cropsize=768, finalsize=512):
+        this_y = self.labels[ID]["data"][camname]
+        com_precrop = np.nanmean(this_y.round(), axis=1).astype("float32")
+        this_y = torch.tensor(this_y, dtype=torch.float32)
+
         im = self.load_frame.load_vid_frame(
             self.labels[ID]["frames"][camname],
             camname,
             extension=self.extension,
-        )[
-            self.crop_height[0] : self.crop_height[1],
-            self.crop_width[0] : self.crop_width[1],
-        ]
-        return im
+        )
+        im, cropdim = processing.cropcom(im, com_precrop, size=cropsize) #need to crop images due to memory constraints
+        im = cv2.resize(im, (finalsize, finalsize))
+        # bbox = (cropdim[0], cropdim[2], cropdim[1], cropdim[3])
+        bbox = (com_precrop[1]-cropsize//2, com_precrop[0]-cropsize//2, com_precrop[1]+cropsize//2, com_precrop[0]+cropsize//2)
+
+        cam = deepcopy(self.camera_objs[experimentID][camname])
+        cam.update_after_crop(bbox) # need copy as there exists one set of cameras for each experiments, but different cropping
+        cam.update_after_resize((cropsize, cropsize), (finalsize, finalsize))
+
+        new_y = this_y.clone()
+        new_y[0, :] -= cropdim[2]
+        new_y[1, :] -= cropdim[0]
+        new_y *= (finalsize / cropsize) 
+        return im, cam, new_y
+    
+    def __getitem__(self, index: int):
+        """Generate one batch of data.
+
+        Args:
+            index (int): Frame index
+
+        Returns:
+            Tuple[np.ndarray, np.ndarray]: One batch of data X
+                (np.ndarray): Input volume y
+                (np.ndarray): Target
+        """
+        # Find list of IDs
+        list_IDs_temp = self.list_IDs[index*self.batch_size : (index+1)*self.batch_size]
+        # Generate data
+        X, y = self.__data_generation(list_IDs_temp)
+
+        return X, y
 
     def __data_generation(self, list_IDs_temp):
+        # Initialization
+        first_exp = int(self.list_IDs[0].split("_")[0])
+        X, y_3d, X_grid = self._init_vars(first_exp)
+        X = X.new_zeros(
+            (self.batch_size, 
+            len(self.camnames[first_exp]), 
+            3, 512, 512
+        ))
+        y_2d, cameras = [], []
+
         for i, ID in enumerate(list_IDs_temp):
             experimentID = int(ID.split("_")[0])
             num_cams = len(self.camnames[experimentID])
 
+            # For 3D ground truth (keypoints, COM)
+            this_y_3d = torch.as_tensor(self.labels_3d[ID],
+                dtype=torch.float32,
+                device=self.device,
+            )
+            this_COM_3d = torch.as_tensor(
+                self.com3d[ID], 
+                dtype=torch.float32, 
+                device=self.device
+            )
+
+            # Create and project the grid here,
+            coords_3d, grid = self._generate_coord_grid(this_COM_3d)
+            X_grid[i] = grid
+            
+            # Generate training targets
+            y_3d = self._generate_targets(i, y_3d, this_y_3d, coords_3d)
+
+            # extract multi-view images
             arglist = []
             for c in range(num_cams):
-                arglist.append([ID, self.camnames[experimentID][c]])
-            ims = self.threadpool.starmap(self._load_im, arglist)
+                arglist.append([ID, self.camnames[experimentID][c], experimentID])
+            results = self.threadpool.starmap(self._load_im, arglist)
 
-            ims = np.stack(ims, axis=-1) #[H, W, 6*3]
+            ims = np.stack([r[0] for r in results], axis=0) #[6, H, W, 3]
+            X[i] = torch.tensor(ims).float().permute(0, 3, 1, 2)
+
+            # also need camera params for each view
+            cameras.append([r[1] for r in results]) #[BS, 6]
+
+            # potentially need 2d labels as well
+            y_2d.append(torch.stack([r[2] for r in results], dim=0))
+
+        y_2d = torch.stack(y_2d, dim=0) #[BS, 6, 2, n_joints]
+        return (X, X_grid, cameras), (y_3d, y_2d)
+
         

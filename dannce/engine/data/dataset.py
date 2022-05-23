@@ -6,6 +6,8 @@ import warnings
 import torch
 import torchvision.transforms.functional as TF
 
+from dannce.engine.data.generator import MultiviewImageGenerator
+
 MISSING_KEYPOINTS_MSG = (
     "If mirror augmentation is used, the right_keypoints indices and left_keypoints "
     + "indices must be specified as well. "
@@ -727,16 +729,43 @@ class PoseDatasetNPY(PoseDatasetFromMem):
         X = processing.preprocess_3d(X) 
 
         return self._convert_numpy_to_tensor(X, X_grid, y_3d, aux)
-    
-class ChunkedKeypointDataset(torch.utils.data.Dataset):
+
+class MultiViewImageDataset(torch.utils.data.Dataset):
     def __init__(
         self,
+        images,
+        grids,
         labels_3d,
+        cameras,
     ):
+        super(MultiViewImageDataset, self).__init__()
+        self.images = images
+        self.grids = grids
         self.labels_3d = labels_3d
+        self.cameras = cameras
 
     def __len__(self):
-        return 
-    
-    def __getitem__(self,index):
-        return
+        return len(self.cameras)
+
+    def __getitem__(self, idx):
+        X = processing.preprocess_3d(self.images[idx])
+        X_grid = self.grids[idx]
+        y_3d = self.labels_3d[idx]
+        camera = self.cameras[idx]
+
+        return X, X_grid, camera, y_3d
+
+class ImageDataset(torch.utils.data.Dataset):
+    def __init__(self, images, labels):
+        super(ImageDataset, self).__init__()
+        self.images = images
+        self.labels = labels
+
+    def __len__(self):
+        return self.images.shape[0]
+
+    def __getitem__(self, idx):
+        X = processing.preprocess_3d(self.images[idx])
+        y = self.labels[idx]
+
+        return X, y
