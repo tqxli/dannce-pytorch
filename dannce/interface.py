@@ -878,7 +878,7 @@ def write_com_file(params, samples_, com3d_dict_):
     sio.savemat(cfilename, {"sampleID": samples_, "com": c3d})
 
 
-def do_COM_load(exp: Dict, expdict: Dict, e, params: Dict, training=True):
+def do_COM_load(exp: Dict, expdict: Dict, e, params: Dict, training=True, comflag=True):
     """Load and process COMs.
 
     Args:
@@ -907,6 +907,7 @@ def do_COM_load(exp: Dict, expdict: Dict, e, params: Dict, training=True):
         predict_labeled_only=params["predict_labeled_only"],
         valid=(e in params["valid_exp"]) if params["valid_exp"] is not None else False,
         support=(e in params["support_exp"]) if params["support_exp"] is not None else False,
+        com_flag=comflag
     )
 
     # If there is "clean" data (full marker set), can take the

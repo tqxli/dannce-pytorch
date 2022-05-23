@@ -1,4 +1,5 @@
 """Entrypoints for dannce training and prediction."""
+import dannce.run.train_voxelpose as voxelpose
 from dannce.interface import (
     # com_predict,
     # com_train,
@@ -157,6 +158,15 @@ def social_dannce_train_cli():
     params = build_clarg_params(args, dannce_net=True, prediction=False)
     social_dannce_train(params)
 
+def custom_model_train_cli():
+    parser = argparse.ArgumentParser(
+        description="Custom model train CLI",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.set_defaults(**{**_param_defaults_shared, **_param_defaults_dannce})
+    args = parse_clargs(parser, model_type="dannce", prediction=False)
+    params = build_clarg_params(args, dannce_net=True, prediction=False)
+    voxelpose.train2d(params)
 
 def build_clarg_params(
     args: argparse.Namespace, dannce_net: bool, prediction: bool

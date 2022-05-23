@@ -32,6 +32,7 @@ setup(
             "com-train-sbatch = dannce.cli:sbatch_com_train_cli",
             "dannce-train = dannce.cli:dannce_train_cli",
             "social-dannce-train = dannce.cli:social_dannce_train_cli",
+            "custom-train = dannce.cli:custom_model_train_cli",
             "dannce-train-grid = cluster.grid:dannce_train_grid",
             "dannce-predict = dannce.cli:dannce_predict_cli",
             "com-train = dannce.cli:com_train_cli",
