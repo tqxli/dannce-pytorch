@@ -4,7 +4,6 @@ import csv, os
 import imageio
 from tqdm import tqdm
 
-from dannce.engine.models.nets import DANNCE
 from dannce.engine.trainer.base_trainer import BaseTrainer
 from dannce.engine.trainer.train_utils import prepare_batch, LossHelper, MetricHelper
 import dannce.engine.data.processing as processing

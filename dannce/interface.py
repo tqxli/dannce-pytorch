@@ -2,19 +2,10 @@
 import numpy as np
 import os
 from copy import deepcopy
-import scipy.io as sio
-import imageio
-import time
-import gc
 from datetime import datetime
 
 from dannce.engine.data import serve_data_DANNCE, dataset, generator, processing, ops, io
 from dannce.engine.data.processing import savedata_tomat, savedata_expval
-from dannce import (
-    _param_defaults_dannce,
-    _param_defaults_shared,
-    _param_defaults_com,
-)
 import dannce.engine.inference as inference
 from typing import Dict, Text
 import os, psutil
@@ -25,60 +16,10 @@ from dannce.engine.models.segmentation import get_instance_segmentation_model
 from dannce.engine.trainer.dannce_trainer import DannceTrainer, AutoEncoderTrainer
 from dannce.config import print_and_set
 from dannce.engine.logging.logger import setup_logging, get_logger
+from dannce.engine.data.processing import _DEFAULT_VIDDIR, _DEFAULT_VIDDIR_SIL, _DEFAULT_COMSTRING, _DEFAULT_COMFILENAME, _DEFAULT_SEG_MODEL
 
 process = psutil.Process(os.getpid())
-
-_DEFAULT_VIDDIR = "videos"
-_DEFAULT_VIDDIR_SIL = "videos_sil"
-_DEFAULT_COMSTRING = "COM"
-_DEFAULT_COMFILENAME = "com3d.mat"
-_DEFAULT_SEG_MODEL = 'weights/maskrcnn.pth'
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "1"
-
-
-def check_unrecognized_params(params: Dict):
-    """Check for invalid keys in the params dict against param defaults.
-
-    Args:
-        params (Dict): Parameters dictionary.
-
-    Raises:
-        ValueError: Error if there are unrecognized keys in the configs.
-    """
-    # Check if key in any of the defaults
-    invalid_keys = []
-    for key in params:
-        in_com = key in _param_defaults_com
-        in_dannce = key in _param_defaults_dannce
-        in_shared = key in _param_defaults_shared
-        if not (in_com or in_dannce or in_shared):
-            invalid_keys.append(key)
-
-    # If there are any keys that are invalid, throw an error and print them out
-    if len(invalid_keys) > 0:
-        invalid_key_msg = [" %s," % key for key in invalid_keys]
-        msg = "Unrecognized keys in the configs: %s" % "".join(invalid_key_msg)
-        raise ValueError(msg)
-
-
-def build_params(base_config: Text, dannce_net: bool):
-    """Build parameters dictionary from base config and io.yaml
-
-    Args:
-        base_config (Text): Path to base configuration .yaml.
-        dannce_net (bool): If True, use dannce net defaults.
-
-    Returns:
-        Dict: Parameters dictionary.
-    """
-    base_params = processing.read_config(base_config)
-    base_params = processing.make_paths_safe(base_params)
-    params = processing.read_config(base_params["io_config"])
-    params = processing.make_paths_safe(params)
-    params = processing.inherit_config(params, base_params, list(base_params.keys()))
-    check_unrecognized_params(params)
-    return params
-
 
 def make_folder(key: Text, params: Dict):
     """Make the prediction or training directories.
@@ -156,57 +97,13 @@ def dannce_train(params: Dict):
     num_experiments = len(exps)
     params["experiment"] = {}
 
-    samples = [] # training sample identifiers
-    datadict, datadict_3d, com3d_dict = {}, {}, {} # labels
-    cameras, camnames = {}, {} # camera
-    total_chunks = {} # video chunks
-    temporal_chunks = {} # for temporal training
-
-    for e, expdict in enumerate(exps):
-
-        # load basic exp info
-        exp = processing.load_expdict(params, e, expdict, _DEFAULT_VIDDIR, _DEFAULT_VIDDIR_SIL, logger)
-
-        # load corresponding 2D & 3D labels, COMs
-        (
-            exp,
-            samples_,
-            datadict_,
-            datadict_3d_,
-            cameras_,
-            com3d_dict_,
-            temporal_chunks_
-        ) = do_COM_load(exp, expdict, e, params)
-
-        logger.info("Using {} samples total.".format(len(samples_)))
-
-        (
-            samples,
-            datadict,
-            datadict_3d,
-            com3d_dict,
-            temporal_chunks
-        ) = serve_data_DANNCE.add_experiment(
-            e,
-            samples,
-            datadict,
-            datadict_3d,
-            com3d_dict,
-            samples_,
-            datadict_,
-            datadict_3d_,
-            com3d_dict_,
-            temporal_chunks,
-            temporal_chunks_
-        )
-
-        cameras[e] = cameras_
-        camnames[e] = exp["camnames"]
-        logger.info("Using the following cameras: {}".format(camnames[e]))
-
-        params["experiment"][e] = exp
-        for name, chunk in exp["chunks"].items():
-            total_chunks[name] = chunk
+    (
+        samples, 
+        datadict, datadict_3d, com3d_dict, 
+        cameras, camnames,
+        total_chunks,
+        temporal_chunks
+    ) = processing.load_all_exps(params, logger)
 
     # Additionally, to keep videos unique across experiments, need to add
     # experiment labels in other places. E.g. experiment 0 CameraE's "camname"
@@ -215,8 +112,6 @@ def dannce_train(params: Dict):
     cameras, datadict, params = serve_data_DANNCE.prepend_experiment(
         params, datadict, num_experiments, camnames, cameras
     )
-
-    samples = np.array(samples)
 
     # Dump the params into file for reproducibility
     processing.save_params_pickle(params)
@@ -622,7 +517,7 @@ def dannce_predict(params: Dict):
         cameras_,
         com3d_dict_,
         _
-    ) = do_COM_load(
+    ) = processing.do_COM_load(
         params["experiment"][0],
         params["experiment"][0],
         0,
@@ -632,7 +527,7 @@ def dannce_predict(params: Dict):
 
     # Write 3D COM to file. This might be different from the input com3d file
     # if arena thresholding was applied.
-    write_com_file(params, samples_, com3d_dict_)
+    processing.write_com_file(params, samples_, com3d_dict_)
 
     # The library is configured to be able to train over multiple animals ("experiments")
     # at once. Because supporting code expects to see an experiment ID# prepended to
@@ -867,131 +762,6 @@ def setup_dannce_predict(params):
     params["chan_num"] = 1 if params["mono"] else params["n_channels_in"]
 
     return params
-
-
-def write_com_file(params, samples_, com3d_dict_):
-    cfilename = os.path.join(params["dannce_predict_dir"], "com3d_used.mat")
-    print("Saving 3D COM to {}".format(cfilename))
-    c3d = np.zeros((len(samples_), 3))
-    for i in range(len(samples_)):
-        c3d[i] = com3d_dict_[samples_[i]]
-    sio.savemat(cfilename, {"sampleID": samples_, "com": c3d})
-
-
-def do_COM_load(exp: Dict, expdict: Dict, e, params: Dict, training=True):
-    """Load and process COMs.
-
-    Args:
-        exp (Dict): Parameters dictionary for experiment
-        expdict (Dict): Experiment specific overrides (e.g. com_file, vid_dir)
-        e (TYPE): Description
-        params (Dict): Parameters dictionary.
-        training (bool, optional): If true, load COM for training frames.
-
-    Returns:
-        TYPE: Description
-        exp, samples_, datadict_, datadict_3d_, cameras_, com3d_dict_
-
-    Raises:
-        Exception: Exception when invalid com file format.
-    """
-    (
-        samples_,
-        datadict_,
-        datadict_3d_,
-        cameras_,
-        temporal_chunks
-    ) = serve_data_DANNCE.prepare_data(
-        exp, 
-        prediction=not training, 
-        predict_labeled_only=params["predict_labeled_only"],
-        valid=(e in params["valid_exp"]) if params["valid_exp"] is not None else False,
-        support=(e in params["support_exp"]) if params["support_exp"] is not None else False,
-    )
-
-    # If there is "clean" data (full marker set), can take the
-    # 3D COM from the labels
-    if exp["com_fromlabels"] and training:
-        print("For experiment {}, calculating 3D COM from labels".format(e))
-        com3d_dict_ = deepcopy(datadict_3d_)
-        for key in com3d_dict_.keys():
-            com3d_dict_[key] = np.nanmean(datadict_3d_[key], axis=1, keepdims=True)
-    elif "com_file" in expdict and expdict["com_file"] is not None:
-        exp["com_file"] = expdict["com_file"]
-        if ".mat" in exp["com_file"]:
-            c3dfile = sio.loadmat(exp["com_file"])
-            com3d_dict_ = check_COM_load(c3dfile, "com", params["medfilt_window"])
-        elif ".pickle" in exp["com_file"]:
-            datadict_, com3d_dict_ = serve_data_DANNCE.prepare_COM(
-                exp["com_file"],
-                datadict_,
-                comthresh=params["comthresh"],
-                weighted=params["weighted"],
-                camera_mats=cameras_,
-                method=params["com_method"],
-            )
-            if params["medfilt_window"] is not None:
-                raise Exception(
-                    "Sorry, median filtering a com pickle is not yet supported. Please use a com3d.mat or *dannce.mat file instead"
-                )
-        else:
-            raise Exception("Not a valid com file format")
-    else:
-        # Then load COM from the label3d file
-        exp["com_file"] = expdict["label3d_file"]
-        c3dfile = io.load_com(exp["com_file"])
-        com3d_dict_ = check_COM_load(c3dfile, "com3d", params["medfilt_window"])
-
-    print("Experiment {} using com3d: {}".format(e, exp["com_file"]))
-
-    if params["medfilt_window"] is not None:
-        print(
-            "Median filtering COM trace with window size {}".format(
-                params["medfilt_window"]
-            )
-        )
-
-    # Remove any 3D COMs that are beyond the confines off the 3D arena
-    do_cthresh = True if exp["cthresh"] is not None else False
-
-    pre = len(samples_)
-    samples_ = serve_data_DANNCE.remove_samples_com(
-        samples_,
-        com3d_dict_,
-        rmc=do_cthresh,
-        cthresh=exp["cthresh"],
-    )
-    msg = "Removed {} samples from the dataset because they either had COM positions over cthresh, or did not have matching sampleIDs in the COM file"
-    print(msg.format(pre - len(samples_)))
-
-    return exp, samples_, datadict_, datadict_3d_, cameras_, com3d_dict_, temporal_chunks
-
-def check_COM_load(c3dfile: Dict, kkey: Text, win_size: int):
-    """Check that the COM file is of the appropriate format, and filter it.
-
-    Args:
-        c3dfile (Dict): Loaded com3d dictionary.
-        kkey (Text): Key to use for extracting com.
-        wsize (int): Window size.
-
-    Returns:
-        Dict: Dictionary containing com data.
-    """
-    c3d = c3dfile[kkey]
-
-    # do a median filter on the COM traces if indicated
-    if win_size is not None:
-        if win_size % 2 == 0:
-            win_size += 1
-            print("medfilt_window was not odd, changing to: {}".format(win_size))
-
-        from scipy.signal import medfilt
-
-        c3d = medfilt(c3d, (win_size, 1))
-
-    c3dsi = np.squeeze(c3dfile["sampleID"])
-    com3d_dict = {s: c3d[i] for (i, s) in enumerate(c3dsi)}
-    return com3d_dict
 
 def social_dannce_train(params):
     return
