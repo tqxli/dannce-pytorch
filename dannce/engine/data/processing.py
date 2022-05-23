@@ -1,5 +1,4 @@
 """Processing functions for dannce."""
-from dataclasses import replace
 import numpy as np
 from skimage.color import rgb2gray
 from skimage.transform import downscale_local_mean as dsm
@@ -940,6 +939,7 @@ def cropcom(im, com, size=512):
     minlim_c = int(np.round(com[0])) - size // 2
     maxlim_c = int(np.round(com[0])) + size // 2
 
+    diff = (minlim_r, maxlim_r, minlim_c, maxlim_c)
     crop_dim = (np.max([minlim_r, 0]), maxlim_r, np.max([minlim_c, 0]), maxlim_c)
 
     out = im[crop_dim[0] : crop_dim[1], crop_dim[2] : crop_dim[3], :]
@@ -964,7 +964,7 @@ def cropcom(im, com, size=512):
             (out, np.zeros((out.shape[0], maxlim_c - im.shape[1], dim))), axis=1
         )
 
-    return out, crop_dim
+    return out, diff
 
 
 def write_config(results_dir, configdict, message, filename="modelconfig.cfg"):
@@ -1516,6 +1516,29 @@ def save_train_volumes(params, tifdir, generator, n_cams):
             im = im.astype("uint8")
             of = os.path.join(tifdir,f"{i}_cam{j}.tif")
             imageio.mimwrite(of, np.transpose(im, [2, 0, 1, 3]))
+
+def save_train_images(savedir, X, y):
+    """
+    X: [n_samples, 6, 3, 512, 512]
+    y: [n_samples, 6, 2, n_joints]
+    """
+    if not os.path.exists(savedir):
+        os.makedirs(savedir)
+    
+    for i in range(X.shape[0]):
+        pose2d = y[i].permute(1, 0).numpy()
+        im = X[i].permute(1, 2, 0).numpy().astype("uint8")
+        # im = norm_im(im) * 255
+        # im = im.astype("uint8")
+
+        fig, ax = plt.subplots(1, 1)
+        ax.imshow(im)
+        ax.scatter(pose2d[:, 0], pose2d[:, 1])
+        
+        of = os.path.join(savedir,f"{i}.jpg")
+        fig.savefig(of)
+        plt.close(fig)
+
 
 def mask_to_bbox(mask):
     bounding_boxes = np.zeros((4, ))
