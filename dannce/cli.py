@@ -6,9 +6,8 @@ from dannce.interface import (
     dannce_predict,
     dannce_train,
     social_dannce_train,
-    build_params,
 )
-from dannce.config import check_config, infer_params
+from dannce.config import check_config, infer_params, build_params
 from dannce import (
     _param_defaults_dannce,
     _param_defaults_shared,

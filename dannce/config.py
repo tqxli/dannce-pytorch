@@ -1,7 +1,15 @@
 import numpy as np
 import imageio
-import os
+import os, shutil
+import yaml
+from typing import Dict, Text
+
 from dannce.engine.data import io
+from dannce import (
+    _param_defaults_dannce,
+    _param_defaults_shared,
+    _param_defaults_com,
+)
 import warnings
 
 def grab_predict_label3d_file(defaultdir=""):
@@ -259,3 +267,125 @@ def check_net_expval(params):
         and params["net"] != "unet3d_big"
     ):
         raise Exception("expval is set to False but you are using an AVG network")
+
+def copy_config(results_dir, main_config, io_config):
+    """
+    Copies config files into the results directory, and creates results
+        directory if necessary
+    """
+    print("Saving results to: {}".format(results_dir))
+
+    if not os.path.exists(results_dir):
+        os.makedirs(results_dir)
+
+    mconfig = os.path.join(
+        results_dir, "copy_main_config_" + main_config.split(os.sep)[-1]
+    )
+    dconfig = os.path.join(results_dir, "copy_io_config_" + io_config.split(os.sep)[-1])
+
+    shutil.copyfile(main_config, mconfig)
+    shutil.copyfile(io_config, dconfig)
+
+def inherit_config(child, parent, keys):
+    """
+    If a key in keys does not exist in child, assigns the key-value in parent to
+        child.
+    """
+    for key in keys:
+        if key not in child.keys():
+            child[key] = parent[key]
+            print(
+                "{} not found in io.yaml file, falling back to main config".format(key)
+            )
+
+    return child    
+
+def write_config(results_dir, configdict, message, filename="modelconfig.cfg"):
+    """Write a dictionary of k-v pairs to file.
+
+    A much more customizable configuration writer. Accepts a dictionary of
+    key-value pairs and just writes them all to file,
+    together with a custom message
+    """
+    f = open(results_dir + filename, "w")
+    for key in configdict:
+        f.write("{}: {}\n".format(key, configdict[key]))
+    f.write("message:" + message)
+
+def read_config(filename):
+    """Read configuration file.
+
+    :param filename: Path to configuration file.
+    """
+    with open(filename) as f:
+        params = yaml.safe_load(f)
+
+    return params
+
+def make_paths_safe(params):
+    """Given a parameter dictionary, loops through the keys and replaces any \\ or / with os.sep
+    to promote OS agnosticism
+    """
+    for key in params.keys():
+        if isinstance(params[key], str):
+            params[key] = params[key].replace("/", os.sep)
+            params[key] = params[key].replace("\\", os.sep)
+
+    return params
+
+def make_none_safe(pdict):
+    if isinstance(pdict, dict):
+        for key in pdict:
+            pdict[key] = make_none_safe(pdict[key])
+    else:
+        if (
+            pdict is None
+            or (isinstance(pdict, list) and None in pdict)
+            or (isinstance(pdict, tuple) and None in pdict)
+        ):
+            return "None"
+        else:
+            return pdict
+    return pdict
+
+def check_unrecognized_params(params: Dict):
+    """Check for invalid keys in the params dict against param defaults.
+
+    Args:
+        params (Dict): Parameters dictionary.
+
+    Raises:
+        ValueError: Error if there are unrecognized keys in the configs.
+    """
+    # Check if key in any of the defaults
+    invalid_keys = []
+    for key in params:
+        in_com = key in _param_defaults_com
+        in_dannce = key in _param_defaults_dannce
+        in_shared = key in _param_defaults_shared
+        if not (in_com or in_dannce or in_shared):
+            invalid_keys.append(key)
+
+    # If there are any keys that are invalid, throw an error and print them out
+    if len(invalid_keys) > 0:
+        invalid_key_msg = [" %s," % key for key in invalid_keys]
+        msg = "Unrecognized keys in the configs: %s" % "".join(invalid_key_msg)
+        raise ValueError(msg)
+
+def build_params(base_config: Text, dannce_net: bool):
+    """Build parameters dictionary from base config and io.yaml
+
+    Args:
+        base_config (Text): Path to base configuration .yaml.
+        dannce_net (bool): If True, use dannce net defaults.
+
+    Returns:
+        Dict: Parameters dictionary.
+    """
+    base_params = read_config(base_config)
+    base_params = make_paths_safe(base_params)
+    params = read_config(base_params["io_config"])
+    params = make_paths_safe(params)
+    params = inherit_config(params, base_params, list(base_params.keys()))
+    check_unrecognized_params(params)
+    return params

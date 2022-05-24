@@ -1,11 +1,12 @@
+import numpy as np
 import torch
 import csv, os
 import imageio
-from dannce.engine.models.nets import DANNCE
+from tqdm import tqdm
+
 from dannce.engine.trainer.base_trainer import BaseTrainer
 from dannce.engine.trainer.train_utils import prepare_batch, LossHelper, MetricHelper
 import dannce.engine.data.processing as processing
-import numpy as np
 
 class DannceTrainer(BaseTrainer):
     def __init__(self, device, train_dataloader, valid_dataloader, lr_scheduler=None, visualize_batch=False, **kwargs):
@@ -72,7 +73,8 @@ class DannceTrainer(BaseTrainer):
 
         # with torch.autograd.set_detect_anomaly(False):
         epoch_loss_dict, epoch_metric_dict = {}, {}
-        for batch in self.train_dataloader: 
+        pbar = tqdm(self.train_dataloader)
+        for batch in pbar: 
             volumes, grid_centers, keypoints_3d_gt, aux = prepare_batch(batch, self.device)
 
             if self.visualize_batch:
@@ -82,8 +84,9 @@ class DannceTrainer(BaseTrainer):
             self.optimizer.zero_grad()
             keypoints_3d_pred, heatmaps = self.model(volumes, grid_centers)
             total_loss, loss_dict = self.loss.compute_loss(keypoints_3d_gt, keypoints_3d_pred, heatmaps, grid_centers, aux)
+
             result = f"Epoch[{epoch}/{self.epochs}] " + "".join(f"train_{loss}: {val:.4f} " for loss, val in loss_dict.items())
-            print(result, end='\r')
+            pbar.set_description(result)
 
             total_loss.backward()
             self.optimizer.step()
@@ -104,8 +107,10 @@ class DannceTrainer(BaseTrainer):
 
         epoch_loss_dict = {}
         epoch_metric_dict = {}
+
+        pbar = tqdm(self.valid_dataloader)
         with torch.no_grad():
-            for batch in self.valid_dataloader:
+            for batch in pbar:
                 volumes, grid_centers, keypoints_3d_gt, aux = prepare_batch(batch, self.device)
                 keypoints_3d_pred, heatmaps = self.model(volumes, grid_centers)
 
