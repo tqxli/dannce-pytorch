@@ -1,7 +1,6 @@
 """Handle training and prediction for DANNCE and COM networks."""
 import numpy as np
 import os
-from copy import deepcopy
 from datetime import datetime
 from typing import Dict, Text
 import os, psutil
@@ -9,7 +8,7 @@ from tqdm import tqdm
 
 import torch
 from dannce.engine.data import serve_data_DANNCE, dataset, generator, processing
-from dannce.interface import make_folder, do_COM_load
+from dannce.interface import make_folder
 from dannce.engine.models.backbone import get_backbone
 from dannce.engine.models.voxelpose import FeatureDANNCE
 from dannce.engine.trainer.voxelpose_trainer import VoxelPoseTrainer
@@ -112,67 +111,17 @@ def train(params: Dict):
     num_experiments = len(exps)
     params["experiment"] = {}
 
-    samples = [] # training sample identifiers
-    datadict, datadict_3d, com3d_dict = {}, {}, {} # labels
-    cameras, camnames = {}, {} # camera
-    total_chunks = {} # video chunks
-    temporal_chunks = {} # for temporal training
-
-    for e, expdict in enumerate(exps):
-
-        # load basic exp info
-        exp = processing.load_expdict(params, e, expdict, _DEFAULT_VIDDIR, _DEFAULT_VIDDIR_SIL, logger)
-
-        # load corresponding 2D & 3D labels, COMs
-        (
-            exp,
-            samples_,
-            datadict_,
-            datadict_3d_,
-            cameras_,
-            com3d_dict_,
-            temporal_chunks_
-        ) = do_COM_load(exp, expdict, e, params)
-
-        logger.info("Using {} samples total.".format(len(samples_)))
-
-        (
-            samples,
-            datadict,
-            datadict_3d,
-            com3d_dict,
-            temporal_chunks
-        ) = serve_data_DANNCE.add_experiment(
-            e,
-            samples,
-            datadict,
-            datadict_3d,
-            com3d_dict,
-            samples_,
-            datadict_,
-            datadict_3d_,
-            com3d_dict_,
-            temporal_chunks,
-            temporal_chunks_
-        )
-
-        cameras[e] = cameras_
-        camnames[e] = exp["camnames"]
-        logger.info("Using the following cameras: {}".format(camnames[e]))
-
-        params["experiment"][e] = exp
-        for name, chunk in exp["chunks"].items():
-            total_chunks[name] = chunk
-
-    # Additionally, to keep videos unique across experiments, need to add
-    # experiment labels in other places. E.g. experiment 0 CameraE's "camname"
-    # Becomes 0_CameraE. *NOTE* This function modified camnames in place
-    # to add the appropriate experiment ID
+    (
+        samples, 
+        datadict, datadict_3d, com3d_dict, 
+        cameras, camnames,
+        total_chunks,
+        temporal_chunks
+    ) = processing.load_all_exps(params, logger)
+    
     cameras, datadict, params = serve_data_DANNCE.prepend_experiment(
         params, datadict, num_experiments, camnames, cameras
     )
-
-    samples = np.array(samples)
 
     # Dump the params into file for reproducibility
     processing.save_params_pickle(params)
@@ -334,67 +283,17 @@ def train2d(params: Dict):
     num_experiments = len(exps)
     params["experiment"] = {}
 
-    samples = [] # training sample identifiers
-    datadict, datadict_3d, com3d_dict = {}, {}, {} # labels
-    cameras, camnames = {}, {} # camera
-    total_chunks = {} # video chunks
-    temporal_chunks = {} # for temporal training
+    (
+        samples, 
+        datadict, datadict_3d, com3d_dict, 
+        cameras, camnames,
+        total_chunks,
+        temporal_chunks
+    ) = processing.load_all_exps(params, logger)
 
-    for e, expdict in enumerate(exps):
-
-        # load basic exp info
-        exp = processing.load_expdict(params, e, expdict, _DEFAULT_VIDDIR, _DEFAULT_VIDDIR_SIL, logger)
-
-        # load corresponding 2D & 3D labels, COMs
-        (
-            exp,
-            samples_,
-            datadict_,
-            datadict_3d_,
-            cameras_,
-            com3d_dict_,
-            temporal_chunks_
-        ) = do_COM_load(exp, expdict, e, params, comflag=False)
-
-        logger.info("Using {} samples total.".format(len(samples_)))
-
-        (
-            samples,
-            datadict,
-            datadict_3d,
-            com3d_dict,
-            temporal_chunks
-        ) = serve_data_DANNCE.add_experiment(
-            e,
-            samples,
-            datadict,
-            datadict_3d,
-            com3d_dict,
-            samples_,
-            datadict_,
-            datadict_3d_,
-            com3d_dict_,
-            temporal_chunks,
-            temporal_chunks_
-        )
-
-        cameras[e] = cameras_
-        camnames[e] = exp["camnames"]
-        logger.info("Using the following cameras: {}".format(camnames[e]))
-
-        params["experiment"][e] = exp
-        for name, chunk in exp["chunks"].items():
-            total_chunks[name] = chunk
-
-    # Additionally, to keep videos unique across experiments, need to add
-    # experiment labels in other places. E.g. experiment 0 CameraE's "camname"
-    # Becomes 0_CameraE. *NOTE* This function modified camnames in place
-    # to add the appropriate experiment ID
     cameras, datadict, params = serve_data_DANNCE.prepend_experiment(
         params, datadict, num_experiments, camnames, cameras
     )
-
-    samples = np.array(samples)
 
     # Dump the params into file for reproducibility
     processing.save_params_pickle(params)
@@ -526,3 +425,21 @@ def train2d(params: Dict):
     )
 
     trainer.train()
+
+if __name__ == "__main__":
+    import argparse
+    from dannce import (
+        _param_defaults_dannce,
+        _param_defaults_shared,
+    )
+    from dannce.cli import parse_clargs, build_clarg_params
+
+    parser = argparse.ArgumentParser(
+        description="Dannce train CLI",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.set_defaults(**{**_param_defaults_shared, **_param_defaults_dannce})
+    args = parse_clargs(parser, model_type="dannce", prediction=False)
+    params = build_clarg_params(args, dannce_net=True, prediction=False)
+
+    train(params)
