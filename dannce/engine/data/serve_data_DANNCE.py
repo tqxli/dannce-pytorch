@@ -1,6 +1,4 @@
 """Define routines for reading/structuring input data for DANNCE."""
-from posixpath import dirname
-from random import sample
 import numpy as np
 import scipy.io as sio
 import torch
@@ -22,6 +20,7 @@ def prepare_data(
     predict_smoothed_labels=False,
     valid=False,
     support=False,
+    downsample=1,
     return_cammat=False,
 ):
     """Assemble necessary data structures given a set of config params.
@@ -59,9 +58,8 @@ def prepare_data(
         sample_inds = [np.where(samples == samp)[0][0] for samp in sampleIDs_labeled]
         expanded_sample_inds = np.concatenate([np.arange(sample_ind-5, sample_ind+5) for sample_ind in sample_inds])
         samples = samples[expanded_sample_inds]
-        
-    n_samples = len(samples)
 
+    # load camera parameters
     camera_params = load_camera_params(params["label3d_file"])
     cameras = {name: camera_params[i] for i, name in enumerate(params["camnames"])}
 
@@ -74,75 +72,11 @@ def prepare_data(
             "network set to run in mirror mode, but cannot find mirror (m) field in camera params"
         )
 
-    # ------------- new chunk code to refactor / modularize
+    # enable temporal training
     TEMPORAL_FLAG = (not prediction) and (params["use_temporal"]) #and (not valid)
-
     chunk_list = None
-
     if TEMPORAL_FLAG:
-        assert params["temporal_chunk_size"], "PLease specify the temporal chunk size when using temporal loss."
-        temp_n = params["temporal_chunk_size"]
-
-        # load in extra sampleIDs  
-        labels_extra = load_sync(params["label3d_file"])
-        samples_extra = np.squeeze(labels_extra[0]["data_sampleID"])
-        # select extra samples from the neighborhood of labeled samples
-        # each of which is referred as a "temporal chunk"
-        left_bound, right_bound = -int(temp_n // 2), int(np.round(temp_n/2))
-        
-        # what if we want to use the unlabeled frames in the test set for pretraining
-        sample_inds, samples_inds_unlabeled, samples_test_inds = [], [], []
-        if (support) and isinstance(params["n_support_chunks"], int):
-            samples_test_inds = np.random.choice(samples_extra[-left_bound::temp_n], size=params["n_support_chunks"], replace=False)
-            samples_test_inds = sorted(list(samples_test_inds))
-            print("For unsupervised training, load in {} unlabeled chunks from the valid/test recording.".format(params["n_support_chunks"]))
-            samples = None
-        else:
-            sample_inds = [np.where(samples_extra == samp)[0][0] for samp in samples]
-
-            # if specified, load in extra completely unlabaled chunks 
-            if (params["unlabeled_temp"] > 0) and (not valid):
-                all_samples_inds_unlabeled = np.array(list(set(np.arange(len(samples_extra))) - set(sample_inds)))
-                # n_unlabeled_temp = int(params["unlabeled_temp"])
-                n_unlabeled_temp = int(np.ceil(len(samples) * params["unlabeled_temp"]))
-                print("Load in {} unlabeled temporal chunks, in addition to {} labels.".format(n_unlabeled_temp, len(samples)))
-                samples_inds_unlabeled = np.random.choice(all_samples_inds_unlabeled, size=n_unlabeled_temp, replace=False)
-                samples_inds_unlabeled = sorted(list(samples_inds_unlabeled))
-
-        sample_inds = sample_inds + samples_inds_unlabeled + samples_test_inds  
-        sample_inds = np.array(sample_inds)
-
-        # generate chunks
-        chunk_ind_list = [np.arange(sample_ind+left_bound, sample_ind+right_bound) for sample_ind in sample_inds]
-        all_samples_inds = np.concatenate(chunk_ind_list)
-
-        # check sample validity
-        all_samples_inds[all_samples_inds < 0] = 0
-        all_samples_inds[all_samples_inds >= len(samples_extra)] = len(samples_extra) - 1 
-
-        # there can be repetitive sampleIDs, 
-        # only load in each label once in datadict
-        all_samples = samples_extra[all_samples_inds]
-        chunk_list = [all_samples[i:i + temp_n] for i in range(0, len(all_samples), temp_n)]
-        all_samples, unique_index = np.unique(all_samples, return_index=True)
-        labeled_inds = np.array([np.where(all_samples == samp)[0][0] for samp in samples]) if samples is not None else None
-
-        samples = all_samples
-        
-        for i, label in enumerate(labels):
-            for k in ['data_frame', 'data_2d', 'data_3d']:
-                if label[k].shape[0] == 1:
-                    label[k] = label[k].T
-                if labels_extra[i][k].shape[0] == 1:
-                    labels_extra[i][k] = labels_extra[i][k].T
-                
-                if k == "data_frame":
-                    label[k] = labels_extra[i][k][all_samples_inds[unique_index]]
-                else:
-                    temp_data = np.nan * np.ones((len(samples), label[k].shape[1]))
-                    if labeled_inds is not None:
-                        temp_data[labeled_inds] = label[k]  
-                    label[k] = temp_data
+        samples, labels, chunk_list = prepare_temporal_seqs(params, samples, labels, downsample, valid, support)
 
     if labels[0]["data_sampleID"].shape == (1, 1):
         # Then the squeezed value is just a number, so we add to to a list so
@@ -224,6 +158,101 @@ def prepare_data(
     
     return samples, datadict, datadict_3d, cameras, chunk_list
 
+def get_seq_bounds(seqlen):
+    left_bound = -int(seqlen // 2)
+    right_bound = int(np.round(seqlen / 2)) if seqlen % 2 == 0 else int(np.round(seqlen / 2)) + 1
+    return left_bound, right_bound
+
+def get_chunks(sample_inds, left_bound, right_bound, maxlen, downsample):
+    chunk_ind_list = []
+    for sample_ind in sample_inds:
+        # check chunk validity
+        l_lim = sample_ind + left_bound * downsample
+        r_lim = sample_ind + right_bound * downsample
+        shift = 0
+
+        if l_lim < 0:
+            shift = np.ceil(np.abs(l_lim) / downsample) * downsample
+        elif r_lim >= maxlen:
+            shift = - (np.ceil((r_lim +1 - maxlen) / downsample) - 1) * downsample
+        
+        chunk = np.arange(l_lim, r_lim, downsample) + shift
+
+        chunk_ind_list.append(chunk)
+
+    all_samples_inds = np.concatenate(chunk_ind_list)
+
+    return all_samples_inds
+
+def prepare_temporal_seqs(params, samples, labels, downsample=1, valid=False, support=False):
+    """
+    For temporal training, prepare samples in form of consecutive chunks.
+    """
+    assert params["temporal_chunk_size"], \
+        "PLease specify the temporal sequence size for temporal loss/training."
+
+    temp_n = params["temporal_chunk_size"]
+
+    # load in all sampleIDs  
+    labels_extra = load_sync(params["label3d_file"])
+    samples_extra = np.squeeze(labels_extra[0]["data_sampleID"])
+
+    # select extra samples from the neighborhood of labeled samples
+    # each of which is referred as a "temporal chunk"
+    left_bound, right_bound = get_seq_bounds(temp_n)
+    
+    # what if we want to use the unlabeled frames in the test set for pretraining
+    sample_inds, samples_inds_unlabeled, samples_test_inds = [], [], []
+    if (support) and isinstance(params["n_support_chunks"], int):
+        samples_test_inds = np.random.choice(samples_extra[-left_bound::temp_n], size=params["n_support_chunks"], replace=False)
+        samples_test_inds = sorted(list(samples_test_inds))
+        print("For unsupervised training, load in {} unlabeled chunks from the valid/test recording.".format(params["n_support_chunks"]))
+        samples = None
+    else:
+        # locate labeled frames
+        sample_inds = [np.where(samples_extra == samp)[0][0] for samp in samples]
+
+        # if specified, load in extra completely unlabaled chunks 
+        if (params["unlabeled_temp"] > 0) and (not valid):
+            all_samples_inds_unlabeled = np.array(list(set(np.arange(len(samples_extra))) - set(sample_inds)))
+            # n_unlabeled_temp = int(params["unlabeled_temp"])
+            n_unlabeled_temp = int(np.ceil(len(samples) * params["unlabeled_temp"]))
+            print("Load in {} unlabeled temporal chunks, in addition to {} labels.".format(n_unlabeled_temp, len(samples)))
+            samples_inds_unlabeled = np.random.choice(all_samples_inds_unlabeled, size=n_unlabeled_temp, replace=False)
+            samples_inds_unlabeled = sorted(list(samples_inds_unlabeled))
+
+    sample_inds = sample_inds + samples_inds_unlabeled + samples_test_inds  
+    sample_inds = np.array(sample_inds)
+
+    # generate chunks
+    all_samples_inds = get_chunks(sample_inds, left_bound, right_bound, len(samples_extra), downsample)
+
+    # there can be repetitive sampleIDs, 
+    # we only load in each label once in datadict and datadict3d
+    # during training, the dataset will fetch the correct chunk using chunk_list
+    all_samples = samples_extra[all_samples_inds]
+    chunk_list = [all_samples[i:i + temp_n] for i in range(0, len(all_samples), temp_n)]
+    all_samples, unique_index = np.unique(all_samples, return_index=True)
+    labeled_inds = np.array([np.where(all_samples == samp)[0][0] for samp in samples]) if samples is not None else None
+
+    samples = all_samples
+    
+    for i, label in enumerate(labels):
+        for k in ['data_frame', 'data_2d', 'data_3d']:
+            if label[k].shape[0] == 1:
+                label[k] = label[k].T
+            if labels_extra[i][k].shape[0] == 1:
+                labels_extra[i][k] = labels_extra[i][k].T
+            
+            if k == "data_frame":
+                label[k] = labels_extra[i][k][all_samples_inds[unique_index]]
+            else:
+                temp_data = np.nan * np.ones((len(samples), label[k].shape[1]))
+                if labeled_inds is not None:
+                    temp_data[labeled_inds] = label[k]  
+                label[k] = temp_data
+    
+    return samples, labels, chunk_list
 
 def prepare_COM_multi_instance(
     comfile,

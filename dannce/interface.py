@@ -75,7 +75,21 @@ def dannce_train(params: Dict):
 
     if "TemporalLoss" in params["loss"].keys():
         params["use_temporal"] = True
-        params["temporal_chunk_size"] = params["loss"]["TemporalLoss"]["temporal_chunk_size"]
+        params["temporal_chunk_size"] = temp_n = params["loss"]["TemporalLoss"]["temporal_chunk_size"]
+
+        # by default, the maximum batch size should be >= temporal seq len
+        if params["batch_size"] < temp_n:
+            print("Batch size < temporal seq size; reducing temporal chunk size.")
+            params["temporal_chunk_size"] = params["batch_size"]
+            params["loss"]["TemporalLoss"]["temporal_chunk_size"] = params["batch_size"]
+        
+        # option for using downsampled temporal sequences
+        try:
+            downsample = params["loss"]["TemporalLoss"]["downsample"]
+        except:
+            downsample = 1
+        
+        params["downsample"] = downsample
     
     if "PairRepulsionLoss" in params["loss"].keys():
         params["social_training"] = True
