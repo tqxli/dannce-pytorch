@@ -1,7 +1,10 @@
+import enum
 import os
+from pathlib import PurePosixPath
 import numpy as np
 from dannce.engine.data import processing
 import warnings
+import scipy.io as sio
 
 import torch
 import torchvision.transforms.functional as TF
@@ -770,3 +773,133 @@ class ImageDataset(torch.utils.data.Dataset):
         y = self.labels[idx]
 
         return X, y
+
+
+class RAT7MSeqDataset(torch.utils.data.Dataset):
+    def __init__(
+        self, 
+        root='/media/mynewdrive/datasets/rat7m/annotations',
+        seqlen = 16,
+        downsample=4,
+        keep_joints = [10, 14, 8, 9, 17, 16, 12, 13, 3, 5, 4],
+    ):
+        super().__init__()
+
+        self.root = root
+        self.mocaps = sorted(os.listdir(root))
+        self.downsample = downsample
+        self.seqlen = seqlen
+        # compensate the differences between RAT7M and manually labeled rat data
+        self.keep_joints = np.array(keep_joints)
+
+        self.data = self._load_all_mocaps()
+
+        self._chunking()
+        self._keep_overlap_joints()
+        self._filter_nan()
+
+    def _load_all_mocaps(self):
+        return [self.load_mocap(os.path.join(self.root, m))[::self.downsample] for m in self.mocaps]
+    
+    def _chunking(self):
+        for i, data in enumerate(self.data):
+            n_chunks = data.shape[0] // self.seqlen
+            self.data[i] = np.reshape(data[:n_chunks*self.seqlen], (n_chunks, self.seqlen, *data.shape[-2:]))
+        
+        self.data = np.concatenate(self.data, axis=0) #[N_CHUNKS, SEQLEN, 3, N_JOINTS]
+
+    def _keep_overlap_joints(self):
+        self.data = self.data[..., self.keep_joints]
+    
+    def _filter_nan(self):
+        notnan = ~np.isnan(np.reshape(self.data, (self.data.shape[0], -1)))
+        notnan = np.all(notnan, axis=-1)
+        self.data = self.data[notnan, ...]
+
+    def __len__(self):
+        return self.data.shape[0]
+
+    def __getitem__(self, idx):
+        sample = torch.tensor(self.data[idx], dtype=torch.float32)
+        return sample.reshape(sample.shape[0], -1)
+    
+    @property
+    def input_seqlen(self):
+        return self.data.shape[1]
+    
+    @property
+    def input_shape(self):
+        return self.data.shape[2]*self.data.shape[3]
+
+    @classmethod
+    def load_mocap(self, path):
+        d = sio.loadmat(path, struct_as_record=False)
+        dataset = vars(d["mocap"][0][0])
+
+        markernames = dataset['_fieldnames']
+
+        mocap = []
+        for i in range(len(markernames)):
+            mocap.append(dataset[markernames[i]])
+
+        return np.stack(mocap, axis=2) #[N_FRAMES, 3, N_JOINTS]
+    
+    @classmethod
+    def vis_seq(self, seq, savepath, vidname):
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        from matplotlib.animation import FFMpegWriter
+
+        CONNECTIVITY = [
+            # (0, 1), (0, 2), (1, 2), (2, 3), (3, 6), (5, 7), (6, 7), (17, 18), (16, 19), (10, 11), (14, 15),
+            # (3, 4), (3, 12), (3, 13), (4, 5), (5, 8), (5, 9), (8, 17), (9, 16), (12, 10), (13, 14), 
+            (8, 10), (8, 6), (8, 7), (9, 10), (10, 2), (10, 3), (2, 4), (3, 5), (0, 6), (1, 7),
+        ]
+        metadata = dict(title='rat7m', artist='Matplotlib')
+        writer = FFMpegWriter(fps=2, metadata=metadata)
+
+        # set up save path
+        if not os.path.exists(savepath):
+            os.makedirs(savepath)
+
+        fig = plt.figure(figsize=(8, 8))
+        ax = fig.add_subplot(1, 1, 1, projection='3d')
+
+        # xliml, xlimr = seq[:, 0, :].min(), seq[:, 0, :].max()
+        # yliml, ylimr = seq[:, 1, :].min(), seq[:, 1, :].max()
+        # zliml, zlimr = seq[:, 2, :].min(), seq[:, 2, :].max()
+
+        with writer.saving(fig, os.path.join(savepath, f'{vidname}.mp4'), dpi=300):
+            for i in range(seq.shape[0]):
+                pose = seq[i]
+                ax.scatter3D(pose[0], pose[1], pose[2], color='k')
+
+                for (index_from, index_to) in CONNECTIVITY:
+                    xs, ys, zs = [np.array([pose[k, index_from], pose[k, index_to]]) for k in range(3)]
+                    ax.plot3D(xs, ys, zs, c='dodgerblue', lw=2)
+                
+                # ax.set_xlim(-100, 150)
+                # ax.set_ylim(100, 250)
+                # ax.set_zlim(0, 150)
+                    
+                writer.grab_frame()
+                ax.clear()
+        plt.close()
+
+if __name__ == "__main__":
+    import time
+
+    start = time.time()
+    rat7m_dataset = RAT7MSeqDataset(downsample=1)
+    print("initialization: ", time.time()-start)
+
+    n_samples = len(rat7m_dataset)
+    print(n_samples)
+
+    idx = np.random.choice(n_samples)
+
+    seq = rat7m_dataset.__getitem__(idx)
+    print(seq.shape)
+
+    RAT7MSeqDataset.vis_seq(seq, '/media/mynewdrive/datasets/rat7m/vis', idx)
