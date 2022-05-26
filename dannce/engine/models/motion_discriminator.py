@@ -8,7 +8,7 @@ class TemporalEncoder(nn.Module):
             self,
             input_size=69,
             n_layers=1,
-            hidden_size=2048,
+            hidden_size=1024,
             add_linear=True,
             bidirectional=False,
             use_residual=True
@@ -70,9 +70,10 @@ class MotionDiscriminator(nn.Module):
         linear_size = self.rnn_size if not feature_pool == "concat" else self.rnn_size * 2
 
         if feature_pool == "attention" :
-            self.attention = SelfAttention(attention_size=self.attention_size,
-                                       layers=self.attention_layers,
-                                       dropout=self.attention_dropout)
+            self.attention = SelfAttention(
+                attention_size=self.attention_size,
+                layers=self.attention_layers,
+                dropout=self.attention_dropout)
         if use_spectral_norm:
             self.fc = spectral_norm(nn.Linear(linear_size, output_size))
         else:

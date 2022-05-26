@@ -7,7 +7,14 @@ from dannce.engine.trainer.train_utils import prepare_batch
 from dannce.engine.models.motion_discriminator import adv_disc_loss
 
 class MotionDANNCETrainer(DannceTrainer):
-    def __init__(self, motion_loader, motion_discriminator=None, temporal_encoder=None, accumulation_step=4, **kwargs):
+    def __init__(self, 
+            motion_loader, 
+            motion_discriminator, 
+            disc_optimizer=None,
+            temporal_encoder=None, 
+            accumulation_step=4, 
+            **kwargs
+        ):
         super(MotionDANNCETrainer, self).__init__(**kwargs)
 
         # we might want to perform multiple sub-batches during one forward pass
@@ -24,9 +31,13 @@ class MotionDANNCETrainer(DannceTrainer):
         self.motion_discriminator = motion_discriminator
         self.masking = torch.LongTensor([8, 12, 15, 19, 16, 20, 7, 11, 3, 5, 4]).to(self.device)
 
+        self.disc_optimizer = disc_optimizer
+
         # display
         if self.motion_discriminator is not None:
+            self.stats_keys += ['DiscriminatorLoss']
             self.train_stats_keys += ["train_DiscriminatorLoss"]
+            self.valid_stats_keys += ["val_DiscriminatorLoss"]
 
     def _train_epoch(self, epoch):
         
@@ -39,6 +50,7 @@ class MotionDANNCETrainer(DannceTrainer):
             volumes, grid_centers, keypoints_3d_gt, aux = prepare_batch(batch, self.device)
 
             self.optimizer.zero_grad()
+            self.disc_optimizer.zero_grad()
 
             inputs = torch.split(volumes, volumes.shape[0] // self.accumulation_step, dim=0)
             grids = torch.split(grid_centers, volumes.shape[0] // self.accumulation_step, dim=0)
@@ -89,7 +101,9 @@ class MotionDANNCETrainer(DannceTrainer):
             pbar.set_description(result)
 
             total_loss.backward()
+            # d_loss.backward()
             self.optimizer.step()
+            self.disc_optimizer.step()
 
             epoch_loss_dict = self._update_step(epoch_loss_dict, loss_dict)
 
@@ -136,6 +150,10 @@ class MotionDANNCETrainer(DannceTrainer):
                 # compute supervised keypoint loss
                 fake_motion_seq = fake_motion_seq.reshape(*keypoints_3d_gt.shape)
                 _, loss_dict = self.loss.compute_loss(keypoints_3d_gt, fake_motion_seq, None, grid_centers, None)
+                
+                # no discriminator loss should be computed; display purpose only
+                loss_dict['DiscriminatorLoss'] = torch.zeros(()).item()
+                
                 epoch_loss_dict = self._update_step(epoch_loss_dict, loss_dict)
 
                 metric_dict = self.metrics.evaluate(fake_motion_seq.detach().cpu().numpy(), keypoints_3d_gt.clone().cpu().numpy())

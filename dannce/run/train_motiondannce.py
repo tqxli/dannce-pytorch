@@ -1,5 +1,6 @@
 import numpy as np
 from typing import Dict
+import shutil
 
 import torch
 
@@ -39,6 +40,8 @@ def train(params: Dict):
     # setup logger
     setup_logging(params["dannce_train_dir"])
     logger = get_logger("training.log", verbosity=2)
+
+    # copy train script to training folder just in case...
 
     # load in necessary exp & data information
     exps = params["exp"]
@@ -350,7 +353,7 @@ def train(params: Dict):
     
     temporal_encoder = TemporalEncoder(
         input_size=69, 
-        use_residual=True,
+        n_layers=2,
     ).to(device) if with_temporal_encoder else None
 
     motion_discriminator = MotionDiscriminator(
@@ -358,14 +361,22 @@ def train(params: Dict):
         input_size=mocap_dataset.input_shape,
         num_layers=1,
         feature_pool='attention',
+        # attention
         attention_size=512,
+        attention_layers=3,
+        attention_dropout=0.2,
+
     ).to(device)
 
-    model_params = [p for p in posenet.parameters() if p.requires_grad] 
+    # use separate optimizer for generator and discriminator
+    gen_params = [p for p in posenet.parameters() if p.requires_grad] 
     if with_temporal_encoder:
-        model_params += [p for p in temporal_encoder.parameters() if p.requires_grad]
-    model_params += [p for p in motion_discriminator.parameters() if p.requires_grad]
-    optimizer = torch.optim.Adam(model_params, lr=params["lr"])
+        gen_params += [p for p in temporal_encoder.parameters() if p.requires_grad]
+
+    gen_optimizer = torch.optim.Adam(gen_params, lr=params["lr"])
+
+    disc_params = [p for p in motion_discriminator.parameters() if p.requires_grad]
+    disc_optimizer = torch.optim.Adam(disc_params, lr=0.00005, weight_decay=0.0)
 
     logger.info("COMPLETE\n")
 
@@ -382,7 +393,8 @@ def train(params: Dict):
         valid_dataloader=valid_dataloader,
         # train
         accumulation_step=accumulation_step,
-        optimizer=optimizer,
+        optimizer=gen_optimizer,
+        disc_optimizer=disc_optimizer,
         device=device,
         logger=logger,
         visualize_batch=False,
