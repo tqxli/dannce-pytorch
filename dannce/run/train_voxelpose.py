@@ -15,12 +15,6 @@ from dannce.engine.trainer.voxelpose_trainer import VoxelPoseTrainer
 from dannce.engine.logging.logger import setup_logging, get_logger
 
 process = psutil.Process(os.getpid())
-
-_DEFAULT_VIDDIR = "videos"
-_DEFAULT_VIDDIR_SIL = "videos_sil"
-_DEFAULT_COMSTRING = "COM"
-_DEFAULT_COMFILENAME = "com3d.mat"
-_DEFAULT_SEG_MODEL = 'weights/maskrcnn.pth'
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "1"
 
 def load_data_into_mem(params, logger, partition, n_cams, generator, train=True):
