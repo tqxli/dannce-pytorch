@@ -1,5 +1,6 @@
 """Entrypoints for dannce training and prediction."""
 import dannce.run.train_voxelpose as voxelpose
+import dannce.run.train_motiondannce as motiondannce
 from dannce.interface import (
     # com_predict,
     # com_train,
@@ -158,6 +159,12 @@ def social_dannce_train_cli():
     social_dannce_train(params)
 
 def custom_model_train_cli():
+    _TYPES = {
+        'motiondannce': motiondannce.train,
+        'voxelpose3d': voxelpose.train,
+        'backbone2d': voxelpose.train2d,
+    }
+
     parser = argparse.ArgumentParser(
         description="Custom model train CLI",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -165,7 +172,21 @@ def custom_model_train_cli():
     parser.set_defaults(**{**_param_defaults_shared, **_param_defaults_dannce})
     args = parse_clargs(parser, model_type="dannce", prediction=False)
     params = build_clarg_params(args, dannce_net=True, prediction=False)
-    voxelpose.train2d(params)
+    _TYPES[args.custom_model_type](params)
+
+def custom_model_predict_cli():
+    _TYPES = {
+        'motiondannce': motiondannce.inference
+    }
+
+    parser = argparse.ArgumentParser(
+        description="Custom model prediction CLI",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.set_defaults(**{**_param_defaults_shared, **_param_defaults_dannce})
+    args = parse_clargs(parser, model_type="dannce", prediction=True)
+    params = build_clarg_params(args, dannce_net=True, prediction=True)
+    _TYPES[args.custom_model_type](params)
 
 def build_clarg_params(
     args: argparse.Namespace, dannce_net: bool, prediction: bool
@@ -286,6 +307,12 @@ def add_shared_args(
         "--training-fraction",
         dest="training_fraction",
         type=float,
+    )
+
+    parser.add_argument(
+        "--custom-model-type",
+        dest="custom_model_type",
+        type=str
     )
 
     return parser
