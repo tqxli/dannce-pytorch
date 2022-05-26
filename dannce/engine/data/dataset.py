@@ -583,7 +583,8 @@ class PoseDatasetNPY(PoseDatasetFromMem):
                 y (np.ndarray): Target
         """
         if self.temporal_chunk_list is not None:
-            list_IDs_temp = self.temporal_chunk_list[index]
+            indices = self.temporal_chunk_list[index]
+            list_IDs_temp = [self.list_IDs[idx] for idx in indices]
         elif self.pairs is not None:
             list_IDs_temp = self.pairs[index]
         else:
