@@ -193,8 +193,10 @@ def dannce_train(params: Dict):
             "predict_flag": False,
             "norm_im": False,
             "expval": True,
-            "occlusion": params["downscale_occluded_view"],
         }
+
+        if params["social_training"]:
+            spec_params["occlusion"] = params["downscale_occluded_view"],
 
         valid_params = {**base_params, **spec_params}
 
