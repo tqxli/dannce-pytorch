@@ -84,12 +84,12 @@ def dannce_train(params: Dict):
             params["loss"]["TemporalLoss"]["temporal_chunk_size"] = params["batch_size"]
         
         # option for using downsampled temporal sequences
-        try:
-            downsample = params["loss"]["TemporalLoss"]["downsample"]
-        except:
-            downsample = 1
+    try:
+        downsample = params["loss"]["TemporalLoss"]["downsample"]
+    except:
+        downsample = 1
         
-        params["downsample"] = downsample
+    params["downsample"] = downsample
     
     if "PairRepulsionLoss" in params["loss"].keys():
         params["social_training"] = True
