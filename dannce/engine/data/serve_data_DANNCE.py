@@ -713,7 +713,7 @@ def examine_npy_training(params, samples, aux=False):
     for e in range(len(params["exp"])):
         # for social, cannot use the same default npy volume dir for both animals
         label3d_name = os.path.basename(params["experiment"][e]["label3d_file"]).split(".mat")[0]
-        npy_folder = params["experiment"][e]["npy_vol_dir"] + "_" + label3d_name
+        npy_folder = params["experiment"][e]["npy_vol_dir"] + "_" + str(params["nvox"]) + "_" + label3d_name
         npydir[e] = npy_folder
 
         # create missing npy directories
