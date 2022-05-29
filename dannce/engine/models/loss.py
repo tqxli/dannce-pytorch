@@ -1,8 +1,11 @@
 from abc import abstractmethod
+from os import PRIO_PROCESS
+
+import numpy as np
 import torch 
 import torch.nn as nn
 import torch.nn.functional as F
-from dannce.engine.models.body_limb import SYMMETRY
+from dannce.engine.data.body_profiles.utils import SYMMETRY, load_body_profile
 from dannce.engine.models.vis import draw_voxels
 from dannce.engine.data import ops
 
@@ -82,6 +85,38 @@ class TemporalLoss(BaseLoss):
         else:
             loss_temp = (diff**2).sum(1).sqrt().mean()
         return self.loss_weight * loss_temp
+
+class BoneLengthLoss(BaseLoss):
+    def __init__(self, priors, body_profile="rat23", **kwargs):
+        super().__init__(**kwargs)
+
+        self.animal = body_profile
+        self.limbs = torch.LongTensor(load_body_profile(body_profile)["limbs"]) #[n_limbs, 2]
+        self.priors = np.load(priors, allow_pickle=True) #[n_limbs, 2]
+
+        self._construct_intervals()
+    
+    def _construct_intervals(self):
+        self.intervals = []
+        for (mean, std) in self.priors:
+            self.intervals.append([mean-std, mean+std])
+        
+        self.intervals = torch.tensor(np.stack(self.intervals, axis=0), dtype=torch.float32).unsqueeze(0) #[1, n_limbs, 2]
+        self.lbound, self.ubound = self.intervals[..., 0], self.intervals[..., 1] #[1, n_limbs]
+
+    def forward(self, kpts_gt, kpts_pred):
+        """
+        kpts_pred: [bs, 3, n_joints]
+        """
+        device = kpts_pred.device
+        kpts_from = kpts_pred[:, :, self.limbs[:, 0].to(device)] #[bs, 3, n_limbs]
+        kpts_to = kpts_pred[:, :, self.limbs[:, 1].to(device)] #[bs, 3, n_limbs]
+        lens = torch.norm(kpts_from-kpts_to, dim=1, p=2) #[bs, n_limbs]
+        
+        loss = torch.maximum(lens - self.ubound.to(device), torch.zeros(())) + torch.maximum(self.lbound.to(device) - lens, torch.zeros(()))
+
+        return self.loss_weight * loss.mean()
+
 
 class BodySymmetryLoss(BaseLoss):
     def __init__(self, animal="mouse22", **kwargs):
