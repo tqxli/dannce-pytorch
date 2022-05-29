@@ -7,12 +7,11 @@ from copy import deepcopy
 
 from dannce.engine.data import serve_data_DANNCE, dataset, generator, processing
 from dannce.interface import make_folder
+import dannce.config as config
 from dannce.engine.logging.logger import setup_logging, get_logger
 from dannce.engine.trainer.motiondannce_trainer import MotionDANNCETrainer
 from dannce.engine.models.nets import initialize_train, initialize_model
 from dannce.engine.models.motion_discriminator import MotionDiscriminator, TemporalEncoder
-# from dannce.interface import setup_dannce_predict
-from dannce.config import print_and_set, setup_predict
 from dannce.engine.data.processing import savedata_tomat, savedata_expval
 
 def train(params: Dict):
@@ -24,19 +23,22 @@ def train(params: Dict):
     Raises:
         Exception: Error if training mode is invalid.
     """
-    # turn off currently unavailable features
-    params["multi_mode"] = False
-    params["depth"] = False
-    params["n_views"] = int(params["n_views"])
+    (
+        params,
+        base_params,
+        shared_args,
+        shared_args_train,
+        shared_args_valid
+    ) = config.setup_train(params)
 
-    # require temporal chunking
-    accumulation_step = 2
-    downsample = 1
-    with_temporal_encoder = True
-
+    # handle specific params
+    custom_model_params = params["custom_model"]
     params["use_temporal"] = True
-    params["temporal_chunk_size"] = params["batch_size"] * accumulation_step
-    params["downsample"] = downsample
+    params["temporal_chunk_size"] = params["batch_size"] * custom_model_params["accumulation_step"]
+    params["downsample"] = downsample = custom_model_params["downsample"]
+
+    with_temporal_encoder = "temporal_encoder" in custom_model_params.keys()
+    with_motion_discriminator = "motion_discriminator" in custom_model_params.keys()
 
     # Make the training directory if it does not exist.
     make_folder("dannce_train_dir", params)
@@ -44,8 +46,6 @@ def train(params: Dict):
     # setup logger
     setup_logging(params["dannce_train_dir"])
     logger = get_logger("training.log", verbosity=2)
-
-    # copy train script to training folder just in case...
 
     # load in necessary exp & data information
     exps = params["exp"]
@@ -99,32 +99,10 @@ def train(params: Dict):
     segmentation_model = None
 
     base_params = {
-        "dim_in": (
-            params["crop_height"][1] - params["crop_height"][0],
-            params["crop_width"][1] - params["crop_width"][0],
-        ),
-        "n_channels_in": params["n_channels_in"],
-        "batch_size": 1,
-        "n_channels_out": params["new_n_channels_out"],
-        "out_scale": params["sigma"],
-        "crop_width": params["crop_width"],
-        "crop_height": params["crop_height"],
-        "vmin": params["vmin"],
-        "vmax": params["vmax"],
-        "nvox": params["nvox"],
-        "interp": params["interp"],
-        "depth": params["depth"],
-        "mode": outmode,
+        **base_params,
         "camnames": camnames,
-        "immode": params["immode"],
-        "shuffle": False,  # will shuffle later
-        "rotation": False,  # will rotate later if desired
         "vidreaders": vids,
-        "distort": True,
-        "crop_im": False,
         "chunks": total_chunks,
-        "mono": params["mono"],
-        "mirror": params["mirror"],
     }
 
     if params["social_training"]:
@@ -141,7 +119,7 @@ def train(params: Dict):
             "predict_flag": False,
             "norm_im": False,
             "expval": True,
-            # "occlusion": params["downscale_occluded_view"],
+            #"occlusion": params["downscale_occluded_view"],
         }
 
         valid_params = {**base_params, **spec_params}
@@ -230,41 +208,6 @@ def train(params: Dict):
         params["n_rand_views"] = params["n_views"]
         params["rand_view_replace"] = True
 
-    shared_args = {
-        "chan_num": params["chan_num"],
-        "expval": params["expval"],
-        "nvox": params["nvox"],
-        "heatmap_reg": params["heatmap_reg"],
-        "heatmap_reg_coeff": params["heatmap_reg_coeff"],
-        "occlusion": params["downscale_occluded_view"]
-    }
-    shared_args_train = {
-        "rotation": params["rotate"],
-        "augment_hue": params["augment_hue"],
-        "augment_brightness": params["augment_brightness"],
-        "augment_continuous_rotation": params["augment_continuous_rotation"],
-        "mirror_augmentation": params["mirror_augmentation"],
-        "right_keypoints": params["right_keypoints"],
-        "left_keypoints": params["left_keypoints"],
-        "bright_val": params["augment_bright_val"],
-        "hue_val": params["augment_hue_val"],
-        "rotation_val": params["augment_rotation_val"],
-        "replace": params["rand_view_replace"],
-        "random": randflag,
-        "n_rand_views": params["n_rand_views"],
-    }
-    shared_args_valid = {
-        "rotation": False,
-        "augment_hue": False,
-        "augment_brightness": False,
-        "augment_continuous_rotation": False,
-        "mirror_augmentation": False,
-        "shuffle": False,
-        "replace": False,
-        "n_rand_views": params["n_rand_views"] if cam3_train else None,
-        "random": True if cam3_train else False,
-    }
-
     if params["use_npy"]:
         genfunc = dataset.PoseDatasetNPY
         args_train = {
@@ -339,38 +282,33 @@ def train(params: Dict):
 
     train_dataloader = torch.utils.data.DataLoader(
         train_generator, batch_size=1, shuffle=True, collate_fn=serve_data_DANNCE.collate_fn,
-        num_workers=params["batch_size"]
+        # num_workers=params["batch_size"],
     )
     valid_dataloader = torch.utils.data.DataLoader(
         valid_generator, batch_size=1, shuffle=False, collate_fn=serve_data_DANNCE.collate_fn,
-        num_workers=params["batch_size"]
+        # num_workers=params["batch_size"],
     )
 
-    # mocap dataset
+    # initialize mocap dataset
     mocap_dataset = dataset.RAT7MSeqDataset(downsample=downsample, seqlen=params["temporal_chunk_size"])
-    mocap_dataloader = torch.utils.data.DataLoader(mocap_dataset, 1, shuffle=True, num_workers=params["batch_size"])
+    mocap_dataloader = torch.utils.data.DataLoader(mocap_dataset, 1, shuffle=True)
 
     # Build network
     logger.info("Initializing Network...")
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
     posenet, _, lr_scheduler = initialize_train(params, n_cams, device, logger)
     
+    # temporal encoder
     temporal_encoder = TemporalEncoder(
-        input_size=69, 
-        n_layers=2,
+        input_size=params["n_channels_out"]*3, 
+        **custom_model_params["temporal_encoder"]
     ).to(device) if with_temporal_encoder else None
 
+    # motion discriminator
     motion_discriminator = MotionDiscriminator(
-        rnn_size=512,
         input_size=mocap_dataset.input_shape,
-        num_layers=1,
-        feature_pool='attention',
-        # attention
-        attention_size=512,
-        attention_layers=3,
-        attention_dropout=0.2,
-
-    ).to(device)
+        **custom_model_params["motion_discriminator"]
+    ).to(device) if with_motion_discriminator else None
 
     # use separate optimizer for generator and discriminator
     gen_params = [p for p in posenet.parameters() if p.requires_grad] 
@@ -380,7 +318,7 @@ def train(params: Dict):
     gen_optimizer = torch.optim.Adam(gen_params, lr=params["lr"])
 
     disc_params = [p for p in motion_discriminator.parameters() if p.requires_grad]
-    disc_optimizer = torch.optim.Adam(disc_params, lr=0.00005, weight_decay=0.0)
+    disc_optimizer = torch.optim.Adam(disc_params, lr=custom_model_params["optim"]["lr"])
 
     logger.info("COMPLETE\n")
 
@@ -391,12 +329,13 @@ def train(params: Dict):
         model=posenet,
         temporal_encoder=temporal_encoder,
         motion_discriminator=motion_discriminator,
+        disc_loss_weight= custom_model_params["disc_loss_weight"],
         # data
         motion_loader=mocap_dataloader,
         train_dataloader=train_dataloader,
         valid_dataloader=valid_dataloader,
         # train
-        accumulation_step=accumulation_step,
+        accumulation_step=custom_model_params["accumulation_step"],
         optimizer=gen_optimizer,
         disc_optimizer=disc_optimizer,
         device=device,
@@ -408,18 +347,18 @@ def train(params: Dict):
     trainer.train()
 
 def inference(params):
-    accumulation_step = 2
-    downsample = 1
-
-    params["downsample"] = downsample
-    params["batch_size"] *= accumulation_step
-    if isinstance(params['maxbatch'], (int, np.integer)):
-        params["maxbatch"] = int(params["maxbatch"] / accumulation_step)
-
     os.environ["CUDA_VISIBLE_DEVICES"] = params["gpu_id"]
     make_folder("dannce_predict_dir", params)
 
-    params = setup_predict(params)[0]
+    params = config.setup_predict(params)[0]
+
+    # handle custom model parameters
+    custom_model_params = params["custom_model"]
+    accumulation_step = custom_model_params["accumulation_step"]
+    params["downsample"] = downsample = custom_model_params["downsample"]
+    params["batch_size"] *= accumulation_step
+    if isinstance(params['maxbatch'], (int, np.integer)):
+        params["maxbatch"] = int(params["maxbatch"] / accumulation_step)
 
     (
         params["experiment"][0],
@@ -479,35 +418,10 @@ def inference(params):
 
     # Parameters
     valid_params = {
-        "dim_in": (
-            params["crop_height"][1] - params["crop_height"][0],
-            params["crop_width"][1] - params["crop_width"][0],
-        ),
-        "n_channels_in": params["n_channels_in"],
-        "batch_size": params["batch_size"],
-        "n_channels_out": params["n_channels_out"],
-        "out_scale": params["sigma"],
-        "crop_width": params["crop_width"],
-        "crop_height": params["crop_height"],
-        "vmin": params["vmin"],
-        "vmax": params["vmax"],
-        "nvox": params["nvox"],
-        "interp": params["interp"],
-        "depth": params["depth"],
-        "channel_combo": params["channel_combo"],
-        "mode": "coordinates",
+        **valid_params,
         "camnames": camnames,
-        "immode": params["immode"],
-        "shuffle": False,
-        "rotation": False,
         "vidreaders": vids,
-        "distort": True,
-        "expval": params["expval"],
-        "crop_im": False,
         "chunks": params["chunks"],
-        "mono": params["mono"],
-        "mirror": params["mirror"],
-        "predict_flag": True,
     }
 
     # Datasets
@@ -572,10 +486,10 @@ def inference(params):
         print(
             "Maxbatch was set to a larger number of matches than exist in the video. Truncating"
         )
-        print_and_set(params, "maxbatch", len(predict_generator))
+        config.print_and_set(params, "maxbatch", len(predict_generator))
 
     if params["maxbatch"] == "max":
-        print_and_set(params, "maxbatch", len(predict_generator))
+        config.print_and_set(params, "maxbatch", len(predict_generator))
 
     if params["write_npy"] is not None:
         print("Writing samples to .npy files")

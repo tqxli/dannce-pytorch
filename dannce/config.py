@@ -452,6 +452,14 @@ def setup_train(params):
     randflag = params["channel_combo"] == "random"
     outmode = "coordinates" if params["expval"] else "3dprob"
 
+    if params["use_npy"]:
+        # mono conversion will happen from RGB npy files, and the generator
+        # needs to b aware that the npy files contain RGB content
+        params["chan_num"] = params["n_channels_in"]
+    else:
+        # Used to initialize arrays for mono, and also in *frommem (the final generator)
+        params["chan_num"] = 1 if params["mono"] else params["n_channels_in"]
+
     if cam3_train:
         params["n_rand_views"] = 3
         params["rand_view_replace"] = False

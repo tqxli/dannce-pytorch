@@ -13,6 +13,7 @@ class MotionDANNCETrainer(DannceTrainer):
             disc_optimizer=None,
             temporal_encoder=None, 
             accumulation_step=4, 
+            disc_loss_weight=1.0,
             **kwargs
         ):
         super(MotionDANNCETrainer, self).__init__(**kwargs)
@@ -30,6 +31,8 @@ class MotionDANNCETrainer(DannceTrainer):
         self.motion_iter = iter(self.motion_loader)
         self.motion_discriminator = motion_discriminator
         self.masking = torch.LongTensor([8, 12, 15, 19, 16, 20, 7, 11, 3, 5, 4]).to(self.device)
+
+        self.disc_loss_weight = disc_loss_weight
 
         self.disc_optimizer = disc_optimizer
 
@@ -93,6 +96,7 @@ class MotionDANNCETrainer(DannceTrainer):
             # compute supervised keypoint loss
             fake_motion_seq = fake_motion_seq.reshape(*keypoints_3d_gt.shape)
 
+            d_loss *= self.disc_loss_weight
             total_loss += d_loss
             loss_dict['DiscriminatorLoss'] = d_loss.item()
 

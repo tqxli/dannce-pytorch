@@ -172,7 +172,7 @@ def custom_model_train_cli():
     parser.set_defaults(**{**_param_defaults_shared, **_param_defaults_dannce})
     args = parse_clargs(parser, model_type="dannce", prediction=False)
     params = build_clarg_params(args, dannce_net=True, prediction=False)
-    _TYPES[args.custom_model_type](params)
+    _TYPES[params["custom_model"]["name"]](params)
 
 def custom_model_predict_cli():
     _TYPES = {
@@ -309,10 +309,15 @@ def add_shared_args(
         type=float,
     )
 
+    # parser.add_argument(
+    #     "--custom-model-type",
+    #     dest="custom_model_type",
+    #     type=str,
+    # )
+
     parser.add_argument(
-        "--custom-model-type",
-        dest="custom_model_type",
-        type=str
+        "--custom-model",
+        dest="custom_model",
     )
 
     return parser
