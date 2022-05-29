@@ -317,8 +317,11 @@ def train(params: Dict):
 
     gen_optimizer = torch.optim.Adam(gen_params, lr=params["lr"])
 
-    disc_params = [p for p in motion_discriminator.parameters() if p.requires_grad]
-    disc_optimizer = torch.optim.Adam(disc_params, lr=custom_model_params["optim"]["lr"])
+    if motion_discriminator is not None:
+        disc_params = [p for p in motion_discriminator.parameters() if p.requires_grad]
+        disc_optimizer = torch.optim.Adam(disc_params, lr=custom_model_params["optim"]["lr"])
+    else:
+        disc_optimizer = None
 
     logger.info("COMPLETE\n")
 
