@@ -1,8 +1,9 @@
 import numpy as np
 from typing import Dict
 import shutil
-
+import os, time
 import torch
+from copy import deepcopy
 
 from dannce.engine.data import serve_data_DANNCE, dataset, generator, processing
 from dannce.interface import make_folder
@@ -10,6 +11,9 @@ from dannce.engine.logging.logger import setup_logging, get_logger
 from dannce.engine.trainer.motiondannce_trainer import MotionDANNCETrainer
 from dannce.engine.models.nets import initialize_train, initialize_model
 from dannce.engine.models.motion_discriminator import MotionDiscriminator, TemporalEncoder
+# from dannce.interface import setup_dannce_predict
+from dannce.config import print_and_set, setup_predict
+from dannce.engine.data.processing import savedata_tomat, savedata_expval
 
 def train(params: Dict):
     """Train dannce network.
@@ -403,13 +407,6 @@ def train(params: Dict):
 
     trainer.train()
 
-import os, time
-from dannce.interface import setup_dannce_predict
-from dannce.config import print_and_set
-from dannce.engine.data.processing import savedata_tomat, savedata_expval
-from dannce.engine.trainer.train_utils import prepare_batch
-from copy import deepcopy
-
 def inference(params):
     accumulation_step = 2
     downsample = 1
@@ -422,7 +419,7 @@ def inference(params):
     os.environ["CUDA_VISIBLE_DEVICES"] = params["gpu_id"]
     make_folder("dannce_predict_dir", params)
 
-    params = setup_dannce_predict(params)
+    params = setup_predict(params)[0]
 
     (
         params["experiment"][0],
@@ -558,7 +555,10 @@ def inference(params):
     # model = build_model(params, camnames)
     print("Initializing Network...")
     posenet = initialize_model(params, len(camnames[0]), device)
-    temporal_encoder = TemporalEncoder(input_size=69, use_residual=True).to(device)
+    temporal_encoder = TemporalEncoder(
+        input_size=69, 
+        use_residual=True,
+        n_layers=2).to(device)
 
     # load prediction checkpoint (no discriminator)
     checkpoint = torch.load(params["dannce_predict_model"])

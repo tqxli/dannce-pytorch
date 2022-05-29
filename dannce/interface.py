@@ -3,20 +3,21 @@ import numpy as np
 import os
 from copy import deepcopy
 from datetime import datetime
-
-from dannce.engine.data import serve_data_DANNCE, dataset, generator, processing, ops, io
-from dannce.engine.data.processing import savedata_tomat, savedata_expval
-import dannce.engine.inference as inference
 from typing import Dict, Text
-import os, psutil
+import psutil
 
 import torch
+
+from dannce.engine.data import serve_data_DANNCE, dataset, generator, processing
+from dannce.engine.data.processing import savedata_tomat, savedata_expval
+import dannce.config as config
+import dannce.engine.inference as inference
 from dannce.engine.models.nets import initialize_train, initialize_model
 from dannce.engine.models.segmentation import get_instance_segmentation_model
 from dannce.engine.trainer.dannce_trainer import DannceTrainer, AutoEncoderTrainer
 from dannce.config import print_and_set
 from dannce.engine.logging.logger import setup_logging, get_logger
-from dannce.engine.data.processing import _DEFAULT_VIDDIR, _DEFAULT_VIDDIR_SIL, _DEFAULT_COMSTRING, _DEFAULT_COMFILENAME, _DEFAULT_SEG_MODEL
+from dannce.engine.data.processing import _DEFAULT_SEG_MODEL
 
 process = psutil.Process(os.getpid())
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "1"
@@ -31,8 +32,6 @@ def make_folder(key: Text, params: Dict):
     Raises:
         ValueError: Error if key is not defined.
     """
-    # would be nice to automatically create training folder name
-
     # Make the prediction directory if it does not exist.
     if params[key] is not None:
         if not os.path.exists(params[key]):            
@@ -55,44 +54,13 @@ def dannce_train(params: Dict):
     Raises:
         Exception: Error if training mode is invalid.
     """
-    # turn off currently unavailable features
-    params["multi_mode"] = False
-    params["depth"] = False
-
-    # Default to 6 views but a smaller number of views can be specified in the
-    # DANNCE config. If the legnth of the camera files list is smaller than
-    # n_views, relevant lists will be duplicated in order to match n_views, if
-    # possible.
-    params["n_views"] = int(params["n_views"])
-
-    # turn on flags for losses that require changes in inputs
-    if params["use_silhouette_in_volume"]:
-        params["use_silhouette"] = True
-        params["n_rand_views"] = None
-    
-    if "SilhouetteLoss" in params["loss"].keys():
-        params["use_silhouette"] = True
-
-    if "TemporalLoss" in params["loss"].keys():
-        params["use_temporal"] = True
-        params["temporal_chunk_size"] = temp_n = params["loss"]["TemporalLoss"]["temporal_chunk_size"]
-
-        # by default, the maximum batch size should be >= temporal seq len
-        if params["batch_size"] < temp_n:
-            print("Batch size < temporal seq size; reducing temporal chunk size.")
-            params["temporal_chunk_size"] = params["batch_size"]
-            params["loss"]["TemporalLoss"]["temporal_chunk_size"] = params["batch_size"]
-        
-        # option for using downsampled temporal sequences
-    try:
-        downsample = params["loss"]["TemporalLoss"]["downsample"]
-    except:
-        downsample = 1
-        
-    params["downsample"] = downsample
-    
-    if "PairRepulsionLoss" in params["loss"].keys():
-        params["social_training"] = True
+    (
+        params,
+        base_params,
+        shared_args,
+        shared_args_train,
+        shared_args_valid
+    ) = config.setup_train(params)
 
     # Make the training directory if it does not exist.
     make_folder("dannce_train_dir", params)
@@ -165,32 +133,10 @@ def dannce_train(params: Dict):
     segmentation_model = None
 
     base_params = {
-        "dim_in": (
-            params["crop_height"][1] - params["crop_height"][0],
-            params["crop_width"][1] - params["crop_width"][0],
-        ),
-        "n_channels_in": params["n_channels_in"],
-        "batch_size": 1,
-        "n_channels_out": params["new_n_channels_out"],
-        "out_scale": params["sigma"],
-        "crop_width": params["crop_width"],
-        "crop_height": params["crop_height"],
-        "vmin": params["vmin"],
-        "vmax": params["vmax"],
-        "nvox": params["nvox"],
-        "interp": params["interp"],
-        "depth": params["depth"],
-        "mode": outmode,
+        **base_params,
         "camnames": camnames,
-        "immode": params["immode"],
-        "shuffle": False,  # will shuffle later
-        "rotation": False,  # will rotate later if desired
         "vidreaders": vids,
-        "distort": True,
-        "crop_im": False,
         "chunks": total_chunks,
-        "mono": params["mono"],
-        "mirror": params["mirror"],
     }
 
     if params["social_training"]:
@@ -354,59 +300,7 @@ def dannce_train(params: Dict):
             y_train, y_valid, X_train_grid, X_valid_grid, params
         )
 
-    # We apply data augmentation with another data generator class
-    randflag = params["channel_combo"] == "random"
-
-    if cam3_train:
-        params["n_rand_views"] = 3
-        params["rand_view_replace"] = False
-        randflag = True
-
-    if params["n_rand_views"] == 0:
-        print(
-            "Using default n_rand_views augmentation with {} views and with replacement".format(
-                params["n_views"]
-            )
-        )
-        print("To disable n_rand_views augmentation, set it to None in the config.")
-        params["n_rand_views"] = params["n_views"]
-        params["rand_view_replace"] = True
-
-    shared_args = {
-        "chan_num": params["chan_num"],
-        "expval": params["expval"],
-        "nvox": params["nvox"],
-        "heatmap_reg": params["heatmap_reg"],
-        "heatmap_reg_coeff": params["heatmap_reg_coeff"],
-        "occlusion": params["downscale_occluded_view"]
-    }
-    shared_args_train = {
-        "rotation": params["rotate"],
-        "augment_hue": params["augment_hue"],
-        "augment_brightness": params["augment_brightness"],
-        "augment_continuous_rotation": params["augment_continuous_rotation"],
-        "mirror_augmentation": params["mirror_augmentation"],
-        "right_keypoints": params["right_keypoints"],
-        "left_keypoints": params["left_keypoints"],
-        "bright_val": params["augment_bright_val"],
-        "hue_val": params["augment_hue_val"],
-        "rotation_val": params["augment_rotation_val"],
-        "replace": params["rand_view_replace"],
-        "random": randflag,
-        "n_rand_views": params["n_rand_views"],
-    }
-    shared_args_valid = {
-        "rotation": False,
-        "augment_hue": False,
-        "augment_brightness": False,
-        "augment_continuous_rotation": False,
-        "mirror_augmentation": False,
-        "shuffle": False,
-        "replace": False,
-        "n_rand_views": params["n_rand_views"] if cam3_train else None,
-        "random": True if cam3_train else False,
-    }
-
+    # # We apply data augmentation with another data generator class
     if params["use_npy"]:
         genfunc = dataset.PoseDatasetNPY
         args_train = {
@@ -521,7 +415,7 @@ def dannce_predict(params: Dict):
     os.environ["CUDA_VISIBLE_DEVICES"] = params["gpu_id"]
     make_folder("dannce_predict_dir", params)
 
-    params = setup_dannce_predict(params)
+    params, valid_params = config.setup_predict(params)
 
     (
         params["experiment"][0],
@@ -581,38 +475,13 @@ def dannce_predict(params: Dict):
     if params["immode"] == "vid":
         vids = {}
         vids = processing.initialize_vids(params, datadict, 0, vids, pathonly=True)
-
+    
     # Parameters
     valid_params = {
-        "dim_in": (
-            params["crop_height"][1] - params["crop_height"][0],
-            params["crop_width"][1] - params["crop_width"][0],
-        ),
-        "n_channels_in": params["n_channels_in"],
-        "batch_size": params["batch_size"],
-        "n_channels_out": params["n_channels_out"],
-        "out_scale": params["sigma"],
-        "crop_width": params["crop_width"],
-        "crop_height": params["crop_height"],
-        "vmin": params["vmin"],
-        "vmax": params["vmax"],
-        "nvox": params["nvox"],
-        "interp": params["interp"],
-        "depth": params["depth"],
-        "channel_combo": params["channel_combo"],
-        "mode": "coordinates",
+        **valid_params,
         "camnames": camnames,
-        "immode": params["immode"],
-        "shuffle": False,
-        "rotation": False,
         "vidreaders": vids,
-        "distort": True,
-        "expval": params["expval"],
-        "crop_im": False,
         "chunks": params["chunks"],
-        "mono": params["mono"],
-        "mirror": params["mirror"],
-        "predict_flag": True,
     }
 
     # Datasets
@@ -735,47 +604,6 @@ def dannce_predict(params: Dict):
             num_markers=params["n_markers"],
             tcoord=False,
         )
-
-
-def setup_dannce_predict(params):
-    # Depth disabled until next release.
-    params["depth"] = False
-    # Make the prediction directory if it does not exist.
-    
-    params["net_name"] = params["net"]
-    params["n_views"] = int(params["n_views"])
-
-    # While we can use experiment files for DANNCE training,
-    # for prediction we use the base data files present in the main config
-    # Grab the input file for prediction
-    params["label3d_file"] = processing.grab_predict_label3d_file()
-    params["base_exp_folder"] = os.path.dirname(params["label3d_file"])
-    params["multi_mode"] = False
-
-    print("Using camnames: {}".format(params["camnames"]))
-    # Also add parent params under the 'experiment' key for compatibility
-    # with DANNCE's video loading function
-    if (params["use_silhouette_in_volume"]) or (params["write_visual_hull"] is not None):
-        params["viddir_sil"] = os.path.join(params["base_exp_folder"], _DEFAULT_VIDDIR_SIL)
-        
-    params["experiment"] = {}
-    params["experiment"][0] = params
-
-    if params["start_batch"] is None:
-        params["start_batch"] = 0
-        params["save_tag"] = None
-    else:
-        params["save_tag"] = params["start_batch"]
-
-    if params["new_n_channels_out"] is not None:
-        params["n_markers"] = params["new_n_channels_out"]
-    else:
-        params["n_markers"] = params["n_channels_out"]
-
-    # For real mono prediction
-    params["chan_num"] = 1 if params["mono"] else params["n_channels_in"]
-
-    return params
 
 def social_dannce_train(params):
     return

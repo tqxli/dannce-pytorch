@@ -20,12 +20,12 @@ from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
 from dannce.engine.data import serve_data_DANNCE, io
 from dannce.config import make_paths_safe, make_none_safe
-_DEFAULT_VIDDIR = "videos"
-_DEFAULT_VIDDIR_SIL = "videos_sil"
-_DEFAULT_COMSTRING = "COM"
-_DEFAULT_COMFILENAME = "com3d.mat"
-_DEFAULT_SEG_MODEL = 'weights/maskrcnn.pth'
-
+# _DEFAULT_VIDDIR = "videos"
+# _DEFAULT_VIDDIR_SIL = "videos_sil"
+# _DEFAULT_COMSTRING = "COM"
+# _DEFAULT_COMFILENAME = "com3d.mat"
+# _DEFAULT_SEG_MODEL = 'weights/maskrcnn.pth'
+from dannce.config import _DEFAULT_VIDDIR, _DEFAULT_VIDDIR_SIL, _DEFAULT_SEG_MODEL
 """
 VIDEO
 """
@@ -132,21 +132,7 @@ def generate_readers(
 """
 LOAD EXP INFO
 """
-def grab_predict_label3d_file(defaultdir=""):
-    """
-    Finds the paths to the training experiment yaml files.
-    """
-    def_ep = os.path.join(".", defaultdir)
-    label3d_files = os.listdir(def_ep)
-    label3d_files = [
-        os.path.join(def_ep, f) for f in label3d_files if "dannce.mat" in f
-    ]
-    label3d_files.sort()
 
-    if len(label3d_files) == 0:
-        raise Exception("Did not find any *dannce.mat file in {}".format(def_ep))
-    print("Using the following *dannce.mat files: {}".format(label3d_files[0]))
-    return label3d_files[0]
 
 def load_expdict(params, e, expdict, _DEFAULT_VIDDIR, _DEFAULT_VIDDIR_SIL, logger):
     """
