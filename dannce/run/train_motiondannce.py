@@ -290,7 +290,11 @@ def train(params: Dict):
     )
 
     # initialize mocap dataset
-    mocap_dataset = dataset.RAT7MSeqDataset(downsample=downsample, seqlen=params["temporal_chunk_size"])
+    mocap_dataset = dataset.RAT7MSeqDataset(
+        downsample=downsample, 
+        seqlen=params["temporal_chunk_size"], 
+        root=custom_model_params["mocap_root"]
+    )
     mocap_dataloader = torch.utils.data.DataLoader(mocap_dataset, 1, shuffle=True)
 
     # Build network
