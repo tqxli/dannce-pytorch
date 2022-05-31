@@ -87,19 +87,26 @@ class TemporalLoss(BaseLoss):
         return self.loss_weight * loss_temp
 
 class BoneLengthLoss(BaseLoss):
-    def __init__(self, priors, body_profile="rat23", **kwargs):
+    def __init__(self, priors, body_profile="rat23", mask=None, **kwargs):
         super().__init__(**kwargs)
 
         self.animal = body_profile
         self.limbs = torch.LongTensor(load_body_profile(body_profile)["limbs"]) #[n_limbs, 2]
         self.priors = np.load(priors, allow_pickle=True) #[n_limbs, 2]
 
-        self._construct_intervals()
+        # consider mask out some of the constraints (e.g. Snout-SpineF, 2)
+        self.mask = mask
+
+        self._construct_intervals(do_masking=(self.mask is not None))
     
-    def _construct_intervals(self):
+    def _construct_intervals(self, do_masking=False):
         self.intervals = []
-        for (mean, std) in self.priors:
-            self.intervals.append([mean-std, mean+std])
+
+        for idx, (mean, std) in enumerate(self.priors):
+            if idx in self.mask:
+                self.intervals.append([-10000, 10000])
+            else:
+                self.intervals.append([mean-std, mean+std])
         
         self.intervals = torch.tensor(np.stack(self.intervals, axis=0), dtype=torch.float32).unsqueeze(0) #[1, n_limbs, 2]
         self.lbound, self.ubound = self.intervals[..., 0], self.intervals[..., 1] #[1, n_limbs]
