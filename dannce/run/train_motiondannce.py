@@ -364,6 +364,9 @@ def inference(params):
     accumulation_step = custom_model_params["accumulation_step"]
     params["downsample"] = downsample = custom_model_params["downsample"]
     params["batch_size"] *= accumulation_step
+
+    valid_params["batch_size"] = params["batch_size"]
+
     if isinstance(params['maxbatch'], (int, np.integer)):
         params["maxbatch"] = int(params["maxbatch"] / accumulation_step)
 
