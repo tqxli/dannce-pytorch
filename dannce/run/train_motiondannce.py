@@ -357,7 +357,7 @@ def inference(params):
     os.environ["CUDA_VISIBLE_DEVICES"] = params["gpu_id"]
     make_folder("dannce_predict_dir", params)
 
-    params = config.setup_predict(params)[0]
+    params, valid_params = config.setup_predict(params)
 
     # handle custom model parameters
     custom_model_params = params["custom_model"]
@@ -476,10 +476,11 @@ def inference(params):
     # model = build_model(params, camnames)
     print("Initializing Network...")
     posenet = initialize_model(params, len(camnames[0]), device)
+    # temporal encoder
     temporal_encoder = TemporalEncoder(
-        input_size=69, 
-        use_residual=True,
-        n_layers=2).to(device)
+        input_size=params["n_channels_out"]*3, 
+        **custom_model_params["temporal_encoder"]
+    ).to(device)
 
     # load prediction checkpoint (no discriminator)
     checkpoint = torch.load(params["dannce_predict_model"])

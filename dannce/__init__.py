@@ -51,6 +51,7 @@ _param_defaults_shared = {
     "predict_labeled_only": False,
     "training_fraction": None,
     "custom_model": None,
+    "label3d_index": 0
 }
 _param_defaults_dannce = {
     "metric": ["euclidean_distance_3D"],

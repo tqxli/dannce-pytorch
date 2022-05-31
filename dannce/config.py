@@ -19,7 +19,7 @@ _DEFAULT_SEG_MODEL = 'weights/maskrcnn.pth'
 
 # from dannce.engine.data.processing import _DEFAULT_VIDDIR, _DEFAULT_VIDDIR_SIL, _DEFAULT_COMSTRING, _DEFAULT_COMFILENAME
 
-def grab_predict_label3d_file(defaultdir=""):
+def grab_predict_label3d_file(defaultdir="", index=0):
     """
     Finds the paths to the training experiment yaml files.
     """
@@ -32,8 +32,8 @@ def grab_predict_label3d_file(defaultdir=""):
 
     if len(label3d_files) == 0:
         raise Exception("Did not find any *dannce.mat file in {}".format(def_ep))
-    print("Using the following *dannce.mat files: {}".format(label3d_files[0]))
-    return label3d_files[0]
+    print("Using the following *dannce.mat files: {}".format(label3d_files[index]))
+    return label3d_files[index]
 
 def infer_params(params, dannce_net, prediction):
     """
@@ -557,7 +557,7 @@ def setup_predict(params):
     # While we can use experiment files for DANNCE training,
     # for prediction we use the base data files present in the main config
     # Grab the input file for prediction
-    params["label3d_file"] = grab_predict_label3d_file()
+    params["label3d_file"] = grab_predict_label3d_file(index=params["label3d_index"])
     params["base_exp_folder"] = os.path.dirname(params["label3d_file"])
     params["multi_mode"] = False
 

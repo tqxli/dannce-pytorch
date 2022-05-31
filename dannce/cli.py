@@ -186,7 +186,7 @@ def custom_model_predict_cli():
     parser.set_defaults(**{**_param_defaults_shared, **_param_defaults_dannce})
     args = parse_clargs(parser, model_type="dannce", prediction=True)
     params = build_clarg_params(args, dannce_net=True, prediction=True)
-    _TYPES[args.custom_model_type](params)
+    _TYPES[params["custom_model"]["name"]](params)
 
 def build_clarg_params(
     args: argparse.Namespace, dannce_net: bool, prediction: bool
@@ -794,6 +794,12 @@ def add_dannce_predict_args(
         "--write-npy",
         dest="write_npy",
         help="If not None, uses this base path to write large dataset to npy files",
+    )
+    parser.add_argument(
+        "--label3d-index",
+        dest="label3d_index",
+        type=int,
+        default=0,
     )
 
     return parser
