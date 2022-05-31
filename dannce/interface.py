@@ -81,7 +81,7 @@ def dannce_train(params: Dict):
         device = torch.device("cuda") # use all available GPUs
     else:
         params["gpu_id"] = [0]
-        device = torch.device("cuda: 0")
+        device = torch.device("cuda:0")
     logger.info("***Use {} GPU for training.***".format(params["gpu_id"]))
     # device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
