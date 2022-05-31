@@ -792,7 +792,7 @@ def write_debug(
 
 def save_volumes_into_npy(params, npy_generator, missing_npydir, samples, logger, silhouette=False):
     logger.info("Generating missing npy files ...")
-    for i, samp in enumerate(npy_generator.list_IDs):
+    for i, samp in tqdm(enumerate(npy_generator.list_IDs)):
         fname = "0_{}.npy".format(samp.split("_")[1])
         rr = npy_generator.__getitem__(i)
         print(i, end="\r")
