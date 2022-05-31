@@ -73,6 +73,17 @@ def dannce_train(params: Dict):
     # Temporarily commented out to test on dsplus gpu
     # if not params["multi_gpu_train"]:
     # os.environ["CUDA_VISIBLE_DEVICES"] = params["gpu_id"]
+    # deploy GPU devices
+    assert torch.cuda.is_available(), "No available GPU device."
+    
+    if params["multi_gpu_train"]:
+        params["gpu_id"] = list(range(torch.cuda.device_count()))
+        device = torch.device("cuda") # use all available GPUs
+    else:
+        params["gpu_id"] = [0]
+        device = torch.device("cuda: 0")
+    logger.info("***Use {} GPU for training.***".format(params["gpu_id"]))
+    # device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
     # load in necessary exp & data information
     exps = params["exp"]
@@ -97,13 +108,10 @@ def dannce_train(params: Dict):
 
     # Dump the params into file for reproducibility
     processing.save_params_pickle(params)
-    logger.info(params)
+    # logger.info(params)
 
     # Setup additional variables for later use
     n_cams = len(camnames[0])
-    dannce_train_dir = params["dannce_train_dir"]
-    outmode = "coordinates" if params["expval"] else "3dprob"
-    cam3_train = True if params["cam3_train"] else False # only use 3 cameras for training
     tifdirs = []  # Training from single images not yet supported in this demo
 
     # Two possible data loading schemes:
@@ -123,7 +131,7 @@ def dannce_train(params: Dict):
 
     # make train/valid splits
     partition = processing.make_data_splits(
-        samples, params, dannce_train_dir, num_experiments, 
+        samples, params, params["dannce_train_dir"], num_experiments, 
         temporal_chunks=temporal_chunks)
     if params["social_training"]:
         partition, pairs = processing.resplit_social(partition)
@@ -203,8 +211,12 @@ def dannce_train(params: Dict):
         valid_generator = genfunc(*valid_gen_params, **valid_params)
 
         # load everything into memory
-        X_train, X_train_grid, y_train = processing.load_volumes_into_mem(params, logger, partition, n_cams, train_generator, train=True, social=params["social_training"])
-        X_valid, X_valid_grid, y_valid = processing.load_volumes_into_mem(params, logger, partition, n_cams, valid_generator, train=False, social=params["social_training"])
+        X_train, X_train_grid, y_train = processing.load_volumes_into_mem(
+            params, logger, partition, n_cams, train_generator, train=True, social=params["social_training"]
+        )
+        X_valid, X_valid_grid, y_valid = processing.load_volumes_into_mem(
+            params, logger, partition, n_cams, valid_generator, train=False, social=params["social_training"]
+        )
 
         if params["debug_volume_tifdir"] is not None:
             # When this option is toggled in the config, rather than
@@ -388,7 +400,6 @@ def dannce_train(params: Dict):
     
     # Build network
     logger.info("Initializing Network...")
-    device = "cuda:0" if torch.cuda.is_available() else "cpu"
     model, optimizer, lr_scheduler = initialize_train(params, n_cams, device, logger)
     logger.info("COMPLETE\n")
 

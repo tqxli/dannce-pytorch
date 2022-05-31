@@ -118,7 +118,13 @@ def initialize_model(params, n_cams, device):
 
     model = DANNCE(**model_params)
 
-    model = model.to(device)
+    # model = model.to(device)
+    if params["multi_gpu_train"]:
+        model = nn.parallel.DataParallel(model, device_ids=params["gpu_id"])
+        model.to(device)
+    else:
+        model.to(device)
+
     return model
 
 def initialize_train(params, n_cams, device, logger):
