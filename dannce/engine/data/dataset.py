@@ -539,7 +539,6 @@ class PoseDatasetNPY(PoseDatasetFromMem):
         mono=False,
         cam1=False,    
         sigma=10,
-        pairs=None,
         **kwargs
     ):
         """Generates 3d conv data from npy files.
