@@ -213,9 +213,12 @@ class GaussianRegLoss(BaseLoss):
         return self.loss_weight * loss
 
 class PairRepulsionLoss(BaseLoss):
-    def __init__(self, delta=5, **kwargs):
+    def __init__(self, delta=5, pairwise=False, **kwargs):
         super().__init__(**kwargs)
         self.delta = delta
+
+        # whether only penalize repulsion on the same set of keypoints (e.g. elbow of animal 1 and elbow of animal 2)
+        self.pairwise = pairwise
     
     def forward(self, kpts_gt, kpts_pred):
         """
@@ -223,17 +226,24 @@ class PairRepulsionLoss(BaseLoss):
         """
         bs, n_joints = kpts_pred.shape[0], kpts_pred.shape[-1]
         
-        kpts_pred = kpts_pred.reshape(2, -1, *kpts_pred.shape[1:]) # [n_pairs, 2, 3, n_joints]
+        kpts_pred = kpts_pred.reshape(-1, 2, *kpts_pred.shape[1:]) # [n_pairs, 2, 3, n_joints]
 
-        # compute the distance between each joint of animal 1 and all joints of animal 2
-        a1 = kpts_pred[0].repeat(1, 1, n_joints) # [n, 3, n_joints^2]
-        a2 = kpts_pred[1].repeat(1, n_joints, 1).reshape(a1.shape)
+        if self.pairwise:
+            diff = torch.diff(kpts_pred, axis=1).squeeze() #[n_pairs, 3, n_joints]
+            dist = (diff ** 2).sum(1).sqrt() #[n_pairs, n_joints]
 
-        diffsqr = (a1 - a2)**2
-        dist = diffsqr.sum(1).sqrt() # [bs, n_joints^2] 
+        else:
+            # compute the distance between each joint of animal 1 and all joints of animal 2
+            a1 = kpts_pred[:, 0, :, :].repeat(1, 1, n_joints) # [n_pairs, 3, n_joints^2]
+            a2 = kpts_pred[:, 1, :, :].repeat(1, n_joints, 1).reshape(a1.shape)
+
+            diffsqr = (a1 - a2)**2
+            dist = diffsqr.sum(1).sqrt() # [n_pairs, n_joints^2] 
+        
+        # only penalize distance <= specified threshold delta
         dist = torch.maximum(self.delta - dist, torch.zeros_like(dist))
         
-        return self.loss_weight * (dist.sum() / bs)
+        return self.loss_weight * dist.mean()
 
 
 class SilhouetteLoss(BaseLoss):
