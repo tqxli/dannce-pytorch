@@ -103,7 +103,7 @@ class BoneLengthLoss(BaseLoss):
         self.intervals = []
 
         for idx, (mean, std) in enumerate(self.priors):
-            if idx in self.mask:
+            if (do_masking) and (idx in self.mask):
                 self.intervals.append([-10000, 10000])
             else:
                 self.intervals.append([mean-std, mean+std])
