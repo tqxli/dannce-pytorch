@@ -336,10 +336,11 @@ class PoseDatasetFromMem(torch.utils.data.Dataset):
                     n_cam * self.chan_num,
                     n_cam * self.chan_num + self.chan_num,
                 )
-                X_temp = torch.from_numpy(X[..., channel_ids]).permute(0, 3, 4, 1, 2) #[bs, D, 3, H, W]
+                X_temp = torch.from_numpy(X[..., channel_ids]).permute(0, 4, 1, 2, 3) #[bs, 3, H, W, D]
+                X_temp = X_temp.reshape(*X_temp.shape[:3], -1) #[bs, 3, H, W*D]
                 random_hue_val = float(torch.empty(1).uniform_(-self.hue_val, self.hue_val))
                 X_temp = TF.adjust_hue(X_temp, random_hue_val)
-                X[..., channel_ids] = X_temp.permute(0, 3, 4, 1, 2).numpy()
+                X[..., channel_ids] = X_temp.reshape(*X_temp.shape[:3], X_temp.shape[2], -1).permute(0, 2, 3, 4, 1).numpy()
 
         elif self.augment_hue:
             warnings.warn(
@@ -352,10 +353,11 @@ class PoseDatasetFromMem(torch.utils.data.Dataset):
                     n_cam * self.chan_num,
                     n_cam * self.chan_num + self.chan_num,
                 )
-                X_temp = torch.as_tensor(X[..., channel_ids]).permute(0, 3, 4, 1, 2)
+                X_temp = torch.as_tensor(X[..., channel_ids]).permute(0, 4, 1, 2, 3)
+                X_temp = X_temp.reshape(*X_temp.shape[:3], -1) #[bs, 3, H, W*D]
                 random_bright_val = float(torch.empty(1).uniform_(1-self.bright_val, 1+self.bright_val))
                 X_temp = TF.adjust_brightness(X_temp, random_bright_val)
-                X[..., channel_ids] = X_temp.permute(0, 3, 4, 1, 2).numpy()
+                X[..., channel_ids] = X_temp.reshape(*X_temp.shape[:3], X_temp.shape[2], -1).permute(0, 2, 3, 4, 1).numpy()
 
         if self.mirror_augmentation and self.expval and aux is None:
             if np.random.rand() > 0.5:
