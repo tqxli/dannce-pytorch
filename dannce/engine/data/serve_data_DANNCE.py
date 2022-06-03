@@ -183,8 +183,7 @@ def get_chunks(sample_inds, left_bound, right_bound, maxlen, downsample):
 
         chunk_ind_list.append(chunk)
 
-    all_samples_inds = np.concatenate(chunk_ind_list)
-
+    all_samples_inds = np.concatenate(chunk_ind_list).astype(int)
     return all_samples_inds
 
 def prepare_temporal_seqs(params, samples, labels, downsample=1, valid=False, support=False):
