@@ -22,6 +22,7 @@ def prepare_data(
     support=False,
     downsample=1,
     return_cammat=False,
+    return_full2d=False
 ):
     """Assemble necessary data structures given a set of config params.
 
@@ -115,7 +116,7 @@ def prepare_data(
             else:
                 dcom = np.nanmean(data, axis=2, keepdims=True)
             data = np.concatenate((data, dcom), axis=-1)
-        elif com_flag:
+        elif (not return_full2d) and com_flag:
             # Convert to COM only if not already
             if len(data.shape) == 3 and params["n_instances"] == 1:
                 if nanflag:
@@ -123,6 +124,8 @@ def prepare_data(
                 else:
                     data = np.nanmean(data, axis=2)
                 data = data[:, :, np.newaxis]
+        
+
         ddict[params["camnames"][i]] = data
 
     data_3d = labels[0]["data_3d"]
@@ -695,11 +698,11 @@ def setup_dataloaders(train_dataset, valid_dataset, params):
 
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset, batch_size=valid_batch_size, shuffle=True, collate_fn=collate_fn,
-        num_workers=params["batch_size"]
+        # num_workers=valid_batch_size,
     )
     valid_dataloader = torch.utils.data.DataLoader(
         valid_dataset, valid_batch_size, shuffle=False, collate_fn=collate_fn,
-        num_workers=params["batch_size"]
+        # num_workers=valid_batch_size
     )
     return train_dataloader, valid_dataloader
 

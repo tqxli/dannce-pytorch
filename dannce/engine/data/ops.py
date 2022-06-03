@@ -396,14 +396,8 @@ def expected_value_3d(prob_map, grid_centers):
 
     return weighted_centers # [bs, 3, channels]
 
-def expected_value_2d(prob_map):
+def expected_value_2d(prob_map, grid):
     bs, channels, h, w = prob_map.shape
-
-    x_coord, y_coord = torch.meshgrid(torch.arange(h), torch.arange(w))
-    grid = torch.stack((
-        x_coord.transpose(1, 0).flatten(), 
-        y_coord.transpose(1, 0).flatten()), dim=-1
-    ).unsqueeze(0).unsqueeze(-1) #[1, h*w, 2, 1]
 
     prob_map = prob_map.permute(0, 2, 3, 1).reshape(bs, -1, channels).unsqueeze(2) #[bs, h*w, 1, channels]
     weighted_centers = prob_map * grid #[bs, h*w, 2, channels]
