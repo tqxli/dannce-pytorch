@@ -275,6 +275,7 @@ def do_COM_load(exp: Dict, expdict: Dict, e, params: Dict, training=True):
         valid=(e in params["valid_exp"]) if params["valid_exp"] is not None else False,
         support=(e in params["support_exp"]) if params["support_exp"] is not None else False,
         downsample=params["downsample"],
+        return_full2d=params["return_full2d"] if "return_full2d" in params.keys() else False,
     )
 
     # If there is "clean" data (full marker set), can take the
@@ -673,11 +674,11 @@ def load_volumes_into_mem(params, logger, partition, n_cams, generator, train=Tr
         X = np.empty((n_samples, *gridsize, params["chan_num"]*n_cams), dtype="float32")
     logger.info(message)
 
-    X_grid, y = None, None
+    X_grid = np.empty((n_samples, params["nvox"] ** 3, 3), dtype="float32")
+    y = None
     if params["expval"]:
         if not silhouette: 
-            y = np.empty((n_samples, 3, params["n_channels_out"]), dtype="float32")
-            X_grid = np.empty((n_samples, params["nvox"] ** 3, 3), dtype="float32")
+            y = np.empty((n_samples, 3, params["n_channels_out"]), dtype="float32")   
     else:
         y = np.empty((n_samples, *gridsize, params["n_channels_out"]), dtype="float32")
 
@@ -698,6 +699,7 @@ def load_volumes_into_mem(params, logger, partition, n_cams, generator, train=Tr
                     X_grid[j, i], y[j, i] = rr[0][1][j], rr[1][0][j]
                 else:
                     X[j, i] = extract_3d_sil(vol)
+                    X_grid[j, i] = rr[0][1][j]
 
         X = np.reshape(X, (-1, *X.shape[2:]))
         if X_grid is not None:
@@ -715,12 +717,13 @@ def load_volumes_into_mem(params, logger, partition, n_cams, generator, train=Tr
                     X_grid[i], y[i] = rr[0][1], rr[1][0]
                 else:
                     X[i] = extract_3d_sil(vol)
+                    X_grid[i] = rr[0][1]
             else:
                 X[i], y[i] = rr[0], rr[1]
 
     if silhouette:
         logger.info("Now loading binary silhouettes")        
-        return None, None, X
+        return None, X_grid, X
     
     return X, X_grid, y
 
@@ -1672,3 +1675,50 @@ def extract_3d_sil_soft(vol, keeprange=3):
     print("{}\% of silhouette training voxels are occupied".format(
             100*np.sum((vol > 0))/len(vol.ravel())))
     return vol
+
+def compute_bbox_from_3dmask(mask3d, grids):
+    """
+    mask3d: [N, H, W, D, 1]
+    grid: [N, H*W*D, 3]
+    """
+    new_com3ds, new_dims = [], []
+    for mask, grid in zip(mask3d, grids):
+        mask = np.squeeze(mask) #[H, W, D]
+        h, w, d = np.where(mask)
+
+        h_l, h_u = h.min(), h.max()
+        w_l, w_u = w.min(), w.max()
+        d_l, d_u = d.min(), d.max()
+
+        corner1 = np.array([h_l, w_l, d_l])
+        corner2 = np.array([h_u, w_u, d_u])
+        mid_point = ((corner1 + corner2) / 2).astype(int)
+
+        grid = np.reshape(grid, (*mask.shape, 3))
+        
+        new_com3d = grid[mid_point[0], mid_point[1], mid_point[2]]
+
+        new_dim = grid[corner2[0], corner2[1], corner2[2]] - grid[corner1[0], corner1[1], corner1[2]]
+    
+        new_com3ds.append(new_com3d)
+        new_dims.append(new_dim)
+    
+    new_com3ds = np.stack(new_com3ds, axis=0)
+    new_dims = np.stack(new_dims, axis=0)
+
+    return new_com3ds, new_dims
+
+def create_new_labels(partition, old_com3ds, new_com3ds, new_dims, params):
+    com3d_dict, dim_dict = {}, {}
+    all_sampleIDs = [*partition["train_sampleIDs"], *partition["valid_sampleIDs"]]
+
+    default_dim = np.array([(params["vmax"]-params["vmin"])*0.8]*3)
+    for sampleID, new_com, new_dim in zip(all_sampleIDs, new_com3ds, new_dims):
+        if ((new_dim / 2) < params["vmax"]*0.6).sum() > 0:
+            com3d_dict[sampleID] = old_com3ds[sampleID]
+            dim_dict[sampleID] = default_dim
+        else:
+            com3d_dict[sampleID] = new_com
+            new_dim = 10*(new_dim // 10) + 40
+            dim_dict[sampleID] = new_dim
+    return com3d_dict, dim_dict

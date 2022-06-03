@@ -398,6 +398,9 @@ class DataGenerator_3Dconv(DataGenerator):
             
             mask = prediction["masks"][0].permute(1, 2, 0).detach().cpu().numpy()
             mask = (mask >= 0.5).astype(np.uint8)
+
+            # bbox = prediction["boxes"][0].cpu().numpy()
+            # com_pred = ((bbox[0] + bbox[2]) / 2, (bbox[1]+bbox[3]) / 2)
             
             thisim *= mask # return the segmented foreground object
 
@@ -1256,6 +1259,166 @@ class MultiviewImageGenerator(DataGenerator_3Dconv):
             y_2d.append(torch.stack([r[2] for r in results], dim=0))
 
         y_2d = torch.stack(y_2d, dim=0) #[BS, 6, 2, n_joints]
-        return (X, X_grid, cameras), (y_3d, y_2d)
+        
+        # self._visualize_multiview(list_IDs_temp[0], X[0], y_2d[0])
+
+        return (X.cpu(), X_grid.cpu(), cameras), (y_3d.cpu(), y_2d.cpu())
+
+class DataGenerator_Dynamic(DataGenerator_3Dconv):
+    def __init__(
+        self, 
+        list_IDs,
+        labels,
+        labels_3d,
+        camera_params,
+        clusterIDs,
+        com3d,
+        tifdirs,
+        dim_dict=None, 
+        **kwargs
+    ):
+        DataGenerator_3Dconv.__init__(
+            self,
+            list_IDs,
+            labels,
+            labels_3d,
+            camera_params,
+            clusterIDs,
+            com3d,
+            tifdirs,
+            **kwargs
+        )
+
+        self.dim_dict = dim_dict
+
+    def _generate_coord_grid(self, this_COM_3d, bbox_dim):
+        # print(this_COM_3d, bbox_dim)
+        bbox_min = -5*(bbox_dim // 10)  # rounding
+        bbox_max = 5*(bbox_dim // 10)
+
+        # if (bbox_max < self.vmax*0.4).sum() > 0:
+        #     # print("degenerate prediction")
+        #     bbox_min = bbox_min.new_ones(bbox_min.shape) * self.vmin*0.8
+        #     bbox_max = bbox_max.new_ones(bbox_max.shape) * self.vmax*0.8
+        bbox_dim = bbox_max - bbox_min
+        vsizes = (bbox_dim) / self.nvox
+        
+        xgrid = torch.arange(
+            bbox_min[0] + this_COM_3d[0] + vsizes[0] / 2,
+            this_COM_3d[0] + bbox_max[0],
+            vsizes[0],
+            dtype=torch.float32,
+            device=self.device,
+        )
+        ygrid = torch.arange(
+            bbox_min[1] + this_COM_3d[1] + vsizes[1] / 2,
+            this_COM_3d[1] + bbox_max[1],
+            vsizes[1],
+            dtype=torch.float32,
+            device=self.device,
+        )
+        zgrid = torch.arange(
+            bbox_min[2] + this_COM_3d[2] + vsizes[2] / 2,
+            this_COM_3d[2] + bbox_max[2],
+            vsizes[2],
+            dtype=torch.float32,
+            device=self.device,
+        )
+        (x_coord_3d, y_coord_3d, z_coord_3d) = torch.meshgrid(
+            xgrid, ygrid, zgrid
+        )
+
+        grid = torch.stack(
+            (
+            x_coord_3d.transpose(0, 1).flatten(),
+            y_coord_3d.transpose(0, 1).flatten(),
+            z_coord_3d.transpose(0, 1).flatten(),
+            ),
+            dim=1,
+        )
+
+        return (x_coord_3d, y_coord_3d, z_coord_3d), grid
 
         
+    def __data_generation(self, list_IDs_temp):
+        # Initialization
+        first_exp = int(self.list_IDs[0].split("_")[0])
+        X, y_3d, X_grid = self._init_vars(first_exp)
+
+        for i, ID in enumerate(list_IDs_temp):
+            experimentID = int(ID.split("_")[0])
+            num_cams = len(self.camnames[experimentID])
+
+            # For 3D ground truth (keypoints, COM)
+            this_y_3d = torch.as_tensor(self.labels_3d[ID],
+                dtype=torch.float32,
+                device=self.device,
+            )
+            this_COM_3d = torch.as_tensor(
+                self.com3d[ID], 
+                dtype=torch.float32, 
+                device=self.device
+            )
+            bbox_dim = torch.as_tensor(self.dim_dict[ID], device=self.device)
+
+            # Create and project the grid here,
+            coords_3d, grid = self._generate_coord_grid(this_COM_3d, bbox_dim)
+            X_grid[i] = grid
+            
+            # Generate training targets
+            y_3d = self._generate_targets(i, y_3d, this_y_3d, coords_3d)
+
+            # Compute projected images in parallel using multithreading
+            # ts = time.time()
+            arglist = []
+            if self.mirror:
+                # Here we only load the video once, and then parallelize the projection
+                # and sampling after mirror flipping. For setups that collect views
+                # in a single image with the use of mirrors
+                loadim = self.load_frame.load_vid_frame(
+                    self.labels[ID]["frames"][self.camnames[experimentID][0]],
+                    self.camnames[experimentID][0],
+                    extension=self.extension,
+                )[
+                    self.crop_height[0] : self.crop_height[1],
+                    self.crop_width[0] : self.crop_width[1],
+                ]
+
+            for c in range(num_cams):
+                args = [X_grid[i], self.camnames[experimentID][c], ID, experimentID]
+                if self.mirror:
+                    args.append(loadim)
+                
+                arglist.append(args)
+
+            result = self.threadpool.starmap(self.pj_method, arglist)
+
+            for c in range(num_cams):
+                ic = c + i * num_cams
+                X[ic, :, :, :, :] = result[c]
+
+        # adjust volume channels
+        X, y_3d = self._adjust_vol_channels(X, y_3d, first_exp, num_cams)
+        
+        # 3dprob is required for *training* MAX networks
+        if self.mode == "3dprob":
+            y_3d = y_3d.permute([0, 2, 3, 4, 1])
+
+        if self.mono and self.n_channels_in == 3:
+            # Convert from RGB to mono using the skimage formula. Drop the duplicated frames.
+            # Reshape so RGB can be processed easily.
+            X = X.reshape(*X.shape[:4], len(self.camnames[first_exp]), -1)
+            X = X[..., 0] * 0.2125 + X[..., 1] * 0.7154 + X[..., 2] * 0.0721
+
+        # Convert pytorch tensors back to numpy array
+        X, y_3d, X_grid = self._convert_tensor_to_numpy(X, y_3d, X_grid)
+
+        return self._finalize_samples(X, y_3d, X_grid)
+    
+    def __getitem__(self, index: int):
+        # Find list of IDs
+        list_IDs_temp = self.list_IDs[index*self.batch_size : (index+1)*self.batch_size]
+        # Generate data
+        X, y = self.__data_generation(list_IDs_temp)
+
+        return X, y
