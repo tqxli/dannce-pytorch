@@ -1150,9 +1150,12 @@ class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
         return inputs, targets
 
 class MultiviewImageGenerator(DataGenerator_3Dconv):
-    def __init__(self, *args, **kwargs):
-        super(MultiviewImageGenerator, self).__init__(*args, **kwargs)
+    def __init__(self, image_size=512, crop=False, crop_size=768, **kwargs):
         
+        super(MultiviewImageGenerator, self).__init__(**kwargs)
+        self.image_size = image_size
+        self.crop = crop
+        self.crop_size = crop_size
         self._get_camera_objs()
 
     def _get_camera_objs(self):
@@ -1166,8 +1169,32 @@ class MultiviewImageGenerator(DataGenerator_3Dconv):
                     R=param["R"], t=param["t"], K=param["K"], 
                     tdist=param["TDistort"], rdist=param["RDistort"]
                 )
+    def _get_bbox(self, com_precrop):
+        return (
+            com_precrop[1]-self.crop_size//2, 
+            com_precrop[0]-self.crop_size//2, 
+            com_precrop[1]+self.crop_size//2, 
+            com_precrop[0]+self.crop_size//2
+        )
+    
+    def _visualize_multiview(self, ID, ims, y_2d, savedir="debug_image"):
+        if not os.path.exists(savedir):
+            os.makedirs(savedir)
 
-    def _load_im(self, ID, camname, experimentID, cropsize=768, finalsize=512):
+        fig, axes = plt.subplots(2, 3, figsize=(10, 10))
+        axes = axes.flatten()
+        fname = f"{ID}.jpg"
+
+        for i, ax in enumerate(axes):
+            ax.imshow(ims[i].cpu().permute(1, 2, 0).numpy())
+        
+            # Plot keypoints
+            ax.scatter(y_2d[i, 0].cpu().numpy(), y_2d[i, 1].cpu().numpy(), marker='.', color='r', linewidths=0.5)
+            
+        fig.savefig(os.path.join(savedir, fname))
+        plt.close(fig)
+
+    def _load_im(self, ID, camname, experimentID):
         this_y = self.labels[ID]["data"][camname]
         com_precrop = np.nanmean(this_y.round(), axis=1).astype("float32")
         this_y = torch.tensor(this_y, dtype=torch.float32)
@@ -1177,19 +1204,24 @@ class MultiviewImageGenerator(DataGenerator_3Dconv):
             camname,
             extension=self.extension,
         )
-        im, cropdim = processing.cropcom(im, com_precrop, size=cropsize) #need to crop images due to memory constraints
-        im = cv2.resize(im, (finalsize, finalsize))
-        # bbox = (cropdim[0], cropdim[2], cropdim[1], cropdim[3])
-        bbox = (com_precrop[1]-cropsize//2, com_precrop[0]-cropsize//2, com_precrop[1]+cropsize//2, com_precrop[0]+cropsize//2)
-
         cam = deepcopy(self.camera_objs[experimentID][camname])
-        cam.update_after_crop(bbox) # need copy as there exists one set of cameras for each experiments, but different cropping
-        cam.update_after_resize((cropsize, cropsize), (finalsize, finalsize))
-
-        new_y = this_y.clone()
-        new_y[0, :] -= cropdim[2]
-        new_y[1, :] -= cropdim[0]
-        new_y *= (finalsize / cropsize) 
+        new_y = this_y.clone() #[2, 23]
+        
+        if self.crop:
+            # crop images due to memory constraints
+            im, cropdim = processing.cropcom(im, com_precrop, size=self.cropsize) 
+            bbox = self._get_bbox(com_precrop)
+            cam.update_after_crop(bbox)
+            new_y[0, :] -= cropdim[2]
+            new_y[1, :] -= cropdim[0]
+        
+        # resize
+        old_height, old_width = im.shape[:2]
+        im = cv2.resize(im, (self.image_size, self.image_size))
+        cam.update_after_resize((old_height, old_width), (self.image_size, self.image_size))
+        new_y[1, :] *= (im.shape[0] / old_height) # y
+        new_y[0, :] *= (im.shape[1] / old_width)  # x
+        
         return im, cam, new_y
     
     def __getitem__(self, index: int):
