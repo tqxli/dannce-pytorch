@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .blocks import *
+from dannce.engine.models.blocks import *
 from dannce.engine.data.ops import spatial_softmax, expected_value_3d
 
 class EncoderDecorder_DANNCE(nn.Module):
