@@ -1,5 +1,6 @@
 from abc import abstractmethod
 from os import PRIO_PROCESS
+from turtle import forward
 
 import numpy as np
 import torch 
@@ -50,6 +51,17 @@ class L2Loss(BaseLoss):
 
     def forward(self, kpts_gt, kpts_pred):
         loss = compute_mask_nan_loss(nn.MSELoss(reduction="sum"), kpts_gt, kpts_pred)
+        return self.loss_weight * loss
+    
+class MSELoss(BaseLoss):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def forward(self, heatmap_gt, heatmap_pred):
+        bs, n_joints = heatmap_pred.shape[:2]
+        heatmap_gt = heatmap_gt.permute(0, 4, 1, 2, 3)
+        loss = F.mse_loss(heatmap_gt, heatmap_pred)
+
         return self.loss_weight * loss
 
 class ReconstructionLoss(BaseLoss):
