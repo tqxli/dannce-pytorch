@@ -719,7 +719,7 @@ def load_volumes_into_mem(params, logger, partition, n_cams, generator, train=Tr
                     X[i] = extract_3d_sil(vol)
                     X_grid[i] = rr[0][1]
             else:
-                X[i], y[i] = rr[0], rr[1]
+                X[i], y[i] = rr[0][0], rr[1][0]
 
     if silhouette:
         logger.info("Now loading binary silhouettes")        
