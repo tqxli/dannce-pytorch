@@ -118,7 +118,7 @@ def infer_params(params, dannce_net, prediction):
         if not prediction and params["train_mode"] is None:
             raise Exception("Need to specific train_mode for DANNCE training")
 
-    print_and_set(params, "expval", True)
+    # print_and_set(params, "expval", True)
     if dannce_net:
         # infer crop_height and crop_width if None. Just use max dims of video, as
         # DANNCE does not need to crop.

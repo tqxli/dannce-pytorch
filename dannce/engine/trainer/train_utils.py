@@ -30,6 +30,8 @@ class LossHelper:
         for k, lossfcn in self.loss_fcns.items():
             if k == "GaussianRegLoss":
                 loss_val = lossfcn(kpts_gt, kpts_pred, heatmaps, grid_centers)
+            elif k == "MSELoss":
+                loss_val = lossfcn(kpts_gt, heatmaps)
             elif k == 'SilhouetteLoss' or k == 'ReconstructionLoss':
                 loss_val = lossfcn(aux, heatmaps)
             elif k == 'VarianceLoss':
@@ -57,8 +59,11 @@ class MetricHelper:
         
     def evaluate(self, kpts_gt, kpts_pred):
         # perform NaN masking ONCE before metric computation
-        kpts_pred, kpts_gt = self.mask_nan(kpts_pred, kpts_gt)
         metric_dict = {}
+        if len(self.metric_names) == 0:
+            return metric_dict
+            
+        kpts_pred, kpts_gt = self.mask_nan(kpts_pred, kpts_gt)
         for met in self.metric_names:
             metric_dict[met] = self.metrics[met](kpts_pred, kpts_gt)
 

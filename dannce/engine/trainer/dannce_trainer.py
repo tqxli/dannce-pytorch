@@ -93,8 +93,9 @@ class DannceTrainer(BaseTrainer):
 
             epoch_loss_dict = self._update_step(epoch_loss_dict, loss_dict)
 
-            metric_dict = self.metrics.evaluate(keypoints_3d_pred.detach().cpu().numpy(), keypoints_3d_gt.clone().cpu().numpy())
-            epoch_metric_dict = self._update_step(epoch_metric_dict, metric_dict)
+            if len(self.metrics.names) != 0: 
+                metric_dict = self.metrics.evaluate(keypoints_3d_pred.detach().cpu().numpy(), keypoints_3d_gt.clone().cpu().numpy())
+                epoch_metric_dict = self._update_step(epoch_metric_dict, metric_dict)
 
         if self.lr_scheduler is not None:
             self.lr_scheduler.step()
@@ -117,8 +118,9 @@ class DannceTrainer(BaseTrainer):
                 _, loss_dict = self.loss.compute_loss(keypoints_3d_gt, keypoints_3d_pred, heatmaps, grid_centers, aux)
                 epoch_loss_dict = self._update_step(epoch_loss_dict, loss_dict)
 
-                metric_dict = self.metrics.evaluate(keypoints_3d_pred.detach().cpu().numpy(), keypoints_3d_gt.clone().cpu().numpy())
-                epoch_metric_dict = self._update_step(epoch_metric_dict, metric_dict)
+                if len(self.metrics.names) != 0: 
+                    metric_dict = self.metrics.evaluate(keypoints_3d_pred.detach().cpu().numpy(), keypoints_3d_gt.clone().cpu().numpy())
+                    epoch_metric_dict = self._update_step(epoch_metric_dict, metric_dict)
         
         epoch_loss_dict, epoch_metric_dict = self._average(epoch_loss_dict), self._average(epoch_metric_dict)
         return {**epoch_loss_dict, **epoch_metric_dict}

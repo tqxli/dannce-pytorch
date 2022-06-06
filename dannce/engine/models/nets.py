@@ -74,9 +74,12 @@ class DANNCE(nn.Module):
         """
         volumes = self.encoder_decoder(volumes)
         heatmaps = self.output_layer(volumes)
+        heatmaps = spatial_softmax(heatmaps)
 
-        heatmaps_softmax = spatial_softmax(heatmaps)
-        coords = expected_value_3d(heatmaps_softmax, grid_centers)
+        if grid_centers is not None:
+            coords = expected_value_3d(heatmaps, grid_centers)
+        else:
+            coords = None
 
         return coords, heatmaps
         
@@ -156,3 +159,22 @@ def initialize_train(params, n_cams, device, logger):
         logger.info("Using learning rate scheduler.")
     
     return model, optimizer, lr_scheduler
+
+if __name__ == "__main__":
+    model_params = {
+        "input_channels": 18,
+        "output_channels": 23,
+        "norm_method": 'batch',
+        "input_shape": 80
+    }
+    model_params = {**model_params, "residual": False, "norm_upsampling": False}
+    model = DANNCE(**model_params)
+
+    input_shape = [128, 80, 8] # encoder-decoder downsamples for 3 times which force input dimension to be divisble by 2**3 = 8
+    inputs = torch.randn(1, 18, *input_shape)
+    (x_coord, y_coord, z_coord) = torch.meshgrid(torch.arange(input_shape[0]), torch.arange(input_shape[1]), torch.arange(input_shape[2]))
+    grid_centers = torch.stack((x_coord, y_coord, z_coord), axis=0).unsqueeze(0)
+    grid_centers = grid_centers.reshape(*grid_centers.shape[:2], -1)
+
+    _, heatmaps = model(inputs, grid_centers)
+    print(heatmaps.shape)
