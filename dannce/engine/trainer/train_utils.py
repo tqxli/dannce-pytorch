@@ -80,8 +80,8 @@ class MetricHelper:
         """
         pred = np.transpose(pred.copy(), (1, 0, 2))
         gt = np.transpose(gt.copy(), (1, 0, 2)) #[3, bs, n_joints]
-        pred = np.reshape(pred, (3, -1))
-        gt = np.reshape(gt, (3, -1)) #[3, bs*n_joints]
+        pred = np.reshape(pred, (pred.shape[0], -1))
+        gt = np.reshape(gt, (gt.shape[0], -1)) #[3, bs*n_joints]
 
         gi = np.where(~np.isnan(np.sum(gt, axis=0)))[0] #[bs*n_joints]
 
