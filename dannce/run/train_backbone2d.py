@@ -7,11 +7,10 @@ from tqdm import tqdm
 import torch
 from dannce import config
 from dannce.engine.data import serve_data_DANNCE, dataset, generator, processing
-from dannce.engine.models.voxelpose import FeatureDANNCE
+from dannce.engine.models.backbone import get_pose_net
 from dannce.engine.trainer.backbone_trainer import BackboneTrainer
 from dannce.interface import make_folder
 from dannce.engine.logging.logger import setup_logging, get_logger
-from dannce.run.train_voxelpose import setup_dataloaders
 
 process = psutil.Process(os.getpid())
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "1"
@@ -52,6 +51,8 @@ def train(params: Dict):
         shared_args_train,
         shared_args_valid
     ) = config.setup_train(params)
+
+    custom_model_params = params["custom_model"]
 
     # Make the training directory if it does not exist.
     make_folder("dannce_train_dir", params)
@@ -161,7 +162,7 @@ def train(params: Dict):
         images=X_valid,
         labels=y_valid,
     )
-
+    
     train_dataloader = torch.utils.data.DataLoader(
         train_generator, batch_size=params["batch_size"], shuffle=True, 
         # num_workers=valid_batch_size
@@ -174,7 +175,11 @@ def train(params: Dict):
     # Build network
     logger.info("Initializing Network...")
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
-    model = FeatureDANNCE(n_cams=n_cams, output_channels=22, input_shape=params["nvox"], bottleneck_channels=6).backbone
+    model = get_pose_net(
+        num_joints=params["n_channels_out"],
+        params=custom_model_params,
+        logger=logger
+    )
 
     model = model.to(device)
 

@@ -55,7 +55,6 @@ class BasicBlock(nn.Module):
 
         return out
 
-
 class Bottleneck(nn.Module):
     expansion = 4
 
@@ -96,15 +95,64 @@ class Bottleneck(nn.Module):
 
         return out
 
+class GlobalAveragePoolingHead(nn.Module):
+    def __init__(self, in_channels, n_classes):
+        super().__init__()
+
+        self.features = nn.Sequential(
+            nn.Conv2d(in_channels, 512, 3, stride=1, padding=1),
+            nn.BatchNorm2d(512, momentum=BN_MOMENTUM),
+            nn.MaxPool2d(2),
+            nn.ReLU(inplace=True),
+
+            nn.Conv2d(512, 256, 3, stride=1, padding=1),
+            nn.BatchNorm2d(256, momentum=BN_MOMENTUM),
+            nn.MaxPool2d(2),
+            nn.ReLU(inplace=True),
+        )
+
+        self.head = nn.Sequential(
+            nn.Linear(256, 512),
+            nn.ReLU(inplace=True),
+            nn.Linear(512, 256),
+            nn.ReLU(inplace=True),
+            nn.Linear(256, n_classes),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        x = self.features(x)
+
+        batch_size, n_channels = x.shape[:2]
+        x = x.view((batch_size, n_channels, -1))
+        x = x.mean(dim=-1)
+
+        out = self.head(x)
+
+        return out
 
 class PoseResNet(nn.Module):
+    def __init__(self, block, layers, num_joints,
+                 num_input_channels=3,
+                 deconv_with_bias=False,
+                 num_deconv_layers=3,
+                 num_deconv_filters=(256, 256, 256),
+                 num_deconv_kernels=(4, 4, 4),
+                 final_conv_kernel=1,
+                 alg_confidences=False,
+                 vol_confidences=False
+                 ):
+        super().__init__()
 
-    def __init__(self, block, layers, cfg, **kwargs):
+        self.num_joints = num_joints
+        self.num_input_channels = num_input_channels
         self.inplanes = 64
-        self.deconv_with_bias = cfg.POSE_RESNET.DECONV_WITH_BIAS
 
-        super(PoseResNet, self).__init__()
-        self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3,
+        self.deconv_with_bias = deconv_with_bias
+        self.num_deconv_layers, self.num_deconv_filters, self.num_deconv_kernels = num_deconv_layers, num_deconv_filters, num_deconv_kernels
+        self.final_conv_kernel = final_conv_kernel
+
+        self.conv1 = nn.Conv2d(num_input_channels, 64, kernel_size=7, stride=2, padding=3,
                                bias=False)
         self.bn1 = nn.BatchNorm2d(64, momentum=BN_MOMENTUM)
         self.relu = nn.ReLU(inplace=True)
@@ -114,19 +162,25 @@ class PoseResNet(nn.Module):
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
 
+        if alg_confidences:
+            self.alg_confidences = GlobalAveragePoolingHead(512 * block.expansion, num_joints)
+
+        if vol_confidences:
+            self.vol_confidences = GlobalAveragePoolingHead(512 * block.expansion, 32)
+
         # used for deconv layers
         self.deconv_layers = self._make_deconv_layer(
-            cfg.POSE_RESNET.NUM_DECONV_LAYERS,
-            cfg.POSE_RESNET.NUM_DECONV_FILTERS,
-            cfg.POSE_RESNET.NUM_DECONV_KERNELS,
+            self.num_deconv_layers,
+            self.num_deconv_filters,
+            self.num_deconv_kernels,
         )
 
         self.final_layer = nn.Conv2d(
-            in_channels=cfg.POSE_RESNET.NUM_DECONV_FILTERS[-1],
-            out_channels=cfg.NETWORK.NUM_JOINTS,
-            kernel_size=cfg.POSE_RESNET.FINAL_CONV_KERNEL,
+            in_channels=self.num_deconv_filters[-1],
+            out_channels=self.num_joints,
+            kernel_size=self.final_conv_kernel,
             stride=1,
-            padding=1 if cfg.POSE_RESNET.FINAL_CONV_KERNEL == 3 else 0
+            padding=1 if self.final_conv_kernel == 3 else 0
         )
 
     def _make_layer(self, block, planes, blocks, stride=1):
@@ -197,14 +251,25 @@ class PoseResNet(nn.Module):
         x = self.layer3(x)
         x = self.layer4(x)
 
-        features = self.deconv_layers(x)
-        heatmaps = self.final_layer(features)
+        alg_confidences = None
+        if hasattr(self, "alg_confidences"):
+            alg_confidences = self.alg_confidences(x)
 
-        return features, heatmaps
+        vol_confidences = None
+        if hasattr(self, "vol_confidences"):
+            vol_confidences = self.vol_confidences(x)
 
-    def init_weights(self, pretrained=''):
-        this_dir = os.path.dirname(__file__)
-        pretrained = os.path.join(this_dir, '../..', pretrained)
+        x = self.deconv_layers(x)
+        features = x
+
+        x = self.final_layer(x)
+        heatmaps = x
+
+        return heatmaps, features, alg_confidences, vol_confidences
+    
+    def init_weights(self, logger, pretrained=''):
+        #this_dir = os.path.dirname(__file__)
+        #pretrained = os.path.join(this_dir, '../..', pretrained)
         if os.path.isfile(pretrained):
             pretrained_state_dict = torch.load(pretrained)
             logger.info('=> loading pretrained models {}'.format(pretrained))
@@ -251,43 +316,35 @@ class PoseResNet(nn.Module):
                     if self.deconv_with_bias:
                         nn.init.constant_(m.bias, 0)
 
-
 resnet_spec = {18: (BasicBlock, [2, 2, 2, 2]),
                34: (BasicBlock, [3, 4, 6, 3]),
                50: (Bottleneck, [3, 4, 6, 3]),
                101: (Bottleneck, [3, 4, 23, 3]),
                152: (Bottleneck, [3, 8, 36, 3])}
 
-default_backbone_cfg = edict()
-default_backbone_cfg.POSE_RESNET = edict()
-default_backbone_cfg.POSE_RESNET.NUM_LAYERS = 50
-default_backbone_cfg.POSE_RESNET.DECONV_WITH_BIAS = False
-default_backbone_cfg.POSE_RESNET.NUM_DECONV_LAYERS = 3
-default_backbone_cfg.POSE_RESNET.NUM_DECONV_FILTERS = [256, 256, 256]
-default_backbone_cfg.POSE_RESNET.NUM_DECONV_KERNELS = [4, 4, 4]
-default_backbone_cfg.POSE_RESNET.FINAL_CONV_KERNEL = 1
+def get_pose_net(num_joints, params, logger):
+    block_class, layers = resnet_spec[params.get("num_layers", 50)]
 
-default_backbone_cfg.NETWORK = edict()
-default_backbone_cfg.NETWORK.PRETRAINED = ''
-default_backbone_cfg.NETWORK.PRETRAINED_BACKBONE = ''
-default_backbone_cfg.NETWORK.NUM_JOINTS = 22
+    model = PoseResNet(
+        block_class, layers, num_joints,
+        num_input_channels=3,
+        deconv_with_bias=False,
+        num_deconv_layers=params.get("num_deconv_layers", 3),
+        num_deconv_filters=params.get("num_deconv_filters", (256, 256, 256)),
+        num_deconv_kernels=params.get("num_deconv_kernels", (4, 4, 4)),
+        final_conv_kernel=1,
+        alg_confidences=params.get("alg_confidences", False),
+        vol_confidences=params.get("vol_confidences", False),
+    )
 
-def get_backbone(cfg=default_backbone_cfg, is_train=True, **kwargs):
-    num_layers = cfg.POSE_RESNET.NUM_LAYERS
-
-    block_class, layers = resnet_spec[num_layers]
-
-    model = PoseResNet(block_class, layers, cfg, **kwargs)
-
-    if is_train:
-        model.init_weights(cfg.NETWORK.PRETRAINED)
+    model.init_weights(logger, params.get("pretrained", ""))
 
     return model
 
 if __name__ == "__main__":
     import time 
 
-    model = get_backbone().to("cuda")
+    model = get_pose_net().to("cuda")
     input = torch.randn(2*6, 3, 512, 512).to("cuda")
     
     start = time.time()
