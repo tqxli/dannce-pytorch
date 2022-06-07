@@ -5,17 +5,16 @@ from copy import deepcopy
 from datetime import datetime
 from typing import Dict, Text
 import psutil
-
 import torch
 
 from dannce.engine.data import serve_data_DANNCE, dataset, generator, processing
 from dannce.engine.data.processing import savedata_tomat, savedata_expval
 import dannce.config as config
 import dannce.engine.inference as inference
-from dannce.engine.models.gcn import PoseGCN
-from dannce.engine.models.nets import initialize_train, initialize_model
+from dannce.engine.models.posegcn.nets import PoseGCN
+from dannce.engine.models.nets import initialize_model
 from dannce.engine.models.segmentation import get_instance_segmentation_model
-from dannce.engine.trainer.dannce_trainer import DannceTrainer, AutoEncoderTrainer
+from dannce.engine.trainer.dannce_trainer import DannceTrainer
 from dannce.config import print_and_set
 from dannce.engine.logging.logger import setup_logging, get_logger
 from dannce.engine.data.processing import _DEFAULT_SEG_MODEL
@@ -392,14 +391,17 @@ def train(params: Dict):
         pose_generator.load_state_dict(checkpoints["state_dict"])   
 
     # second stage: pose refiner
-    # input_dim = 3 * n_instances
     model = PoseGCN(
         pose_generator,
         input_dim=3,
         hid_dim=custom_model_params["hidden_dim"],
         n_layers=custom_model_params["n_layers"],
         n_instances = n_instances,
+        t_dim=params.get("temporal_chunk_size", 1),
+        non_local=custom_model_params.get("non_local", False),
+        base_block=custom_model_params.get("base_block", "sem")
     ).to(device)
+    
     model_params = [p for p in model.parameters() if p.requires_grad]
     optimizer = torch.optim.Adam(model_params, lr=params["lr"], eps=1e-7)
 
@@ -553,12 +555,16 @@ def predict(params):
     pose_generator = initialize_model(params, len(camnames[0]), "cpu")   
 
     # second stage: pose refiner
-    input_dim = 3 * n_instances
+    input_dim = 3
     model = PoseGCN(
         pose_generator,
         input_dim=input_dim,
         hid_dim=custom_model_params["hidden_dim"],
-        n_layers=custom_model_params["n_layers"]
+        n_layers=custom_model_params["n_layers"],
+        n_instances = n_instances,
+        t_dim=params.get("temporal_chunk_size", 1),
+        non_local=custom_model_params.get("non_local", False),
+        base_block=custom_model_params.get("base_block", "sem")
     ).to(device)
 
     # load predict model
