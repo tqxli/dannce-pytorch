@@ -7,9 +7,10 @@ from dannce.engine.data.body_profiles.utils import load_body_profile
 
 NUM_JOINTS = 23
 EDGE = load_body_profile("rat23")["limbs"]
+TEMPORAL_FLOW = np.array([0, 4, 9, 13, 17, 21]) # restrict the flows along temporal dimension 
 
 # using to build edge using GCN
-def build_adj_mx_from_edges(num_joints=NUM_JOINTS,edge=EDGE, social=False, t_dim=1):
+def build_adj_mx_from_edges(num_joints=NUM_JOINTS, edge=EDGE, social=False, t_dim=1, t_flow=TEMPORAL_FLOW):
     if social:
         inter = np.stack((np.arange(num_joints), np.arange(num_joints)+num_joints), axis=-1)
         edge = np.concatenate((edge, edge+num_joints, inter), axis=0)
@@ -18,7 +19,8 @@ def build_adj_mx_from_edges(num_joints=NUM_JOINTS,edge=EDGE, social=False, t_dim
     if t_dim > 1:
         inter, intra = [], []
         for i in range(t_dim-1):
-            inter.append(np.stack((np.arange(num_joints)+i*num_joints, np.arange(num_joints)+(i+1)*num_joints), axis=-1))
+            inter.append(np.stack((TEMPORAL_FLOW+i*num_joints, TEMPORAL_FLOW+(i+1)*num_joints), axis=-1))
+            # inter.append(np.stack((np.arange(num_joints)+i*num_joints, np.arange(num_joints)+(i+1)*num_joints), axis=-1))
         for i in range(t_dim):
             intra.append(edge+num_joints*i)
         inter = np.concatenate(inter, axis=0)

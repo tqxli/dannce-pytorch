@@ -8,6 +8,7 @@ from dannce.engine.models.posegcn.utils import *
 
 # NODES_GROUP = [[1, 2], [0, 3], [5, 6], [7, 11], [8, 9], [9, 10], [12, 13], [15, 19], [16, 17], [17, 18], [10, 12], [12, 13]]
 NODES_GROUP = [[i] for i in range(23)]
+TEMPORAL_FLOW = np.array([0, 4, 9, 13, 17, 21]) # restrict the flows along temporal dimension 
 
 class PoseGCN(nn.Module):
     def __init__(self, 
@@ -17,23 +18,26 @@ class PoseGCN(nn.Module):
             n_layers=4, 
             n_instances=1,
             t_dim=1,
+            t_flow=TEMPORAL_FLOW,
             non_local=False,
             nodes_group=NODES_GROUP,
             base_block='sem',
+            norm_type='batch',
+            dropout=None,
         ):
         super(PoseGCN, self).__init__()
         self.pose_generator = pose_generator
         self.n_instances = n_instances
-        self.adj = adj = build_adj_mx_from_edges(social=(n_instances > 1), t_dim=t_dim)
+        self.adj = adj = build_adj_mx_from_edges(social=(n_instances > 1), t_dim=t_dim, t_flow=t_flow)
         self.t_dim = t_dim
 
         # construct GCN
-        self.gconv_input = [_GraphConv(adj, input_dim, hid_dim, base_block=base_block)]
+        self.gconv_input = [_GraphConv(adj, input_dim, hid_dim, dropout, base_block=base_block, norm_type=norm_type)]
 
         gconv_layers = []
         if not non_local:
             for i in range(n_layers):
-                gconv_layers.append(_ResGraphConv(adj, hid_dim, hid_dim, hid_dim, None, base_block=base_block))
+                gconv_layers.append(_ResGraphConv(adj, hid_dim, hid_dim, hid_dim, dropout, base_block=base_block, norm_type=norm_type))
         else:
             group_size = len(nodes_group[0])
             # assert group_size > 1
@@ -48,7 +52,7 @@ class PoseGCN(nn.Module):
 
             self.gconv_input.append(_GraphNonLocal(hid_dim, grouped_order, restored_order, group_size))
             for i in range(n_layers):
-                gconv_layers.append(_ResGraphConv(adj, hid_dim, hid_dim, hid_dim, None, base_block=base_block))
+                gconv_layers.append(_ResGraphConv(adj, hid_dim, hid_dim, hid_dim, dropout, base_block=base_block, norm_type=norm_type))
                 gconv_layers.append(_GraphNonLocal(hid_dim, grouped_order, restored_order, group_size))
 
         self.gconv_input = nn.Sequential(*self.gconv_input)

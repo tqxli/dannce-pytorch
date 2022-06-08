@@ -1,8 +1,9 @@
-from email.mime import base
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import math
+
+from dannce.engine.models.posegcn.normalization import get_normalization
 
 """
 BASIC GCN CONV LAYERS
@@ -82,7 +83,7 @@ class ModulatedGraphConv(SemGraphConv):
 MODEL BLOCKS
 """
 class _GraphConv(nn.Module):
-    def __init__(self, adj, input_dim, output_dim, p_dropout=None, base_block='sem'):
+    def __init__(self, adj, input_dim, output_dim, p_dropout=None, base_block='sem', norm_type="batch"):
         super(_GraphConv, self).__init__()
 
         if base_block == 'sem':
@@ -91,7 +92,7 @@ class _GraphConv(nn.Module):
             convblock = ModulatedGraphConv
 
         self.gconv = convblock(input_dim, output_dim, adj)
-        self.bn = nn.BatchNorm1d(output_dim)
+        self.bn = get_normalization(norm_type, output_dim)
         self.relu = nn.ReLU()
 
         if p_dropout is not None:
@@ -119,11 +120,11 @@ class _GraphConv_no_bn(nn.Module):
         return x
 
 class _ResGraphConv(nn.Module):
-    def __init__(self, adj, input_dim, output_dim, hid_dim, p_dropout, base_block='sem'):
+    def __init__(self, adj, input_dim, output_dim, hid_dim, p_dropout, base_block='sem', norm_type="batch"):
         super(_ResGraphConv, self).__init__()
 
-        self.gconv1 = _GraphConv(adj, input_dim, hid_dim, p_dropout, base_block=base_block)
-        self.gconv2 = _GraphConv(adj, hid_dim, output_dim, p_dropout, base_block=base_block)
+        self.gconv1 = _GraphConv(adj, input_dim, hid_dim, p_dropout, base_block=base_block, norm_type=norm_type)
+        self.gconv2 = _GraphConv(adj, hid_dim, output_dim, p_dropout, base_block=base_block, norm_type=norm_type)
 
     def forward(self, x):
         residual = x
