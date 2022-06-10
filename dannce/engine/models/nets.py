@@ -135,22 +135,37 @@ def initialize_train(params, n_cams, device, logger):
     Initialize model, load pretrained checkpoints if needed.
     """
     if params["train_mode"] == "new":
+        logger.info("*** Traininig from scratch. ***")
         model = initialize_model(params, n_cams, device)
         model_params = [p for p in model.parameters() if p.requires_grad]
         optimizer = torch.optim.Adam(model_params, lr=params["lr"], eps=1e-7)
 
-    elif params["train_mode"] == "finetune" or params["train_mode"] == "continued":
+    elif params["train_mode"] == "finetune":
+        logger.info("*** Finetuning from {}. ***".format(params["dannce_finetune_weights"]))
+        checkpoints = torch.load(params["dannce_finetune_weights"])
+        model = initialize_model(params, n_cams, device)
+
+        state_dict = checkpoints["state_dict"]
+        ckpt_channel_num = state_dict["output_layer.weight"].shape[0]
+        if ckpt_channel_num != params["n_channels_out"]:
+            state_dict.pop("output_layer.weight", None)
+            state_dict.pop("output_layer.bias", None)
+
+        model.load_state_dict(state_dict, strict=False)
+
+        model_params = [p for p in model.parameters() if p.requires_grad]
+        optimizer = torch.optim.Adam(model_params, lr=params["lr"], eps=1e-7)
+    
+    elif params["train_mode"] == "continued":
+        logger.info("*** Resume training from {}. ***".format(params["dannce_finetune_weights"]))
         checkpoints = torch.load(params["dannce_finetune_weights"])
         model = initialize_model(checkpoints["params"], n_cams, device)
         model.load_state_dict(checkpoints["state_dict"])
 
         model_params = [p for p in model.parameters() if p.requires_grad]
         
-        if params["train_mode"] == "continued":
-            optimizer = torch.optim.Adam(model_params)
-            optimizer.load_state_dict(checkpoints["optimizer"])
-        else:
-            optimizer = torch.optim.Adam(model_params, lr=params["lr"], eps=1e-7)
+        optimizer = torch.optim.Adam(model_params)
+        optimizer.load_state_dict(checkpoints["optimizer"])
     
     lr_scheduler = None
     if params["lr_scheduler"] is not None:
