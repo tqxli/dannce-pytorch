@@ -399,9 +399,12 @@ def train(params: Dict):
         n_instances = n_instances,
         t_dim=params.get("temporal_chunk_size", 1),
         non_local=custom_model_params.get("non_local", False),
-        base_block=custom_model_params.get("base_block", "sem")
+        base_block=custom_model_params.get("base_block", "sem"),
+        norm_type=custom_model_params.get("norm_type", "batch"),
+        dropout=custom_model_params.get("dropout", None),
     ).to(device)
-    
+    logger.info(model)
+
     model_params = [p for p in model.parameters() if p.requires_grad]
     optimizer = torch.optim.Adam(model_params, lr=params["lr"], eps=1e-7)
 
