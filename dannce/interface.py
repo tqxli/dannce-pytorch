@@ -118,13 +118,6 @@ def dannce_train(params: Dict):
     # (i) Directly use pre-saved npy volumes
     # (ii) Load images from video files into memory and generate the samples needed for training
     vid_exps = np.arange(num_experiments)
-    if params["use_npy"]:
-        npydir, missing_npydir, missing_samples = serve_data_DANNCE.examine_npy_training(params, samples)
-
-        if len(missing_samples) != 0:
-            logger.info("{} npy files for experiments {} are missing.".format(len(missing_samples), list(missing_npydir.keys())))
-        else:
-            logger.info("No missing npy files. Ready for training.")
     
     # initialize needed videos
     vids = processing.initialize_all_vids(params, datadict, vid_exps, pathonly=True)
@@ -136,6 +129,24 @@ def dannce_train(params: Dict):
     if params["social_training"]:
         partition, pairs = processing.resplit_social(partition)
 
+    if params.get("social_joint_training", False):
+        # OPTION1: only choose volumes with both animals present
+        # partition, com3d_dict, datadict_3d, samples = processing.filter_com3ds(pairs, com3d_dict, datadict_3d)
+        # OPTION2: also predict on the other animal if any of its joints is also in the volume
+        datadict_3d = processing.prepare_joint_volumes(params, pairs, com3d_dict, datadict_3d)
+
+        params["social_training"] = False
+        params["n_channels_out"] *= 2
+        base_params["n_channels_out"] *= 2
+
+    if params["use_npy"]:
+        npydir, missing_npydir, missing_samples = serve_data_DANNCE.examine_npy_training(params, samples)
+
+        if len(missing_samples) != 0:
+            logger.info("{} npy files for experiments {} are missing.".format(len(missing_samples), list(missing_npydir.keys())))
+        else:
+            logger.info("No missing npy files. Ready for training.")
+    
     logger.info("\nTRAIN:VALIDATION SPLIT = {}:{}\n".format(len(partition["train_sampleIDs"]), len(partition["valid_sampleIDs"])))
 
     segmentation_model = None

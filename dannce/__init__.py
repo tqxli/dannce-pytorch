@@ -112,6 +112,7 @@ _param_defaults_dannce = {
     ## social
     "social_training": False,
     "downscale_occluded_view": False,
+    "social_joint_training": False
 }
 _param_defaults_com = {
     "dsmode": "nn",

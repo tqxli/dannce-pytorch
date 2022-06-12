@@ -1722,3 +1722,69 @@ def create_new_labels(partition, old_com3ds, new_com3ds, new_dims, params):
             new_dim = 10*(new_dim // 10) + 40
             dim_dict[sampleID] = new_dim
     return com3d_dict, dim_dict
+
+def filter_com3ds(pairs, com3d_dict, datadict_3d, threshold=120):
+    train_sampleIDs, valid_sampleIDs = [], []
+    new_com3d_dict, new_datadict_3d = {}, {}
+
+    for (a, b) in pairs["train_pairs"]:
+        com1 = com3d_dict[a]
+        com2 = com3d_dict[b]
+        dist = np.sqrt(np.sum((com1 - com2)**2))
+        if dist <= threshold:
+            train_sampleIDs.append(a)
+            new_com3d_dict[a] = (com1 + com2) / 2
+            new_datadict_3d[a] = np.concatenate((datadict_3d[a], datadict_3d[b]), axis=-1)
+    
+    for (a, b) in pairs["valid_pairs"]:
+        com1 = com3d_dict[a]
+        com2 = com3d_dict[b]
+        dist = np.sqrt(np.sum((com1 - com2)**2))
+
+        if dist <= threshold:
+            valid_sampleIDs.append(a)
+            new_com3d_dict[a] = (com1 + com2) / 2
+            new_datadict_3d[a] = np.concatenate((datadict_3d[a], datadict_3d[b]), axis=-1)
+
+    partition = {}
+    partition["train_sampleIDs"] = train_sampleIDs
+    partition["valid_sampleIDs"] = valid_sampleIDs
+
+    new_samples = np.array(sorted(train_sampleIDs + valid_sampleIDs))
+
+    return partition, new_com3d_dict, new_datadict_3d, new_samples
+
+def mask_coords_outside_volume(vmin, vmax, pose3d, anchor):
+    anchor_dist = pose3d - anchor
+    x_in_vol = (anchor_dist[0] >= vmin) & (anchor_dist[0] <= vmax)
+    y_in_vol = (anchor_dist[1] >= vmin) & (anchor_dist[1] <= vmax)
+    z_in_vol = (anchor_dist[2] >= vmin) & (anchor_dist[2] <= vmax) 
+
+    in_vol = x_in_vol & y_in_vol & z_in_vol
+    in_vol = np.stack([in_vol]*3, axis=0)
+
+    nan_pose = np.empty_like(pose3d)
+    nan_pose[:] = np.nan
+
+    new_pose3d = np.where(in_vol, pose3d, nan_pose)
+
+    return new_pose3d
+
+def prepare_joint_volumes(params, pairs, com3d_dict, datadict_3d):
+    vmin, vmax = params["vmin"], params["vmax"]
+    for k, v in pairs.items():
+        for (vol1, vol2) in v:
+            anchor1, anchor2 = com3d_dict[vol1], com3d_dict[vol2]
+            anchor1, anchor2 = anchor1[:, np.newaxis], anchor2[:, np.newaxis]
+            pose3d1, pose3d2 = datadict_3d[vol1], datadict_3d[vol2]
+
+            pose3d = np.concatenate((pose3d1, pose3d2), axis=-1) #[3, 46]
+
+            new_pose3d1 = mask_coords_outside_volume(vmin, vmax, pose3d.copy(), anchor1)
+            new_pose3d2 = mask_coords_outside_volume(vmin, vmax, pose3d.copy(), anchor2) 
+            
+            datadict_3d[vol1] = new_pose3d1
+            datadict_3d[vol2] = new_pose3d2
+
+    return datadict_3d
+            
