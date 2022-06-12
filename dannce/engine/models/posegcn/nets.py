@@ -65,6 +65,25 @@ class PoseGCN(nn.Module):
         init_poses, heatmaps = self.pose_generator(volumes, grid_centers)
         
         x = init_poses.transpose(2, 1) #[B, 23, 3]
+        # breakpoint()
+        # if self.n_instances > 1:
+            # x = x.reshape(-1, self.n_instances, *x.shape[1:])#.permute(0, 2, 3, 1)
+            # x = x.reshape(*x.shape[:2], -1)
+        x = x.reshape(init_poses.shape[0] // self.n_instances, -1, 3) #[n, 46, 3] or [n, 23, 3]
+        x = x.reshape(-1, self.t_dim * x.shape[1], x.shape[2]) #[n, t_dim*23, 3]
+
+        x = self.gconv_input(x)
+        x = self.gconv_layers(x)
+        x = self.gconv_output(x)
+
+        #if self.n_instances > 1:
+        #    x = x.reshape(*x.shape[:2], 3, self.n_instances).permute(0, 3, 1, 2)
+
+        final_poses = x.reshape(init_poses.shape[0], -1, 3).transpose(2, 1) + init_poses
+        return final_poses, heatmaps
+    
+    def inference(self, init_poses):
+        x = init_poses.transpose(2, 1) #[B, 23, 3]
         x = x.reshape(init_poses.shape[0] // self.n_instances, -1, 3) #[n, 46, 3] or [n, 23, 3]
         x = x.reshape(-1, self.t_dim * x.shape[1], x.shape[2]) #[n, t_dim*23, 3]
 
@@ -73,7 +92,7 @@ class PoseGCN(nn.Module):
         x = self.gconv_output(x)
 
         final_poses = x.reshape(init_poses.shape[0], -1, 3).transpose(2, 1) + init_poses
-        return final_poses, heatmaps
+        return final_poses
 
 if __name__ == "__main__":
     model = PoseGCN()

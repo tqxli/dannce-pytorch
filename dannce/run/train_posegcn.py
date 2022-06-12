@@ -64,7 +64,7 @@ def train(params: Dict):
         device = torch.device("cuda") # use all available GPUs
     else:
         params["gpu_id"] = [0]
-        device = torch.device("cuda:0")
+        device = torch.device("cuda")
     logger.info("***Use {} GPU for training.***".format(params["gpu_id"]))
     # device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
@@ -443,6 +443,23 @@ def predict(params):
     n_instances = custom_model_params["n_instances"]
     params["social_training"] = (n_instances > 1)
 
+    # if n_instances > 1:
+    #     com_files = params["com_file"].split(',')
+    #     assert len(com_files) == 2, "For multi animal model, need multiple comfile inputs."
+    #     params["experiment"][0]["com_file"] = com_files[0]
+    #     params["experiment"][1] = deepcopy(params["experiment"][0])
+    #     params["experiment"][1]["com_file"] = com_files[1] 
+
+        # valid_params["predict_flag"] = False
+
+    samples = []
+    datadict = {}
+    datadict_3d = {}
+    com3d_dict = {}
+    cameras = {}
+    camnames = {}
+    # total_chunks = {}
+    # for e in range(n_instances):
     (
         params["experiment"][0],
         samples_,
@@ -466,10 +483,7 @@ def predict(params):
     # The library is configured to be able to train over multiple animals ("experiments")
     # at once. Because supporting code expects to see an experiment ID# prepended to
     # each of these data keys, we need to add a token experiment ID here.
-    samples = []
-    datadict = {}
-    datadict_3d = {}
-    com3d_dict = {}
+
     (samples, datadict, datadict_3d, com3d_dict, _) = serve_data_DANNCE.add_experiment(
         0,
         samples,
@@ -481,10 +495,11 @@ def predict(params):
         datadict_3d_,
         com3d_dict_,
     )
-    cameras = {}
     cameras[0] = cameras_
-    camnames = {}
     camnames[0] = params["experiment"][0]["camnames"]
+
+        # for name, chunk in params["experiment"][e]["chunks"].items():
+        #     total_chunks[str(e) + "_" + name] = chunk
 
     # Need a '0' experiment ID to work with processing functions.
     # *NOTE* This function modified camnames in place
@@ -494,6 +509,9 @@ def predict(params):
     )
 
     samples = np.array(samples)
+    # if n_instances > 1:
+    #     samples = np.reshape(samples, (n_instances, -1))
+    #     samples = np.reshape(np.transpose(samples), -1)
 
     # Initialize video dictionary. paths to videos only.
     # TODO: Remove this immode option if we decide not
@@ -501,6 +519,7 @@ def predict(params):
     if params["immode"] == "vid":
         vids = {}
         vids = processing.initialize_vids(params, datadict, 0, vids, pathonly=True)
+        # vids = processing.initialize_all_vids(params, datadict, np.arange(n_instances), pathonly=True)
     
     # Parameters
     valid_params = {
@@ -552,7 +571,6 @@ def predict(params):
             **valid_params_sil
         )
 
-    # model = build_model(params, camnames)
     print("Initializing Network...")
     # first stage: pose generator    
     pose_generator = initialize_model(params, len(camnames[0]), "cpu")   
@@ -576,6 +594,10 @@ def predict(params):
     model.load_state_dict(torch.load(params["dannce_predict_model"])['state_dict'])
     model.eval()
 
+    if n_instances > 1:
+        print("Obtaining initial pose estimations.")
+        model = model.pose_generator
+
     if params["maxbatch"] != "max" and params["maxbatch"] > len(predict_generator):
         print(
             "Maxbatch was set to a larger number of matches than exist in the video. Truncating"
@@ -598,7 +620,7 @@ def predict(params):
     if params["write_visual_hull"] is not None:
         print("Writing visual hull to .npy files")
         processing.write_sil_npy(params["write_visual_hull"], predict_generator_sil)
-
+    
     save_data = inference.infer_dannce(
         predict_generator,
         params,
@@ -646,3 +668,79 @@ def predict(params):
             num_markers=params["n_markers"],
             tcoord=False,
         ) 
+
+def predict_multi_animal(params):
+    import scipy.io as sio
+    from tqdm import tqdm
+
+    # currently, to perform inference over multiple animals
+    # first obtain initial pose estimates from each separately, then run refinement w/ GCN
+    custom_model_params = params["custom_model"]
+    n_instances = custom_model_params["n_instances"]
+    device = "cuda:0"
+
+    # load initial predictions
+    instance0_dir = params["dannce_predict_dir"].replace('final', 'rat1_init')
+    instance1_dir = params["dannce_predict_dir"].replace('final', 'rat2_init')
+    input1 = sio.loadmat(os.path.join(instance0_dir, 'save_data_AVG{}.mat'.format(params["start_batch"]))) # [N, 3, n_joints]
+    input2 = sio.loadmat(os.path.join(instance1_dir, 'save_data_AVG{}.mat'.format(params["start_batch"])))
+
+    pose_inputs = np.concatenate((input1["pred"], input2["pred"]), axis=0)
+    pose_inputs = np.reshape(pose_inputs, (2, -1, *pose_inputs.shape[1:]))
+    pose_inputs = np.transpose(pose_inputs, (1, 0, 2, 3))
+    pose_inputs = np.reshape(pose_inputs, (-1, *pose_inputs.shape[2:]))
+
+    pose_inputs = torch.tensor(pose_inputs, dtype=torch.float32)
+
+    predict_dataloader = torch.utils.data.DataLoader(
+        pose_inputs, batch_size = params["batch_size"], shuffle=False, num_workers=params["batch_size"]
+    )
+
+    print("Initializing Network...")
+    # first stage: pose generator    
+    pose_generator = None
+
+    # if this is a multi animal model, need multi-stage inference ...    
+
+    # second stage: pose refiner
+    input_dim = 3
+    model = PoseGCN(
+        pose_generator,
+        input_dim=input_dim,
+        hid_dim=custom_model_params["hidden_dim"],
+        n_layers=custom_model_params["n_layers"],
+        n_instances = n_instances,
+        t_dim=params.get("temporal_chunk_size", 1),
+        non_local=custom_model_params.get("non_local", False),
+        base_block=custom_model_params.get("base_block", "sem"),
+        norm_type=custom_model_params.get("norm_type", "batch"),
+        dropout=custom_model_params.get("dropout", None),
+    ).to(device)
+    
+    # load predict model
+    model.load_state_dict(torch.load(params["dannce_predict_model"])['state_dict'], strict=False)
+    model.eval()
+
+    # run inference
+    final_poses = []
+    pbar = tqdm(predict_dataloader)
+    for init_poses in pbar:
+        pred = model.inference(init_poses.to(device))
+
+        final_poses.append(pred.detach().cpu().numpy())
+    
+    final_poses = np.concatenate(final_poses, axis=0)
+    final_poses = np.reshape(final_poses, (-1, 2, *final_poses.shape[1:]))
+    final_poses = np.transpose(final_poses, (1, 0, 2, 3))
+
+    for i, input in enumerate([input1, input2]):
+        input["pred"] = final_poses[i]
+        save_data = input
+        save_dir = params["dannce_predict_dir"].replace('final', f'rat{i+1}')
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+
+        path = os.path.join(save_dir, "save_data_AVG{}.mat".format(params["start_batch"])) 
+        sio.savemat(path, save_data)
+
+    return

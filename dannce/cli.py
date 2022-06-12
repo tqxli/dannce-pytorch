@@ -183,15 +183,18 @@ def custom_model_predict_cli():
     _TYPES = {
         'motiondannce': motiondannce.inference,
         'posegcn': posegcn.predict,
+        'posegcn-multi': posegcn.predict_multi_animal,
     }
 
     parser = argparse.ArgumentParser(
         description="Custom model prediction CLI",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
+
     parser.set_defaults(**{**_param_defaults_shared, **_param_defaults_dannce})
     args = parse_clargs(parser, model_type="dannce", prediction=True)
     params = build_clarg_params(args, dannce_net=True, prediction=True)
+
     _TYPES[params["custom_model"]["name"]](params)
 
 def build_clarg_params(
