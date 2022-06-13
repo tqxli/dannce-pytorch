@@ -81,7 +81,7 @@ def dannce_train(params: Dict):
         device = torch.device("cuda") # use all available GPUs
     else:
         params["gpu_id"] = [0]
-        device = torch.device("cuda:0")
+        device = torch.device("cuda")
     logger.info("***Use {} GPU for training.***".format(params["gpu_id"]))
     # device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
@@ -234,6 +234,7 @@ def dannce_train(params: Dict):
             # training, the image volumes are dumped to tif stacks.
             # This can be used for debugging problems with calibration or COM estimation
             processing.save_volumes_into_tif(params, params["debug_volume_tifdir"], X_train, partition["train_sampleIDs"], n_cams, logger)
+            processing.save_volumes_into_tif(params, params["debug_volume_tifdir"], X_valid, partition["valid_sampleIDs"], n_cams, logger)
             return
 
     # option for foreground animal segmentation
@@ -412,6 +413,7 @@ def dannce_train(params: Dict):
     # Build network
     logger.info("Initializing Network...")
     model, optimizer, lr_scheduler = initialize_train(params, n_cams, device, logger)
+    logger.info(model)
     logger.info("COMPLETE\n")
 
     # set up trainer
