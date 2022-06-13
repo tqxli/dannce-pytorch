@@ -1137,6 +1137,8 @@ def save_COM_checkpoint(
 
 def write_com_file(params, samples_, com3d_dict_):
     cfilename = os.path.join(params["dannce_predict_dir"], "com3d_used.mat")
+    if os.path.exists(cfilename):
+        cfilename = cfilename + "_1"
     print("Saving 3D COM to {}".format(cfilename))
     c3d = np.zeros((len(samples_), 3))
     for i in range(len(samples_)):
@@ -1778,10 +1780,11 @@ def prepare_joint_volumes(params, pairs, com3d_dict, datadict_3d):
             anchor1, anchor2 = anchor1[:, np.newaxis], anchor2[:, np.newaxis]
             pose3d1, pose3d2 = datadict_3d[vol1], datadict_3d[vol2]
 
-            pose3d = np.concatenate((pose3d1, pose3d2), axis=-1) #[3, 46]
+            new_pose3d1 = np.concatenate((pose3d1, pose3d2), axis=-1) #[3, 46]
+            new_pose3d2 = np.concatenate((pose3d2, pose3d1), axis=-1) #[3, 46]
 
-            new_pose3d1 = mask_coords_outside_volume(vmin, vmax, pose3d.copy(), anchor1)
-            new_pose3d2 = mask_coords_outside_volume(vmin, vmax, pose3d.copy(), anchor2) 
+            new_pose3d1 = mask_coords_outside_volume(vmin, vmax, new_pose3d1, anchor1)
+            new_pose3d2 = mask_coords_outside_volume(vmin, vmax, new_pose3d2, anchor2) 
             
             datadict_3d[vol1] = new_pose3d1
             datadict_3d[vol2] = new_pose3d2
