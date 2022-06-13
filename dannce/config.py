@@ -28,8 +28,9 @@ def grab_predict_label3d_file(defaultdir="", index=0):
     label3d_files = [
         os.path.join(def_ep, f) for f in label3d_files if "dannce.mat" in f
     ]
-    label3d_files.sort()
-
+    #label3d_files.sort()
+    label3d_files = sorted(label3d_files)
+    # breakpoint()
     if len(label3d_files) == 0:
         raise Exception("Did not find any *dannce.mat file in {}".format(def_ep))
     print("Using the following *dannce.mat files: {}".format(label3d_files[index]))
@@ -616,5 +617,11 @@ def setup_predict(params):
         "mirror": params["mirror"],
         "predict_flag": True,
     }
+
+    if params.get("social_joint_training", False):
+        params["social_training"] = False
+        params["n_channels_out"] *= 2
+        valid_params["n_channels_out"] *= 2
+        params["n_markers"] *= 2
 
     return params, valid_params

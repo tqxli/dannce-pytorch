@@ -21,6 +21,8 @@ class DannceTrainer(BaseTrainer):
 
         self.visualize_batch = visualize_batch
 
+        self.split = self.params.get("social_joint_training", False)
+
         # set up csv file for tracking training and validation stats
         stats_file = open(os.path.join(self.params["dannce_train_dir"], "training.csv"), 'w', newline='')
         stats_writer = csv.writer(stats_file)
@@ -83,8 +85,10 @@ class DannceTrainer(BaseTrainer):
 
             self.optimizer.zero_grad()
             keypoints_3d_pred, heatmaps = self.model(volumes, grid_centers)
-            total_loss, loss_dict = self.loss.compute_loss(keypoints_3d_gt, keypoints_3d_pred, heatmaps, grid_centers, aux)
 
+            keypoints_3d_gt, keypoints_3d_pred, heatmaps = self._split_data(keypoints_3d_gt, keypoints_3d_pred, heatmaps)
+            
+            total_loss, loss_dict = self.loss.compute_loss(keypoints_3d_gt, keypoints_3d_pred, heatmaps, grid_centers, aux)
             result = f"Epoch[{epoch}/{self.epochs}] " + "".join(f"train_{loss}: {val:.4f} " for loss, val in loss_dict.items())
             pbar.set_description(result)
 
@@ -115,6 +119,8 @@ class DannceTrainer(BaseTrainer):
                 volumes, grid_centers, keypoints_3d_gt, aux = prepare_batch(batch, self.device)
                 keypoints_3d_pred, heatmaps = self.model(volumes, grid_centers)
 
+                keypoints_3d_gt, keypoints_3d_pred, heatmaps = self._split_data(keypoints_3d_gt, keypoints_3d_pred, heatmaps)
+
                 _, loss_dict = self.loss.compute_loss(keypoints_3d_gt, keypoints_3d_pred, heatmaps, grid_centers, aux)
                 epoch_loss_dict = self._update_step(epoch_loss_dict, loss_dict)
 
@@ -124,7 +130,20 @@ class DannceTrainer(BaseTrainer):
         
         epoch_loss_dict, epoch_metric_dict = self._average(epoch_loss_dict), self._average(epoch_metric_dict)
         return {**epoch_loss_dict, **epoch_metric_dict}
-    
+
+    def _split_data(self, keypoints_3d_gt, keypoints_3d_pred, heatmaps):
+        if not self.split:
+            return keypoints_3d_gt, keypoints_3d_pred, heatmaps
+        
+        keypoints_3d_gt = keypoints_3d_gt.reshape(*keypoints_3d_gt.shape[:2], 2, -1).permute(0, 2, 1, 3)
+        keypoints_3d_gt = keypoints_3d_gt.reshape(-1, *keypoints_3d_gt.shape[2:])
+        keypoints_3d_pred = keypoints_3d_pred.reshape(*keypoints_3d_pred.shape[:2], 2, -1).permute(0, 2, 1, 3)
+        keypoints_3d_pred = keypoints_3d_pred.reshape(-1, *keypoints_3d_pred.shape[2:])
+        heatmaps = heatmaps.reshape(heatmaps.shape[0], 2, -1, *heatmaps.shape[2:])
+        heatmaps = heatmaps.reshape(-1, *heatmaps.shape[2:])
+
+        return keypoints_3d_gt, keypoints_3d_pred, heatmaps
+
     def _update_step(self, epoch_dict, step_dict):
         if len(epoch_dict) == 0:
             for k, v in step_dict.items():

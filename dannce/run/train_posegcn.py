@@ -12,7 +12,7 @@ from dannce.engine.data.processing import savedata_tomat, savedata_expval
 import dannce.config as config
 import dannce.engine.inference as inference
 from dannce.engine.models.posegcn.nets import PoseGCN
-from dannce.engine.models.nets import initialize_model
+from dannce.engine.models.nets import initialize_model, initialize_train
 from dannce.engine.models.segmentation import get_instance_segmentation_model
 from dannce.engine.trainer.dannce_trainer import DannceTrainer
 from dannce.config import print_and_set
@@ -43,7 +43,7 @@ def train(params: Dict):
     # handle specific params
     custom_model_params = params["custom_model"]
     n_instances = custom_model_params["n_instances"]
-    params["social_training"] = (n_instances > 1)
+    params["social_training"] = params["social_training"] or (n_instances > 1)
 
     # Make the training directory if it does not exist.
     make_folder("dannce_train_dir", params)
@@ -101,13 +101,6 @@ def train(params: Dict):
     # (i) Directly use pre-saved npy volumes
     # (ii) Load images from video files into memory and generate the samples needed for training
     vid_exps = np.arange(num_experiments)
-    if params["use_npy"]:
-        npydir, missing_npydir, missing_samples = serve_data_DANNCE.examine_npy_training(params, samples)
-
-        if len(missing_samples) != 0:
-            logger.info("{} npy files for experiments {} are missing.".format(len(missing_samples), list(missing_npydir.keys())))
-        else:
-            logger.info("No missing npy files. Ready for training.")
     
     # initialize needed videos
     vids = processing.initialize_all_vids(params, datadict, vid_exps, pathonly=True)
@@ -116,8 +109,24 @@ def train(params: Dict):
     partition = processing.make_data_splits(
         samples, params, params["dannce_train_dir"], num_experiments, 
         temporal_chunks=temporal_chunks)
+
     if params["social_training"]:
         partition, pairs = processing.resplit_social(partition)
+
+    if params.get("social_joint_training", False):
+        datadict_3d = processing.prepare_joint_volumes(params, pairs, com3d_dict, datadict_3d)
+
+        params["social_training"] = False
+        params["n_channels_out"] *= 2
+        base_params["n_channels_out"] *= 2
+    
+    if params["use_npy"]:
+        npydir, missing_npydir, missing_samples = serve_data_DANNCE.examine_npy_training(params, samples)
+
+        if len(missing_samples) != 0:
+            logger.info("{} npy files for experiments {} are missing.".format(len(missing_samples), list(missing_npydir.keys())))
+        else:
+            logger.info("No missing npy files. Ready for training.")
 
     logger.info("\nTRAIN:VALIDATION SPLIT = {}:{}\n".format(len(partition["train_sampleIDs"]), len(partition["valid_sampleIDs"])))
 
@@ -385,10 +394,7 @@ def train(params: Dict):
     logger.info("Initializing Network...")
 
     # first stage: pose generator    
-    pose_generator = initialize_model(params, n_cams, "cpu") 
-    if params["train_mode"] == "finetune" or params["train_mode"] == "continued":
-        checkpoints = torch.load(params["dannce_finetune_weights"])
-        pose_generator.load_state_dict(checkpoints["state_dict"])   
+    pose_generator = initialize_train(params, n_cams, 'cpu', logger)[0]
 
     # second stage: pose refiner
     model = PoseGCN(
@@ -402,6 +408,7 @@ def train(params: Dict):
         base_block=custom_model_params.get("base_block", "sem"),
         norm_type=custom_model_params.get("norm_type", "batch"),
         dropout=custom_model_params.get("dropout", None),
+        inter_social=custom_model_params.get("inter_social", False),
     ).to(device)
     logger.info(model)
 

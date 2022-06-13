@@ -24,11 +24,13 @@ class PoseGCN(nn.Module):
             base_block='sem',
             norm_type='batch',
             dropout=None,
+            inter_social=False
         ):
         super(PoseGCN, self).__init__()
         self.pose_generator = pose_generator
         self.n_instances = n_instances
-        self.adj = adj = build_adj_mx_from_edges(social=(n_instances > 1), t_dim=t_dim, t_flow=t_flow)
+        self.social = (n_instances > 1) and inter_social
+        self.adj = adj = build_adj_mx_from_edges(social=self.social, t_dim=t_dim, t_flow=t_flow)
         self.t_dim = t_dim
 
         # construct GCN
@@ -65,11 +67,14 @@ class PoseGCN(nn.Module):
         init_poses, heatmaps = self.pose_generator(volumes, grid_centers)
         
         x = init_poses.transpose(2, 1) #[B, 23, 3]
-        # breakpoint()
-        # if self.n_instances > 1:
-            # x = x.reshape(-1, self.n_instances, *x.shape[1:])#.permute(0, 2, 3, 1)
-            # x = x.reshape(*x.shape[:2], -1)
-        x = x.reshape(init_poses.shape[0] // self.n_instances, -1, 3) #[n, 46, 3] or [n, 23, 3]
+        
+        if self.social:
+            # whether jointly optimize both sets of keypoints
+            x = x.reshape(init_poses.shape[0] // self.n_instances, -1, 3) #[n, 46, 3] or [n, 23, 3]
+        else:
+            # treat separately
+            x = x.reshape(init_poses.shape[0] * self.n_instances, -1, 3) #[x*2, 23, 3]
+
         x = x.reshape(-1, self.t_dim * x.shape[1], x.shape[2]) #[n, t_dim*23, 3]
 
         x = self.gconv_input(x)
@@ -78,7 +83,7 @@ class PoseGCN(nn.Module):
 
         #if self.n_instances > 1:
         #    x = x.reshape(*x.shape[:2], 3, self.n_instances).permute(0, 3, 1, 2)
-
+        
         final_poses = x.reshape(init_poses.shape[0], -1, 3).transpose(2, 1) + init_poses
         return final_poses, heatmaps
     
