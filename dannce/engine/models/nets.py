@@ -124,9 +124,8 @@ def initialize_model(params, n_cams, device):
     # model = model.to(device)
     if params["multi_gpu_train"]:
         model = nn.parallel.DataParallel(model, device_ids=params["gpu_id"])
-        model.to(device)
-    else:
-        model.to(device)
+    
+    model.to(device)
 
     return model
 
@@ -134,6 +133,8 @@ def initialize_train(params, n_cams, device, logger):
     """
     Initialize model, load pretrained checkpoints if needed.
     """
+    params["start_epoch"] = 1
+
     if params["train_mode"] == "new":
         logger.info("*** Traininig from scratch. ***")
         model = initialize_model(params, n_cams, device)
@@ -146,6 +147,7 @@ def initialize_train(params, n_cams, device, logger):
         model = initialize_model(params, n_cams, device)
 
         state_dict = checkpoints["state_dict"]
+        # replace final output layer if do not match with the checkpoint
         ckpt_channel_num = state_dict["output_layer.weight"].shape[0]
         if ckpt_channel_num != params["n_channels_out"]:
             state_dict.pop("output_layer.weight", None)
@@ -159,13 +161,18 @@ def initialize_train(params, n_cams, device, logger):
     elif params["train_mode"] == "continued":
         logger.info("*** Resume training from {}. ***".format(params["dannce_finetune_weights"]))
         checkpoints = torch.load(params["dannce_finetune_weights"])
+        
+        # ensure the same architecture
         model = initialize_model(checkpoints["params"], n_cams, device)
-        model.load_state_dict(checkpoints["state_dict"])
+        model.load_state_dict(checkpoints["state_dict"], strict=True)
 
         model_params = [p for p in model.parameters() if p.requires_grad]
         
         optimizer = torch.optim.Adam(model_params)
         optimizer.load_state_dict(checkpoints["optimizer"])
+
+        # specify the start epoch
+        params["start_epoch"] = checkpoints["epoch"]
     
     lr_scheduler = None
     if params["lr_scheduler"] is not None:

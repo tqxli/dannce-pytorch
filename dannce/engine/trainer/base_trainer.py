@@ -19,7 +19,7 @@ class BaseTrainer:
         self.epochs = params['epochs']
         self.save_period = params['save_period']
 
-        self.start_epoch = 1
+        self.start_epoch = params["start_epoch"]
 
         self.checkpoint_dir = params["dannce_train_dir"]
 
