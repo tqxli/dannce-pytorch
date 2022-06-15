@@ -74,10 +74,10 @@ class DANNCE(nn.Module):
         """
         volumes = self.encoder_decoder(volumes)
         heatmaps = self.output_layer(volumes)
-        heatmaps = spatial_softmax(heatmaps)
 
         if grid_centers is not None:
-            coords = expected_value_3d(heatmaps, grid_centers)
+            softmax_heatmaps = spatial_softmax(heatmaps)
+            coords = expected_value_3d(softmax_heatmaps, grid_centers)
         else:
             coords = None
 

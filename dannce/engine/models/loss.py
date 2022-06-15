@@ -209,16 +209,22 @@ class GaussianRegLoss(BaseLoss):
         """
         # reshape grids
         grids = grids.permute(0, 2, 1).reshape(grids.shape[0], grids.shape[2], *heatmaps.shape[2:]) # [bs, 3, n_vox, n_vox, n_vox]
+        grids = grids.permute(0, 1, 3, 2, 4)
+
+        if grids.shape[0] != kpts_pred.shape[0]:
+            grids = torch.stack((grids, grids), dim=1) #[bs, 2, n_vox, n_vox, n_vox]
+            grids = grids.reshape(-1, *grids.shape[2:])
 
         # generate gaussian shaped targets based on current predictions
-        gaussian_gt = self._generate_gaussian_target(kpts_pred.clone().detach(), grids) #[bs, n_joints, n_vox**3]
-
+        gaussian_gt = self._generate_gaussian_target(kpts_pred, grids) #[bs, n_joints, n_vox**3]
+        
         # apply sigmoid to the exposed heatmap
-        heatmaps = torch.sigmoid(heatmaps)
-
+        # breakpoint()
+        # heatmaps = torch.sigmoid(heatmaps)
+        
         # compute loss
         if self.method == "mse":
-            loss = F.mse_loss(gaussian_gt, heatmaps)
+            loss = 0.5 * F.mse_loss(gaussian_gt, heatmaps)
         elif self.method == "cross_entropy":
             loss = - (gaussian_gt * heatmaps.log()).mean()
 
