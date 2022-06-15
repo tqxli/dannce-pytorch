@@ -84,7 +84,11 @@ class PoseGCN(nn.Module):
         #if self.n_instances > 1:
         #    x = x.reshape(*x.shape[:2], 3, self.n_instances).permute(0, 3, 1, 2)
         
-        final_poses = x.reshape(init_poses.shape[0], -1, 3).transpose(2, 1) + init_poses
+        correction = x.reshape(init_poses.shape[0], -1, 3).transpose(2, 1)
+        final_poses = correction + init_poses
+
+        # print("Mean Euclidean correction:", torch.norm(correction, dim=1).mean())
+
         return final_poses, heatmaps
     
     def inference(self, init_poses):
@@ -96,7 +100,11 @@ class PoseGCN(nn.Module):
         x = self.gconv_layers(x)
         x = self.gconv_output(x)
 
-        final_poses = x.reshape(init_poses.shape[0], -1, 3).transpose(2, 1) + init_poses
+        correction = x.reshape(init_poses.shape[0], -1, 3).transpose(2, 1)
+        final_poses = correction + init_poses
+
+        # print("Mean Euclidean correction:", torch.norm(correction, dim=1).mean())
+
         return final_poses
 
 if __name__ == "__main__":
