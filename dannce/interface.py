@@ -135,7 +135,7 @@ def dannce_train(params: Dict):
         # OPTION2: also predict on the other animal if any of its joints is also in the volume
         datadict_3d = processing.prepare_joint_volumes(params, pairs, com3d_dict, datadict_3d)
 
-        params["social_training"] = False
+        # params["social_training"] = False
         params["n_channels_out"] *= 2
         base_params["n_channels_out"] *= 2
 

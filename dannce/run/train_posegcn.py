@@ -595,6 +595,7 @@ def predict(params):
         base_block=custom_model_params.get("base_block", "sem"),
         norm_type=custom_model_params.get("norm_type", "batch"),
         dropout=custom_model_params.get("dropout", None),
+        inter_social=custom_model_params.get("inter_social", False),
     ).to(device)
 
     # load predict model
