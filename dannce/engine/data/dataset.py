@@ -687,6 +687,8 @@ class PoseDatasetNPY(PoseDatasetFromMem):
                         )
                         / (2 * self.sigma ** 2)
                     )
+            X_grid = np.reshape(X_grid, (X_grid.shape[0], -1, 3))
+            y_3d = y_3d_max
 
         if self.mono and self.chan_num == 3:
             # Convert from RGB to mono using the skimage formula. Drop the duplicated frames.
