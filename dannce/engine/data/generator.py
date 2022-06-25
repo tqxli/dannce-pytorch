@@ -1154,6 +1154,7 @@ class MultiviewImageGenerator(DataGenerator_3Dconv):
         
         super(MultiviewImageGenerator, self).__init__(**kwargs)
         self.image_size = image_size
+        self.resize = resize
         self.crop = crop
         self.crop_size = crop_size
         self._get_camera_objs()
@@ -1177,6 +1178,47 @@ class MultiviewImageGenerator(DataGenerator_3Dconv):
             com_precrop[0]+self.crop_size//2
         )
     
+    def _save_image_bbox(self, 
+        list_IDs, X, y_2d, 
+        bbox_offset=(20, 30, 20, 20),
+        imdir='/media/mynewdrive/datasets/detection/images', 
+        annotdir='/media/mynewdrive/datasets/detection/annotations'
+    ):
+        if not os.path.exists(imdir):
+            os.makedirs(imdir)
+        if not os.path.exists(annotdir):
+            os.makedirs(annotdir)
+
+        for ID, ims, y in zip(list_IDs, X, y_2d):
+            for cam in range(ims.shape[0]):
+                fname = f"{ID}_cam{cam+1}"
+                im = ims[cam].cpu().permute(1, 2, 0).numpy()
+
+                # get tight bounding box from y_2d
+                kpts = y[cam].cpu().numpy()
+                x1, y1, x2, y2 = kpts[0].min(), kpts[1].min(), kpts[0].max(), kpts[1].max()
+                x1, x2 = x1-bbox_offset[0], x2+bbox_offset[2]
+                y1, y2 = y1-bbox_offset[1], y2+bbox_offset[3]
+
+                annot = {
+                    "file_name": os.path.join(imdir, fname),
+                    "bbox": [x1, y1, x2, y2],
+                    "keypoints": kpts,
+                    "category_id": 1,
+                }
+
+                # fig, ax = plt.subplots()
+                # ax.imshow(im)
+                
+                # rect = patches.Rectangle((x1, y1), x2-x1, y2-y1, color='dodgerblue', fill=False)
+                # ax.add_patch(rect)
+
+                # ax.scatter(kpts[0], kpts[1], marker='.', color='r', linewidths=0.5)
+
+                # fig.savefig(os.path.join(imdir, fname+".jpg"))
+                cv2.imwrite(os.path.join(imdir, fname+".png"), cv2.cvtColor(im, cv2.COLOR_RGB2BGR))
+                np.save(os.path.join(annotdir, fname), annot)
+
     def _visualize_multiview(self, ID, ims, y_2d, savedir="debug_image"):
         if not os.path.exists(savedir):
             os.makedirs(savedir)
@@ -1216,11 +1258,12 @@ class MultiviewImageGenerator(DataGenerator_3Dconv):
             new_y[1, :] -= cropdim[0]
         
         # resize
-        old_height, old_width = im.shape[:2]
-        im = cv2.resize(im, (self.image_size, self.image_size))
-        cam.update_after_resize((old_height, old_width), (self.image_size, self.image_size))
-        new_y[1, :] *= (im.shape[0] / old_height) # y
-        new_y[0, :] *= (im.shape[1] / old_width)  # x
+        if self.resize:
+            old_height, old_width = im.shape[:2]
+            im = cv2.resize(im, (self.image_size, self.image_size))
+            cam.update_after_resize((old_height, old_width), (self.image_size, self.image_size))
+            new_y[1, :] *= (im.shape[0] / old_height) # y
+            new_y[0, :] *= (im.shape[1] / old_width)  # x
         
         return im, cam, new_y
     
@@ -1246,11 +1289,12 @@ class MultiviewImageGenerator(DataGenerator_3Dconv):
         # Initialization
         first_exp = int(self.list_IDs[0].split("_")[0])
         X, y_3d, X_grid = self._init_vars(first_exp)
-        X = X.new_zeros(
-            (self.batch_size, 
-            len(self.camnames[first_exp]), 
-            3, 512, 512
-        ))
+        # X = X.new_zeros(
+        #     (self.batch_size, 
+        #     len(self.camnames[first_exp]), 
+        #     3, 512, 512
+        # ))
+        X = []
         y_2d, cameras = [], []
 
         for i, ID in enumerate(list_IDs_temp):
@@ -1281,8 +1325,9 @@ class MultiviewImageGenerator(DataGenerator_3Dconv):
                 arglist.append([ID, self.camnames[experimentID][c], experimentID])
             results = self.threadpool.starmap(self._load_im, arglist)
 
-            ims = np.stack([r[0] for r in results], axis=0) #[6, H, W, 3]
-            X[i] = torch.tensor(ims).float().permute(0, 3, 1, 2)
+            ims = np.stack([r[0] for r in results], axis=0).astype(np.uint8) #[6, H, W, 3]
+            ims = torch.tensor(ims).permute(0, 3, 1, 2)
+            X.append(ims)
 
             # also need camera params for each view
             cameras.append([r[1] for r in results]) #[BS, 6]
@@ -1290,9 +1335,11 @@ class MultiviewImageGenerator(DataGenerator_3Dconv):
             # potentially need 2d labels as well
             y_2d.append(torch.stack([r[2] for r in results], dim=0))
 
+        X = torch.stack(X, dim=0)
         y_2d = torch.stack(y_2d, dim=0) #[BS, 6, 2, n_joints]
         
         # self._visualize_multiview(list_IDs_temp[0], X[0], y_2d[0])
+        self._save_image_bbox(list_IDs_temp, X, y_2d)
 
         return (X.cpu(), X_grid.cpu(), cameras), (y_3d.cpu(), y_2d.cpu())
 
