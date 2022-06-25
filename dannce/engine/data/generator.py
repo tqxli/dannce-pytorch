@@ -1150,7 +1150,7 @@ class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
         return inputs, targets
 
 class MultiviewImageGenerator(DataGenerator_3Dconv):
-    def __init__(self, image_size=512, crop=False, crop_size=768, **kwargs):
+    def __init__(self, resize=False, image_size=512, crop=False, crop_size=768, **kwargs):
         
         super(MultiviewImageGenerator, self).__init__(**kwargs)
         self.image_size = image_size
