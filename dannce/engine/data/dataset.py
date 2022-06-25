@@ -763,17 +763,87 @@ class MultiViewImageDataset(torch.utils.data.Dataset):
         return X, X_grid, camera, y_3d
 
 class ImageDataset(torch.utils.data.Dataset):
-    def __init__(self, images, labels):
+    def __init__(self, images, labels, num_joints, return_Gaussian=True, sigma=2):
         super(ImageDataset, self).__init__()
         self.images = images
         self.labels = labels
 
+        self.num_joints = num_joints
+        self.return_Gaussian = return_Gaussian
+        self.sigma = sigma
+
+        self.image_size = np.array([512, 512])
+        self.heatmap_size = np.array([128, 128])
+
     def __len__(self):
         return self.images.shape[0]
+    
+    def _vis_heatmap(self, im, target):
+        import matplotlib
+        import matplotlib.pyplot as plt
+        matplotlib.use('TkAgg')
+
+        fig = plt.figure(figsize=(10, 10))
+        ax = fig.add_subplot(121)
+        ax.imshow(im.permute(1, 2, 0).numpy().astype(np.uint8))
+
+        ax = fig.add_subplot(122)
+        ax.imshow(target.sum(0).numpy())
+
+        plt.show(block=True)
+        input("Press Enter to continue...")
+    
+    def _generate_Gaussian_target(self, joints):
+        target_weight = joints.new_ones((self.num_joints, 1))
+        target = joints.new_zeros(self.num_joints, self.heatmap_size[1], self.heatmap_size[0])
+
+        tmp_size = self.sigma * 3
+
+        for joint_id in range(self.num_joints):
+            feat_stride = self.image_size / self.heatmap_size
+
+            mu_x = int(joints[0, joint_id] / feat_stride[0] + 0.5)
+            mu_y = int(joints[1, joint_id] / feat_stride[1] + 0.5)
+            # Check that any part of the gaussian is in-bounds
+            ul = [int(mu_x - tmp_size), int(mu_y - tmp_size)]
+            br = [int(mu_x + tmp_size + 1), int(mu_y + tmp_size + 1)]
+            if ul[0] >= self.heatmap_size[0] or ul[1] >= self.heatmap_size[1] \
+                    or br[0] < 0 or br[1] < 0:
+                # If not, just return the image as is
+                target_weight[joint_id] = 0
+                continue
+
+            # # Generate gaussian
+            size = 2 * tmp_size + 1
+            x = torch.arange(0, size, 1)
+            y = x.unsqueeze(-1)
+            x0 = y0 = size // 2
+            # The gaussian is not normalized, we want the center value to equal 1
+            g = torch.exp(- ((x - x0) ** 2 + (y - y0) ** 2) / (2 * self.sigma ** 2))
+
+            # Usable gaussian range
+            g_x = max(0, -ul[0]), min(br[0], self.heatmap_size[0]) - ul[0]
+            g_y = max(0, -ul[1]), min(br[1], self.heatmap_size[1]) - ul[1]
+            # Image range
+            img_x = max(0, ul[0]), min(br[0], self.heatmap_size[0])
+            img_y = max(0, ul[1]), min(br[1], self.heatmap_size[1])
+
+            v = target_weight[joint_id]
+            if v > 0.5:
+                target[joint_id][img_y[0]:img_y[1], img_x[0]:img_x[1]] = \
+                    g[g_y[0]:g_y[1], g_x[0]:g_x[1]]
+        
+        return target, target_weight
 
     def __getitem__(self, idx):
-        X = processing.preprocess_3d(self.images[idx])
-        y = self.labels[idx]
+        im_ori = self.images[idx]
+        X = processing.preprocess_3d(self.images[idx].clone())
+        y= self.labels[idx]
+
+        if self.return_Gaussian:
+            y, target_weight = self._generate_Gaussian_target(y)
+            # breakpoint()
+            self._vis_heatmap(im_ori, y)
 
         return X, y
 
