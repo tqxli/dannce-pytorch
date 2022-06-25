@@ -1,6 +1,6 @@
 """Handle training and prediction for DANNCE and COM networks."""
 import numpy as np
-import os
+import os, time
 from copy import deepcopy
 from datetime import datetime
 from typing import Dict, Text
@@ -15,6 +15,7 @@ from dannce.engine.models.posegcn.nets import PoseGCN
 from dannce.engine.models.nets import initialize_model, initialize_train
 from dannce.engine.models.segmentation import get_instance_segmentation_model
 from dannce.engine.trainer.dannce_trainer import DannceTrainer
+from dannce.engine.trainer.posegcn_trainer import GCNTrainer
 from dannce.config import print_and_set
 from dannce.engine.logging.logger import setup_logging, get_logger
 from dannce.engine.data.processing import _DEFAULT_SEG_MODEL
@@ -398,17 +399,11 @@ def train(params: Dict):
 
     # second stage: pose refiner
     model = PoseGCN(
+        custom_model_params,
         pose_generator,
-        input_dim=3,
-        hid_dim=custom_model_params["hidden_dim"],
-        n_layers=custom_model_params["n_layers"],
-        n_instances = n_instances,
+        n_instances=n_instances,
+        n_joints=params["n_channels_out"],
         t_dim=params.get("temporal_chunk_size", 1),
-        non_local=custom_model_params.get("non_local", False),
-        base_block=custom_model_params.get("base_block", "sem"),
-        norm_type=custom_model_params.get("norm_type", "batch"),
-        dropout=custom_model_params.get("dropout", None),
-        inter_social=custom_model_params.get("inter_social", False),
     ).to(device)
     logger.info(model)
 
@@ -424,7 +419,7 @@ def train(params: Dict):
     logger.info("COMPLETE\n")
 
     # set up trainer
-    trainer_class = DannceTrainer
+    trainer_class = GCNTrainer
     trainer = trainer_class(
         params=params,
         model=model,
@@ -434,7 +429,8 @@ def train(params: Dict):
         device=device,
         logger=logger,
         visualize_batch=False,
-        lr_scheduler=lr_scheduler
+        lr_scheduler=lr_scheduler,
+        predict_diff=custom_model_params.get("predict_diff", False),
     )
 
     trainer.train()
@@ -629,53 +625,94 @@ def predict(params):
         print("Writing visual hull to .npy files")
         processing.write_sil_npy(params["write_visual_hull"], predict_generator_sil)
     
-    save_data = inference.infer_dannce(
-        predict_generator,
-        params,
-        model,
-        partition,
-        device,
-        params["n_markers"],
-        predict_generator_sil,
-        save_heatmaps=False
-    )
+    end_time = time.time()
+    save_data, save_data_init = {}, {}
+    start_ind = params["start_batch"]
+    end_ind = params["maxbatch"]
 
-    if params["expval"]:
-        if params["save_tag"] is not None:
-            path = os.path.join(
-                params["dannce_predict_dir"],
-                "save_data_AVG%d.mat" % (params["save_tag"]),
+    for idx, i in enumerate(range(start_ind, end_ind)):
+        print("Predicting on batch {}".format(i), flush=True)
+        if (i - start_ind) % 10 == 0 and i != start_ind:
+            print(i)
+            print("10 batches took {} seconds".format(time.time() - end_time))
+            end_time = time.time()
+
+        if (i - start_ind) % 1000 == 0 and i != start_ind:
+            print("Saving checkpoint at {}th batch".format(i))
+            p_n = savedata_expval(
+                params["dannce_predict_dir"] + "save_data_AVG.mat",
+                params,
+                write=True,
+                data=save_data,
+                tcoord=False,
+                num_markers=params["n_markers"],
+                pmax=True,
             )
-        else:
-            path = os.path.join(params["dannce_predict_dir"], "save_data_AVG.mat")
-        p_n = savedata_expval(
-            path,
-            params,
-            write=True,
-            data=save_data,
-            tcoord=False,
-            num_markers=params["n_markers"],
-            pmax=True,
+            p_n = savedata_expval(
+                params["dannce_predict_dir"] + "init_save_data_AVG.mat",
+                params,
+                write=True,
+                data=save_data,
+                tcoord=False,
+                num_markers=params["n_markers"],
+                pmax=True,
+            )
+
+        ims = predict_generator.__getitem__(i)
+
+        init_poses, heatmaps = model.pose_generator(
+            torch.from_numpy(ims[0][0]).permute(0, 4, 1, 2, 3).to(device), 
+            torch.from_numpy(ims[0][1]).to(device)
+        )
+
+        final_poses = model.inference(init_poses)
+
+        probmap = torch.amax(heatmaps, dim=(2, 3, 4)).squeeze(0).detach().cpu().numpy()
+        heatmaps = heatmaps.squeeze().detach().cpu().numpy()
+        pred = final_poses.detach().cpu().numpy()
+        pred_init = init_poses.detach().cpu().numpy()
+        for j in range(pred.shape[0]):
+            pred_max = probmap[j]
+            sampleID = partition["valid_sampleIDs"][i * pred.shape[0] + j]
+            save_data[idx * pred.shape[0] + j] = {
+                "pred_max": pred_max,
+                "pred_coord": pred[j],
+                "sampleID": sampleID,
+            }
+            save_data_init[idx * pred.shape[0] + j] = {
+                "pred_max": pred_max,
+                "pred_coord": pred_init[j],
+                "sampleID": sampleID,
+            }
+
+
+    if params["save_tag"] is not None:
+        path = os.path.join(
+            params["dannce_predict_dir"],
+            "save_data_AVG%d.mat" % (params["save_tag"]),
         )
     else:
-        if params["save_tag"] is not None:
-            path = os.path.join(
-                params["dannce_predict_dir"],
-                "save_data_MAX%d.mat" % (params["save_tag"]),
-            )
-        else:
-            path = os.path.join(params["dannce_predict_dir"], "save_data_MAX.mat")
-        p_n = savedata_tomat(
-            path,
-            params,
-            params["vmin"],
-            params["vmax"],
-            params["nvox"],
-            write=True,
-            data=save_data,
-            num_markers=params["n_markers"],
-            tcoord=False,
-        ) 
+        path = os.path.join(params["dannce_predict_dir"], "save_data_AVG.mat")
+    p_n = savedata_expval(
+        path,
+        params,
+        write=True,
+        data=save_data,
+        tcoord=False,
+        num_markers=params["n_markers"],
+        pmax=True,
+    )
+    
+    path =os.path.join(params["dannce_predict_dir"], "init_save_data_AVG.mat")
+    p_n = savedata_expval(
+        path,
+        params,
+        write=True,
+        data=save_data_init,
+        tcoord=False,
+        num_markers=params["n_markers"],
+        pmax=True,
+    ) 
 
 def predict_multi_animal(params):
     import scipy.io as sio
