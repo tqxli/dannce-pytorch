@@ -692,7 +692,7 @@ def setup_dataloaders(train_dataset, valid_dataset, params):
         valid_batch_size = params["batch_size"]
 
     if params["multi_gpu_train"] and len(params["gpu_id"]) > 1:
-        valid_batch_size = params["batch_size"] * len(params["gpu_id"]) 
+        valid_batch_size = valid_batch_size * len(params["gpu_id"]) 
         print(f"Use batch size of {valid_batch_size} for multiple GPUs.")
 
     train_dataloader = torch.utils.data.DataLoader(
