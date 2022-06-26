@@ -61,115 +61,139 @@ def train(params: Dict):
     setup_logging(params["dannce_train_dir"])
     logger = get_logger("training.log", verbosity=2)
 
-    # load in necessary exp & data information
-    exps = params["exp"]
-    num_experiments = len(exps)
-    params["experiment"] = {}
-    params["return_full2d"] = True
+    if not params["use_npy"]:
+        # load in necessary exp & data information
+        exps = params["exp"]
+        num_experiments = len(exps)
+        params["experiment"] = {}
+        params["return_full2d"] = True
 
-    (
-        samples, 
-        datadict, datadict_3d, com3d_dict, 
-        cameras, camnames,
-        total_chunks,
-        temporal_chunks
-    ) = processing.load_all_exps(params, logger)
+        (
+            samples, 
+            datadict, datadict_3d, com3d_dict, 
+            cameras, camnames,
+            total_chunks,
+            temporal_chunks
+        ) = processing.load_all_exps(params, logger)
 
-    cameras, datadict, params = serve_data_DANNCE.prepend_experiment(
-        params, datadict, num_experiments, camnames, cameras
-    )
+        cameras, datadict, params = serve_data_DANNCE.prepend_experiment(
+            params, datadict, num_experiments, camnames, cameras
+        )
 
-    # Dump the params into file for reproducibility
-    processing.save_params_pickle(params)
-    # logger.info(params)
+        # Dump the params into file for reproducibility
+        processing.save_params_pickle(params)
+        # logger.info(params)
 
-    # Setup additional variables for later use
-    n_cams = len(camnames[0])
-    dannce_train_dir = params["dannce_train_dir"]
-    outmode = "coordinates" if params["expval"] else "3dprob"
-    tifdirs = []  # Training from single images not yet supported in this demo
+        # Setup additional variables for later use
+        n_cams = len(camnames[0])
+        dannce_train_dir = params["dannce_train_dir"]
+        outmode = "coordinates" if params["expval"] else "3dprob"
+        tifdirs = []  # Training from single images not yet supported in this demo
 
-    vid_exps = np.arange(num_experiments)
-    # initialize needed videos
-    vids = processing.initialize_all_vids(params, datadict, vid_exps, pathonly=True)
+        vid_exps = np.arange(num_experiments)
+        # initialize needed videos
+        vids = processing.initialize_all_vids(params, datadict, vid_exps, pathonly=True)
 
-    # make train/valid splits
-    partition = processing.make_data_splits(
-        samples, params, dannce_train_dir, num_experiments, 
-        temporal_chunks=temporal_chunks)
+        # make train/valid splits
+        partition = processing.make_data_splits(
+            samples, params, dannce_train_dir, num_experiments, 
+            temporal_chunks=temporal_chunks)
 
-    logger.info("\nTRAIN:VALIDATION SPLIT = {}:{}\n".format(len(partition["train_sampleIDs"]), len(partition["valid_sampleIDs"])))
+        logger.info("\nTRAIN:VALIDATION SPLIT = {}:{}\n".format(len(partition["train_sampleIDs"]), len(partition["valid_sampleIDs"])))
 
-    base_params = {
-        **base_params,
-        "camnames": camnames,
-        "vidreaders": vids,
-        "chunks": total_chunks,
-    }
+        base_params = {
+            **base_params,
+            "camnames": camnames,
+            "vidreaders": vids,
+            "chunks": total_chunks,
+        }
+        genfunc = generator.MultiviewImageGenerator
 
-    genfunc = generator.MultiviewImageGenerator
+        # Used to initialize arrays for mono, and also in *frommem (the final generator)
+        params["chan_num"] = 1 if params["mono"] else params["n_channels_in"]
 
-    # Used to initialize arrays for mono, and also in *frommem (the final generator)
-    params["chan_num"] = 1 if params["mono"] else params["n_channels_in"]
+        spec_params = {
+            "channel_combo":  params["channel_combo"],
+            "expval": params["expval"],
+        }
 
-    spec_params = {
-        "channel_combo":  params["channel_combo"],
-        "expval": params["expval"],
-    }
+        valid_params = {**base_params, **spec_params}
 
-    valid_params = {**base_params, **spec_params}
+        # Setup a generator that will read videos and labels
+        train_gen_params = {
+            "list_IDs": partition["train_sampleIDs"],
+            "labels": datadict,
+            "labels_3d": datadict_3d,
+            "camera_params": cameras,
+            "clusterIDs": partition["train_sampleIDs"],
+            "com3d": com3d_dict,
+            "tifdirs": tifdirs
+        }
+        valid_gen_params = {
+            "list_IDs": partition["valid_sampleIDs"],
+            "labels": datadict,
+            "labels_3d": datadict_3d,
+            "camera_params": cameras,
+            "clusterIDs": partition["valid_sampleIDs"],
+            "com3d": com3d_dict,
+            "tifdirs": tifdirs
+        }
 
-    # Setup a generator that will read videos and labels
-    train_gen_params = {
-        "list_IDs": partition["train_sampleIDs"],
-        "labels": datadict,
-        "labels_3d": datadict_3d,
-        "camera_params": cameras,
-        "clusterIDs": partition["train_sampleIDs"],
-        "com3d": com3d_dict,
-        "tifdirs": tifdirs
-    }
-    valid_gen_params = {
-        "list_IDs": partition["valid_sampleIDs"],
-        "labels": datadict,
-        "labels_3d": datadict_3d,
-        "camera_params": cameras,
-        "clusterIDs": partition["valid_sampleIDs"],
-        "com3d": com3d_dict,
-        "tifdirs": tifdirs
-    }
-
-    train_generator = genfunc(**train_gen_params, **valid_params)
-    valid_generator = genfunc(**valid_gen_params, **valid_params)
+        train_generator = genfunc(**train_gen_params, **valid_params)
+        valid_generator = genfunc(**valid_gen_params, **valid_params)
+        
+        # load everything into memory
+        X_train, y_train = load_data2d_into_mem(params, logger, partition, n_cams, train_generator, train=True)
+        X_valid, y_valid = load_data2d_into_mem(params, logger, partition, n_cams, valid_generator, train=False)
     
-    # load everything into memory
-    X_train, y_train = load_data2d_into_mem(params, logger, partition, n_cams, train_generator, train=True)
-    X_valid, y_valid = load_data2d_into_mem(params, logger, partition, n_cams, valid_generator, train=False)
-    
-    if params["debug_volume_tifdir"] is not None:
-        # When this option is toggled in the config, rather than
-        # training, the image volumes are dumped to tif stacks.
-        # This can be used for debugging problems with calibration or COM estimation
-        processing.save_train_images(params["debug_volume_tifdir"], X_train, y_train)
-        return
+        if params["debug_volume_tifdir"] is not None:
+            # When this option is toggled in the config, rather than
+            # training, the image volumes are dumped to tif stacks.
+            # This can be used for debugging problems with calibration or COM estimation
+            processing.save_train_images(params["debug_volume_tifdir"], X_train, y_train)
+            return
 
-    # initialize datasets and dataloaders
-    train_generator = dataset.ImageDataset(
-        images=X_train,
-        labels=y_train,
-    )
-    valid_generator = dataset.ImageDataset(
-        images=X_valid,
-        labels=y_valid,
-    )
+        # initialize datasets and dataloaders
+        train_generator = dataset.ImageDataset(
+            images=X_train,
+            labels=y_train,
+            num_joints=params["n_channels_out"],
+            return_Gaussian=True,
+        )
+        valid_generator = dataset.ImageDataset(
+            images=X_valid,
+            labels=y_valid,
+            num_joints=params["n_channels_out"],
+            return_Gaussian=True,
+        )
+    else:
+        full_dataset = dataset.ImageDataset(
+            imdir=custom_model_params.get("imdir", None),
+            labeldir=custom_model_params.get("labeldir", None),
+            return_Gaussian=True,
+            sigma=custom_model_params.get("sigma", 2),
+            num_joints=params["n_channels_out"],
+            image_size=custom_model_params.get("image_size", [256, 256]),
+            heatmap_size=custom_model_params.get("heatmap_size", [64, 64]),
+        )
+
+        np.random.seed(params["data_split_seed"])
+        indices = np.random.permutation(len(full_dataset))
+        split_ratio = custom_model_params.get("split_ratio", 0.05)
+
+        train_indices = indices[int(split_ratio * len(full_dataset)):]
+        valid_indices = indices[:int(split_ratio * len(full_dataset))]
+
+        train_generator = torch.utils.data.Subset(full_dataset, train_indices)
+        valid_generator = torch.utils.data.Subset(full_dataset, valid_indices)
     
     train_dataloader = torch.utils.data.DataLoader(
         train_generator, batch_size=params["batch_size"], shuffle=True, 
-        # num_workers=valid_batch_size
+        num_workers=4
     )
     valid_dataloader = torch.utils.data.DataLoader(
         valid_generator, params["batch_size"], shuffle=False, 
-        # num_workers=valid_batch_size
+        num_workers=4
     )
 
     # Build network
@@ -189,6 +213,7 @@ def train(params: Dict):
     logger.info("COMPLETE\n")
 
     # set up trainer
+    params["start_epoch"] = 1
     trainer = BackboneTrainer(
         params=params,
         model=model,

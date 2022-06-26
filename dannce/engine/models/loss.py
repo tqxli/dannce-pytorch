@@ -59,7 +59,8 @@ class MSELoss(BaseLoss):
 
     def forward(self, heatmap_gt, heatmap_pred):
         bs, n_joints = heatmap_pred.shape[:2]
-        heatmap_gt = heatmap_gt.permute(0, 4, 1, 2, 3)
+        if len(heatmap_gt.shape) == 5:
+            heatmap_gt = heatmap_gt.permute(0, 4, 1, 2, 3)
         loss = F.mse_loss(heatmap_gt, heatmap_pred)
 
         return self.loss_weight * loss

@@ -1240,7 +1240,7 @@ def savedata_tomat(
         "p_max": p_max,
         "sampleID": sID,
         "log_pmax": log_p_max,
-        "metadata": prepare_save_metadata(params),
+        # "metadata": prepare_save_metadata(params),
     }
     if write and data is None:
         sio.savemat(

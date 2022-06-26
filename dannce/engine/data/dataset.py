@@ -1,6 +1,7 @@
 import enum
 import os
 from pathlib import PurePosixPath
+import cv2
 import numpy as np
 from dannce.engine.data import processing
 import warnings
@@ -763,22 +764,40 @@ class MultiViewImageDataset(torch.utils.data.Dataset):
         return X, X_grid, camera, y_3d
 
 class ImageDataset(torch.utils.data.Dataset):
-    def __init__(self, images, labels, num_joints, return_Gaussian=True, sigma=2):
+    def __init__(self, 
+        num_joints, 
+        imdir=None, labeldir=None, images=None, labels=None, 
+        return_Gaussian=True, sigma=2,
+        image_size=[256, 256],
+        heatmap_size=[64, 64],
+    ):
         super(ImageDataset, self).__init__()
         self.images = images
         self.labels = labels
+
+        self.read_frommem = (self.images is not None)
+
+        if not self.read_frommem:
+            self.imdir = imdir 
+            self.labeldir = labeldir
+
+            self.imlist = sorted(os.listdir(imdir))
+            self.annot = sorted(os.listdir(labeldir))
+            assert len(self.imlist) == len(self.annot)
 
         self.num_joints = num_joints
         self.return_Gaussian = return_Gaussian
         self.sigma = sigma
 
-        self.image_size = np.array([512, 512])
-        self.heatmap_size = np.array([128, 128])
+        self.image_size = np.array(image_size)
+        self.heatmap_size = np.array(heatmap_size)
 
     def __len__(self):
-        return self.images.shape[0]
+        if self.read_frommem:
+            return self.images.shape[0]
+        return len(self.imlist)
     
-    def _vis_heatmap(self, im, target):
+    def _vis_heatmap(self, im, target, kpts2d):
         import matplotlib
         import matplotlib.pyplot as plt
         matplotlib.use('TkAgg')
@@ -786,6 +805,8 @@ class ImageDataset(torch.utils.data.Dataset):
         fig = plt.figure(figsize=(10, 10))
         ax = fig.add_subplot(121)
         ax.imshow(im.permute(1, 2, 0).numpy().astype(np.uint8))
+
+        ax.scatter(kpts2d[0].numpy(), kpts2d[1].numpy())
 
         ax = fig.add_subplot(122)
         ax.imshow(target.sum(0).numpy())
@@ -836,16 +857,49 @@ class ImageDataset(torch.utils.data.Dataset):
         return target, target_weight
 
     def __getitem__(self, idx):
-        im_ori = self.images[idx]
-        X = processing.preprocess_3d(self.images[idx].clone())
-        y= self.labels[idx]
+        if self.read_frommem:
+            # im_ori = self.images[idx]
+            im = processing.preprocess_3d(self.images[idx].clone())
+            kpts2d = self.labels[idx]
+        else:
+            im = cv2.imread(
+                os.path.join(self.imdir, self.imlist[idx]),  
+                cv2.IMREAD_COLOR | cv2.IMREAD_IGNORE_ORIENTATION
+            )
+            im = cv2.cvtColor(im, cv2.COLOR_BGR2RGB)
+
+            annot = np.load(os.path.join(self.labeldir, self.annot[idx]), allow_pickle=True)[()]
+            x1, y1, x2, y2 = annot["bbox"]
+            w, h = x2-x1, y2-y1
+            max_side = max(w, h)
+            center = ((x1 + x2) / 2, (y1 + y2) / 2)
+
+            x1 = int(center[0]-max_side/2)
+            x2 = int(center[0]+max_side/2)
+            y1 = int(center[1]-max_side/2)
+            y2 = int(center[1]+max_side/2)
+
+            kpts2d = annot["keypoints"]
+
+            im = im[int(y1):int(y2), int(x1):int(x2), :]
+            kpts2d[0, :] -= int(x1)
+            kpts2d[1, :] -= int(y1)
+
+            ori_size = im.shape[:2]
+            im = cv2.resize(im, tuple(self.image_size))
+            kpts2d[0, :] *= (im.shape[1] / ori_size[1])
+            kpts2d[1, :] *= (im.shape[0] / ori_size[0])
+
+        im, kpts2d = torch.from_numpy(im).permute(2, 0, 1).float(), torch.from_numpy(kpts2d)
 
         if self.return_Gaussian:
-            y, target_weight = self._generate_Gaussian_target(y)
+            target, target_weight = self._generate_Gaussian_target(kpts2d)
             # breakpoint()
-            self._vis_heatmap(im_ori, y)
+            # self._vis_heatmap(im, target, kpts2d)
+            
+            return im, target
 
-        return X, y
+        return im, kpts2d
 
 
 class RAT7MSeqDataset(torch.utils.data.Dataset):
