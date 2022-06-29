@@ -396,6 +396,33 @@ def expected_value_3d(prob_map, grid_centers):
 
     return weighted_centers # [bs, 3, channels]
 
+def max_coord_3d(heatmaps):
+    heatmaps = spatial_softmax(heatmaps)
+    bs, channels, h, w, d = heatmaps.shape
+
+    accu_x = heatmaps.sum(dim=2)
+    accu_x = accu_x.sum(dim=2)
+    accu_y = heatmaps.sum(dim=2)
+    accu_y = accu_y.sum(dim=3)
+    accu_z = heatmaps.sum(dim=3)
+    accu_z = accu_z.sum(dim=3)
+
+    accu_x = accu_x * torch.arange(h).float().to(heatmaps.device)
+    accu_y = accu_y * torch.arange(w).float().to(heatmaps.device)
+    accu_z = accu_z * torch.arange(d).float().to(heatmaps.device)
+
+    x = accu_x.sum(dim=2, keepdim=True)
+    y = accu_y.sum(dim=2, keepdim=True)
+    z = accu_z.sum(dim=2, keepdim=True)
+
+    x = x / float(h) - 0.5
+    y = y / float(w) - 0.5
+    z = z / float(d) - 0.5
+    preds = torch.cat((x, y, z), dim=2)
+    preds *= 2
+
+    return preds
+
 def expected_value_2d(prob_map, grid):
     bs, channels, h, w = prob_map.shape
 
