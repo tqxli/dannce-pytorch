@@ -92,7 +92,7 @@ class _GraphConv(nn.Module):
             convblock = ModulatedGraphConv
 
         self.gconv = convblock(input_dim, output_dim, adj)
-        self.bn = get_normalization(norm_type, output_dim)
+        # self.bn = get_normalization(norm_type, output_dim)
         self.relu = nn.ReLU()
 
         if p_dropout is not None:

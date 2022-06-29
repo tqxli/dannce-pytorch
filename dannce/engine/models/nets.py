@@ -1,3 +1,4 @@
+from pyexpat import features
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -30,6 +31,7 @@ class EncoderDecorder_DANNCE(nn.Module):
         self.decoder_upsample1 = deconv_block(128, 64, 2, 2, normalization, [input_shape]*3)
 
     def forward(self, x):
+        features = []
         # encoder
         x = self.encoder_res1(x)
         skip_x1 = x
@@ -44,21 +46,30 @@ class EncoderDecorder_DANNCE(nn.Module):
         x = self.encoder_pool3(x)
 
         x = self.encoder_res4(x)
-
+        
         # decoder with skip connections
         x = self.decoder_upsample3(x)
         x = self.decoder_res3(torch.cat([x, skip_x3], dim=1))
-
+        features.append(x)
         x = self.decoder_upsample2(x)
         x = self.decoder_res2(torch.cat([x, skip_x2], dim=1))
-
+        features.append(x)
         x = self.decoder_upsample1(x)
         x = self.decoder_res1(torch.cat([x, skip_x1], dim=1))
-
-        return x
+        features.append(x)
+        return x, features
 
 class DANNCE(nn.Module):
-    def __init__(self, input_channels, output_channels, input_shape, norm_method='layer', residual=False, norm_upsampling=False):
+    def __init__(
+        self, 
+        input_channels, 
+        output_channels, 
+        input_shape, 
+        norm_method='layer', 
+        residual=False, 
+        norm_upsampling=False,
+        return_inter_features=False
+    ):
         super().__init__()
 
         self.encoder_decoder = EncoderDecorder_DANNCE(input_channels, norm_method, input_shape, residual, norm_upsampling)
@@ -67,12 +78,14 @@ class DANNCE(nn.Module):
         self._initialize_weights()
         self.n_joints = output_channels
 
+        self.return_inter_features = return_inter_features
+
     def forward(self, volumes, grid_centers):
         """
         volumes: Tensor [batch_size, C, H, W, D]
         grid_centers: [batch_size, nvox**3, 3]
         """
-        volumes = self.encoder_decoder(volumes)
+        volumes, inter_features = self.encoder_decoder(volumes)
         heatmaps = self.output_layer(volumes)
 
         if grid_centers is not None:
@@ -81,7 +94,9 @@ class DANNCE(nn.Module):
         else:
             coords = None
 
-        return coords, heatmaps
+        if self.return_inter_features:
+            return coords, heatmaps, inter_features
+        return coords, heatmaps, None
         
         # torch.amax(heatmaps, dim=(2, 3, 4)).squeeze(0) # torch amax returns max values, not position
 
@@ -105,7 +120,8 @@ def initialize_model(params, n_cams, device):
         "input_channels": (params["chan_num"] + params["depth"]) * n_cams,
         "output_channels": params["n_channels_out"],
         "norm_method": params["norm_method"],
-        "input_shape": params["nvox"]
+        "input_shape": params["nvox"],
+        "return_inter_features": params.get("use_features", False)
     }
 
     if params["net_type"] == "dannce":

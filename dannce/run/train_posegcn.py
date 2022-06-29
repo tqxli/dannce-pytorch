@@ -395,6 +395,7 @@ def train(params: Dict):
     logger.info("Initializing Network...")
 
     # first stage: pose generator    
+    params["use_features"] = custom_model_params.get("use_features", False)    
     pose_generator = initialize_train(params, n_cams, 'cpu', logger)[0]
 
     # second stage: pose refiner
@@ -575,23 +576,17 @@ def predict(params):
         )
 
     print("Initializing Network...")
-    # first stage: pose generator    
+    # first stage: pose generator
+    params["use_features"] = custom_model_params.get("use_features", False)    
     pose_generator = initialize_model(params, len(camnames[0]), "cpu")   
 
     # second stage: pose refiner
-    input_dim = 3
     model = PoseGCN(
+        custom_model_params,
         pose_generator,
-        input_dim=input_dim,
-        hid_dim=custom_model_params["hidden_dim"],
-        n_layers=custom_model_params["n_layers"],
-        n_instances = n_instances,
+        n_instances=n_instances,
+        n_joints=params["n_channels_out"],
         t_dim=params.get("temporal_chunk_size", 1),
-        non_local=custom_model_params.get("non_local", False),
-        base_block=custom_model_params.get("base_block", "sem"),
-        norm_type=custom_model_params.get("norm_type", "batch"),
-        dropout=custom_model_params.get("dropout", None),
-        inter_social=custom_model_params.get("inter_social", False),
     ).to(device)
 
     # load predict model
@@ -660,12 +655,12 @@ def predict(params):
 
         ims = predict_generator.__getitem__(i)
 
-        init_poses, heatmaps = model.pose_generator(
+        init_poses, heatmaps, inter_features = model.pose_generator(
             torch.from_numpy(ims[0][0]).permute(0, 4, 1, 2, 3).to(device), 
             torch.from_numpy(ims[0][1]).to(device)
         )
 
-        final_poses = model.inference(init_poses)
+        final_poses = model.inference(init_poses, heatmaps, inter_features)
 
         probmap = torch.amax(heatmaps, dim=(2, 3, 4)).squeeze(0).detach().cpu().numpy()
         heatmaps = heatmaps.squeeze().detach().cpu().numpy()
