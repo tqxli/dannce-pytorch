@@ -84,7 +84,7 @@ class DannceTrainer(BaseTrainer):
                 return
 
             self.optimizer.zero_grad()
-            keypoints_3d_pred, heatmaps = self.model(volumes, grid_centers)
+            keypoints_3d_pred, heatmaps, _ = self.model(volumes, grid_centers)
 
             keypoints_3d_gt, keypoints_3d_pred, heatmaps = self._split_data(keypoints_3d_gt, keypoints_3d_pred, heatmaps)
             
@@ -117,7 +117,7 @@ class DannceTrainer(BaseTrainer):
         with torch.no_grad():
             for batch in pbar:
                 volumes, grid_centers, keypoints_3d_gt, aux = prepare_batch(batch, self.device)
-                keypoints_3d_pred, heatmaps = self.model(volumes, grid_centers)
+                keypoints_3d_pred, heatmaps, _ = self.model(volumes, grid_centers)
 
                 keypoints_3d_gt, keypoints_3d_pred, heatmaps = self._split_data(keypoints_3d_gt, keypoints_3d_pred, heatmaps)
 
