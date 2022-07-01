@@ -611,6 +611,40 @@ class PoseDatasetNPY(PoseDatasetFromMem):
         occluded_X = np.reshape(occluded_X, (*X.shape[:3], -1))
 
         return occluded_X
+    
+    def _save_3d_targets(self, listIDs, y_3d, savedir='debug_MAX_target'):
+        import imageio
+        if not os.path.exists(savedir):
+            os.makedirs(savedir)
+
+        for i in range(y_3d.shape[0]):
+            for j in range(y_3d.shape[-1]):
+                im = processing.norm_im(y_3d[i, :, :, :, j]) * 255
+                im = im.astype("uint8")
+                of = os.path.join(savedir, f"{listIDs[i]}_{j}.tif")
+                imageio.mimwrite(of, np.transpose(im, [2, 0, 1]))
+    
+    def _save_3d_inputs(self, listIDs, X, savedir='debug_MAX_input'):
+        import imageio
+        if not os.path.exists(savedir):
+            os.makedirs(savedir)
+
+        for i in range(X.shape[0]):
+            for j in range(6):
+                im = X[
+                    i,
+                    :,
+                    :,
+                    :,
+                    j * 3 : (j + 1) * 3,
+                ]
+                im = processing.norm_im(im) * 255
+                im = im.astype("uint8")
+                of = os.path.join(
+                    savedir,
+                    listIDs[i] + "_cam" + str(j) + ".tif",
+                )
+                imageio.mimwrite(of, np.transpose(im, [2, 0, 1, 3]))
 
     def __data_generation(self, list_IDs_temp):
         """Generate data containing batch_size samples.

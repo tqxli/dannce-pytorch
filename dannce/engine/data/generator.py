@@ -505,14 +505,11 @@ class DataGenerator_3Dconv(DataGenerator):
             xgrid, ygrid, zgrid
         )
 
-        grid = torch.stack(
-            (
-            x_coord_3d.transpose(0, 1).flatten(),
-            y_coord_3d.transpose(0, 1).flatten(),
-            z_coord_3d.transpose(0, 1).flatten(),
-            ),
-            dim=1,
-        )
+        # torch.meshgrid current behavior is the same as np.meshgrid('ij')
+        # need to convert to 'xy' for generating correct Gaussian targets
+        x_coord_3d, y_coord_3d, z_coord_3d = x_coord_3d.transpose(0, 1), y_coord_3d.transpose(0, 1), z_coord_3d.transpose(0, 1)
+
+        grid = torch.stack((x_coord_3d.flatten(), y_coord_3d.flatten(), z_coord_3d.flatten()), dim=1)
 
         return (x_coord_3d, y_coord_3d, z_coord_3d), grid
 
