@@ -11,7 +11,7 @@ from dannce.engine.data import serve_data_DANNCE, dataset, generator, processing
 from dannce.engine.data.processing import savedata_tomat, savedata_expval
 import dannce.config as config
 import dannce.engine.inference as inference
-from dannce.engine.models.posegcn.nets import PoseGCN
+import dannce.engine.models.posegcn.nets as gcn_nets
 from dannce.engine.models.nets import initialize_model, initialize_train
 from dannce.engine.models.segmentation import get_instance_segmentation_model
 from dannce.engine.trainer.dannce_trainer import DannceTrainer
@@ -399,7 +399,8 @@ def train(params: Dict):
     pose_generator = initialize_train(params, n_cams, 'cpu', logger)[0]
 
     # second stage: pose refiner
-    model = PoseGCN(
+    model_class = getattr(gcn_nets, custom_model_params.get("model", "PoseGCN"))
+    model = model_class(
         custom_model_params,
         pose_generator,
         n_instances=n_instances,
@@ -432,6 +433,7 @@ def train(params: Dict):
         visualize_batch=False,
         lr_scheduler=lr_scheduler,
         predict_diff=custom_model_params.get("predict_diff", False),
+        multi_stage=(custom_model_params.get("model") == "PoseGCN_MultiStage"),
     )
 
     trainer.train()
@@ -443,7 +445,8 @@ def predict(params):
     params, valid_params = config.setup_predict(params)
 
     # handle specific params
-    custom_model_params = params["custom_model"]
+    # might be better to load in params in the checkpoint ...
+    custom_model_params = torch.load(params["dannce_predict_model"])["params"]["custom_model"]
     n_instances = custom_model_params["n_instances"]
     params["social_training"] = (n_instances > 1)
 
@@ -581,7 +584,8 @@ def predict(params):
     pose_generator = initialize_model(params, len(camnames[0]), "cpu")   
 
     # second stage: pose refiner
-    model = PoseGCN(
+    model_class = getattr(gcn_nets, custom_model_params.get("model", "PoseGCN"))
+    model = model_class(
         custom_model_params,
         pose_generator,
         n_instances=n_instances,
@@ -744,7 +748,8 @@ def predict_multi_animal(params):
 
     # second stage: pose refiner
     input_dim = 3
-    model = PoseGCN(
+    model_class = getattr(gcn_nets, custom_model_params.get("model", "PoseGCN"))
+    model = model_class(
         pose_generator,
         input_dim=input_dim,
         hid_dim=custom_model_params["hidden_dim"],
@@ -767,7 +772,7 @@ def predict_multi_animal(params):
     for init_poses in pbar:
         pred = model.inference(init_poses.to(device))
 
-        final_poses.append(pred.detach().cpu().numpy())
+        final_poses.append(pred.detach().cpu().numpy() + init_poses)
     
     final_poses = np.concatenate(final_poses, axis=0)
     final_poses = np.reshape(final_poses, (-1, 2, *final_poses.shape[1:]))

@@ -83,7 +83,7 @@ class PoseGCN(nn.Module):
 
         self.gconv_output = SemGraphConv(hid_dim, input_dim, adj)
 
-        self.aggre = model_params.get("aggre", None)
+        # self.aggre = model_params.get("aggre", None)
         #if self.aggre == "mlp":
         #    self.aggre_layer = MLP(2*n_joints*input_dim, n_joints*input_dim)
         
@@ -92,6 +92,16 @@ class PoseGCN(nn.Module):
     def forward(self, volumes, grid_centers):
         # initial pose generation
         init_poses, heatmaps, inter_features = self.pose_generator(volumes, grid_centers)
+
+        final_poses = self.inference(init_poses, heatmaps, inter_features)
+        
+        if self.use_residual:
+            final_poses += init_poses
+
+        # print("Mean Euclidean correction:", torch.norm(final_poses, dim=1).mean())
+        return init_poses, final_poses, heatmaps
+    
+    def inference(self, init_poses, heatmaps=None, inter_features=None):
         coord_grids = ops.max_coord_3d(heatmaps).unsqueeze(2).unsqueeze(2) #[B, 23, 1, 1, 3]
         
         x = init_poses.transpose(2, 1).contiguous() #[B, 23, 3]
@@ -122,43 +132,60 @@ class PoseGCN(nn.Module):
         
         x = x.reshape(init_poses.shape[0], -1, 3).transpose(2, 1).contiguous() #[n, 3, 23]
 
-        if self.aggre is not None:
-            x = self.aggre_layer(torch.cat((x, init_poses.transpose(2, 1)), dim=-1).reshape(init_poses.shape[0], -1).contiguous())
-            x = x.reshape(init_poses.shape[0], -1, 3).contiguous().transpose(2, 1).contiguous()
-        
+        # if self.aggre is not None:
+        #     x = self.aggre_layer(torch.cat((x, init_poses.transpose(2, 1)), dim=-1).reshape(init_poses.shape[0], -1).contiguous())
+        #     x = x.reshape(init_poses.shape[0], -1, 3).contiguous().transpose(2, 1).contiguous()
+
         final_poses = x
-        if self.use_residual:
-            final_poses += init_poses
+        return final_poses
 
-        print("Mean Euclidean correction:", torch.norm(final_poses, dim=1).mean())
-        # final_poses = init_poses
-        # return final_poses, heatmaps
-        return init_poses, final_poses, heatmaps
-    
-    def inference(self, init_poses, heatmaps=None, inter_features=None):
+class PoseGCN_MultiStage(PoseGCN):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        self.gconv_input = SemGraphConv(self.input_dim, self.hid_dim, self.adj)
+
+        new_layers = [
+            _ResGraphConv(self.adj, self.hid_dim, self.hid_dim, self.hid_dim, self.dropout, self.base_block),
+            _ResGraphConv(self.adj, self.hid_dim+256, self.hid_dim+256, self.hid_dim+256, self.dropout, self.base_block),
+            _ResGraphConv(self.adj, self.hid_dim+384, self.hid_dim+384, self.hid_dim+384, self.dropout, self.base_block),
+            _ResGraphConv(self.adj, self.hid_dim+448, self.hid_dim+448, self.hid_dim+448, self.dropout, self.base_block)
+        ]
+        self.gconv_layers = nn.Sequential(*new_layers)
+
+        self.gconv_output = nn.Sequential(
+            SemGraphConv(self.hid_dim+256, self.input_dim, self.adj),
+            SemGraphConv(self.hid_dim+384, self.input_dim, self.adj),
+            SemGraphConv(self.hid_dim+448, self.input_dim, self.adj),
+        )
+        
+    def forward(self, volumes, grid_centers):
+        poses = []
+        # initial pose generation
+        init_poses, heatmaps, inter_features = self.pose_generator(volumes, grid_centers)
+        coord_grids = ops.max_coord_3d(heatmaps).unsqueeze(2).unsqueeze(2) #[B, 23, 1, 1, 3]
         x = init_poses.transpose(2, 1).contiguous() #[B, 23, 3]
-        x = x.reshape(init_poses.shape[0] // self.n_instances, -1, 3).contiguous() #[n, 46, 3] or [n, 23, 3]
-        x = x.reshape(-1, self.t_dim * x.shape[1], x.shape[2]).contiguous() #[n, t_dim*23, 3]
 
-        if (inter_features is not None) and (heatmaps is not None) and (self.use_features):
-            coord_grids = ops.max_coord_3d(heatmaps).unsqueeze(2).unsqueeze(2) #[B, 23, 1, 1, 3]
-            f3 = F.grid_sample(inter_features[0], coord_grids, align_corners=True).squeeze(-1).squeeze(-1)
-            f2 = F.grid_sample(inter_features[1], coord_grids, align_corners=True).squeeze(-1).squeeze(-1)
-            f1 = F.grid_sample(inter_features[2], coord_grids, align_corners=True).squeeze(-1).squeeze(-1)
-            
-            f = self.fusion_layer(torch.cat((f3, f2, f1), dim=1))
-            x = torch.cat((f.permute(0, 2, 1), x), dim=-1)
+        # use multi-scale features
+        f3 = F.grid_sample(inter_features[0], coord_grids, align_corners=True).squeeze(-1).squeeze(-1).permute(0, 2, 1)
+        f2 = F.grid_sample(inter_features[1], coord_grids, align_corners=True).squeeze(-1).squeeze(-1).permute(0, 2, 1)
+        f1 = F.grid_sample(inter_features[2], coord_grids, align_corners=True).squeeze(-1).squeeze(-1).permute(0, 2, 1)
+        fs = [f3, f2, f1]
 
         x = self.gconv_input(x)
-        x = self.gconv_layers(x)
-        x = self.gconv_output(x)
+        x = self.gconv_layers[0](x)
 
-        correction = x.reshape(init_poses.shape[0], -1, 3).transpose(2, 1).contiguous()
-        final_poses = correction + init_poses
+        for f, layer, output_layer in zip(fs, self.gconv_layers[1:], self.gconv_output):
+            x = torch.cat((f, x), dim=2)
+            residual = x
+            x = layer(x)
+            x += residual
+            pose = output_layer(x).transpose(2, 1)
+            if self.use_residual:
+                pose += init_poses
+            poses.append(pose)
 
-        # print("Mean Euclidean correction:", torch.norm(correction, dim=1).mean())
-
-        return final_poses
+        return init_poses, poses, heatmaps        
 
 if __name__ == "__main__":
     model = PoseGCN()
