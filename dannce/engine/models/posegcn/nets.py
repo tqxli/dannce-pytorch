@@ -1,4 +1,5 @@
 from functools import reduce
+from pyexpat import features
 import torch
 import torch.nn as nn
 
@@ -121,6 +122,14 @@ class PoseGCN(nn.Module):
             f3 = F.grid_sample(inter_features[0], coord_grids, align_corners=True).squeeze(-1).squeeze(-1)
             f2 = F.grid_sample(inter_features[1], coord_grids, align_corners=True).squeeze(-1).squeeze(-1)
             f1 = F.grid_sample(inter_features[2], coord_grids, align_corners=True).squeeze(-1).squeeze(-1)
+
+            if self.social:
+                f3 = f3.reshape(-1, self.n_instances, *f3.shape[1:]).permute(0, 2, 1, 3)
+                f3 = f3.reshape(*f3.shape[:2], -1)
+                f2 = f2.reshape(-1, self.n_instances, *f2.shape[1:]).permute(0, 2, 1, 3)
+                f2 = f2.reshape(*f2.shape[:2], -1)
+                f1 = f1.reshape(-1, self.n_instances, *f1.shape[1:]).permute(0, 2, 1, 3)
+                f1 = f1.reshape(*f1.shape[:2], -1)
 
             f = self.fusion_layer(torch.cat((f3, f2, f1), dim=1))
 
