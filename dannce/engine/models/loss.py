@@ -186,6 +186,27 @@ class GaussianRegLoss(BaseLoss):
         draw_voxels(target.clone().detach().cpu(), ax)
         plt.show(block=True)
         input("Press Enter to continue...")
+    
+    def save(self, heatmaps, heatmap_target, savedir="./debug_gaussian_unsupervised"):
+        if not os.path.exists(savedir):
+            os.makedirs(savedir)
+        
+        heatmaps = heatmaps.clone().detach().cpu().numpy()
+        heatmap_target = heatmap_target.clone().detach().cpu().numpy()
+
+        for i in range(heatmaps.shape[0]):
+            for j in range(heatmaps.shape[1]):
+                im = processing.norm_im(heatmaps[i, j]) * 255
+                im = im.astype("uint8")
+                of = os.path.join(savedir, f"{i}_{j}.tif")
+                imageio.mimwrite(of, np.transpose(im, [2, 0, 1]))
+        
+        for i in range(heatmap_target.shape[0]):
+            for j in range(heatmap_target.shape[1]):
+                im = processing.norm_im(heatmap_target[i, j]) * 255
+                im = im.astype("uint8")
+                of = os.path.join(savedir, f"{i}_{j}_target.tif")
+                imageio.mimwrite(of, np.transpose(im, [2, 0, 1]))
 
     def _generate_gaussian_target(self, centers, grids):
         """
@@ -210,7 +231,6 @@ class GaussianRegLoss(BaseLoss):
         """
         # reshape grids
         grids = grids.permute(0, 2, 1).reshape(grids.shape[0], grids.shape[2], *heatmaps.shape[2:]) # [bs, 3, n_vox, n_vox, n_vox]
-        grids = grids.permute(0, 1, 3, 2, 4)
 
         if grids.shape[0] != kpts_pred.shape[0]:
             grids = torch.stack((grids, grids), dim=1) #[bs, 2, n_vox, n_vox, n_vox]
@@ -218,16 +238,16 @@ class GaussianRegLoss(BaseLoss):
 
         # generate gaussian shaped targets based on current predictions
         gaussian_gt = self._generate_gaussian_target(kpts_pred, grids) #[bs, n_joints, n_vox**3]
-        
-        # apply sigmoid to the exposed heatmap
+        heatmaps = heatmaps.sigmoid()
+
+        # self.save(heatmaps, gaussian_gt)
         # breakpoint()
-        # heatmaps = torch.sigmoid(heatmaps)
-        
+
         # compute loss
         if self.method == "mse":
             loss = 0.5 * F.mse_loss(gaussian_gt, heatmaps)
         elif self.method == "cross_entropy":
-            loss = - (gaussian_gt * heatmaps.log()).mean()
+            loss = F.binary_cross_entropy(heatmaps, gaussian_gt)
 
         return self.loss_weight * loss
 
