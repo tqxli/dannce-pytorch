@@ -711,6 +711,14 @@ class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
         self.batch_size = n_instances
         self.occlusion = occlusion
         self.list_IDs = [ID for ID in self.list_IDs if int(ID.split("_")[0]) % n_instances == 0]
+    
+    def __len__(self) -> int:
+        """Denote the number of batches per epoch.
+
+        Returns:
+            int: Batches per epoch
+        """
+        return len(self.list_IDs)
 
     def __getitem__(self, index: int):
         """Generate one batch of data.

@@ -446,9 +446,11 @@ def predict(params):
 
     # handle specific params
     # might be better to load in params in the checkpoint ...
+    # n_instances = params["custom_model"]["n_instances"]
     custom_model_params = torch.load(params["dannce_predict_model"])["params"]["custom_model"]
     n_instances = custom_model_params["n_instances"]
-    params["social_training"] = (n_instances > 1)
+
+    # params["social_training"] = (n_instances > 1)
 
     # if n_instances > 1:
     #     com_files = params["com_file"].split(',')
@@ -462,71 +464,65 @@ def predict(params):
     samples = []
     datadict = {}
     datadict_3d = {}
-    com3d_dict = {}
-    cameras = {}
+    com3d_dict = {}   
+    cameras = {}     
     camnames = {}
-    # total_chunks = {}
-    # for e in range(n_instances):
-    (
-        params["experiment"][0],
-        samples_,
-        datadict_,
-        datadict_3d_,
-        cameras_,
-        com3d_dict_,
-        _
-    ) = processing.do_COM_load(
-        params["experiment"][0],
-        params["experiment"][0],
-        0,
-        params,
-        training=False,
-    )
 
-    # Write 3D COM to file. This might be different from the input com3d file
-    # if arena thresholding was applied.
-    processing.write_com_file(params, samples_, com3d_dict_)
+    num_experiments = len(params["experiment"])
+    for e in range(num_experiments):
+        (
+            params["experiment"][e],
+            samples_,
+            datadict_,
+            datadict_3d_,
+            cameras_,
+            com3d_dict_,
+            _
+        ) = processing.do_COM_load(
+            params["experiment"][e],
+            params["experiment"][e],
+            e,
+            params,
+            training=False,
+        )
 
-    # The library is configured to be able to train over multiple animals ("experiments")
-    # at once. Because supporting code expects to see an experiment ID# prepended to
-    # each of these data keys, we need to add a token experiment ID here.
+        # Write 3D COM to file. This might be different from the input com3d file
+        # if arena thresholding was applied.
+        if e == 0:
+            processing.write_com_file(params, samples_, com3d_dict_)
 
-    (samples, datadict, datadict_3d, com3d_dict, _) = serve_data_DANNCE.add_experiment(
-        0,
-        samples,
-        datadict,
-        datadict_3d,
-        com3d_dict,
-        samples_,
-        datadict_,
-        datadict_3d_,
-        com3d_dict_,
-    )
-    cameras[0] = cameras_
-    camnames[0] = params["experiment"][0]["camnames"]
 
-        # for name, chunk in params["experiment"][e]["chunks"].items():
-        #     total_chunks[str(e) + "_" + name] = chunk
+        (samples, datadict, datadict_3d, com3d_dict, _) = serve_data_DANNCE.add_experiment(
+            e,
+            samples,
+            datadict,
+            datadict_3d,
+            com3d_dict,
+            samples_,
+            datadict_,
+            datadict_3d_,
+            com3d_dict_,
+        )
+
+        cameras[e] = cameras_
+        camnames[e] = params["experiment"][e]["camnames"]
 
     # Need a '0' experiment ID to work with processing functions.
     # *NOTE* This function modified camnames in place
     # to add the appropriate experiment ID
     cameras, datadict, params = serve_data_DANNCE.prepend_experiment(
-        params, datadict, 1, camnames, cameras, dannce_prediction=True
+        params, datadict, num_experiments, camnames, cameras, dannce_prediction=True
     )
 
     samples = np.array(samples)
-    # if n_instances > 1:
-    #     samples = np.reshape(samples, (n_instances, -1))
-    #     samples = np.reshape(np.transpose(samples), -1)
 
     # Initialize video dictionary. paths to videos only.
     # TODO: Remove this immode option if we decide not
     # to support tifs
     if params["immode"] == "vid":
         vids = {}
-        vids = processing.initialize_vids(params, datadict, 0, vids, pathonly=True)
-        # vids = processing.initialize_all_vids(params, datadict, np.arange(n_instances), pathonly=True)
+        for e in range(num_experiments):
+            vids = processing.initialize_vids(params, datadict, 0, vids, pathonly=True)
     
     # Parameters
     valid_params = {
@@ -546,7 +542,7 @@ def predict(params):
     # Generators
     # Because CUDA_VISBILE_DEVICES is already set to a single GPU, the gpu_id here should be "0"
     device = "cuda:0"
-    genfunc = generator.DataGenerator_3Dconv
+    genfunc = generator.DataGenerator_3Dconv_social if params["social_training"] else generator.DataGenerator_3Dconv
 
     predict_params = [
         partition["valid_sampleIDs"],
@@ -557,9 +553,11 @@ def predict(params):
         com3d_dict,
         tifdirs,        
     ]
+    spec_params = {"occlusion": params.get("downscale_occluded_view", False)} if params["social_training"] else {}
     predict_generator = genfunc(
         *predict_params,
-        **valid_params
+        **valid_params,
+        **spec_params
     )
 
     predict_generator_sil = None
@@ -599,7 +597,7 @@ def predict(params):
 
     if n_instances > 1:
         print("Obtaining initial pose estimations.")
-        model = model.pose_generator
+        # model = model.pose_generator
 
     if params["maxbatch"] != "max" and params["maxbatch"] > len(predict_generator):
         print(
@@ -658,13 +656,29 @@ def predict(params):
             )
 
         ims = predict_generator.__getitem__(i)
+        vols = torch.from_numpy(ims[0][0]).permute(0, 4, 1, 2, 3)
+        # replace occluded view
+        if params["downscale_occluded_view"]:
+            occlusion_scores = ims[0][2]
+            occluded_views = (occlusion_scores > 0.5)
+            for instance in range(occluded_views.shape[0]):
+                occluded = np.where(occluded_views[instance])[0]
+                unoccluded = np.where(~occluded_views[instance])[0]
+                for view in occluded:
+                    alternative = np.random.choice(unoccluded)
+                    vols[instance][view] = vols[instance][alternative]
+                    print(f"Replace view {view} with {alternative}")
 
-        init_poses, heatmaps, inter_features = model.pose_generator(
-            torch.from_numpy(ims[0][0]).permute(0, 4, 1, 2, 3).to(device), 
-            torch.from_numpy(ims[0][1]).to(device)
-        )
+        model_inputs = [vols.to(device)]
+        model_inputs.append(torch.from_numpy(ims[0][1]).to(device))
 
-        final_poses = model.inference(init_poses, heatmaps, inter_features)
+
+        init_poses, heatmaps, inter_features = model.pose_generator(*model_inputs)
+
+        if not params["social_training"]:
+            final_poses = model.inference(init_poses, heatmaps, inter_features) + init_poses
+        else:
+            final_poses = init_poses
 
         probmap = torch.amax(heatmaps, dim=(2, 3, 4)).squeeze(0).detach().cpu().numpy()
         heatmaps = heatmaps.squeeze().detach().cpu().numpy()
@@ -747,19 +761,13 @@ def predict_multi_animal(params):
     # if this is a multi animal model, need multi-stage inference ...    
 
     # second stage: pose refiner
-    input_dim = 3
     model_class = getattr(gcn_nets, custom_model_params.get("model", "PoseGCN"))
     model = model_class(
+        custom_model_params,
         pose_generator,
-        input_dim=input_dim,
-        hid_dim=custom_model_params["hidden_dim"],
-        n_layers=custom_model_params["n_layers"],
-        n_instances = n_instances,
+        n_instances=n_instances,
+        n_joints=params["n_channels_out"],
         t_dim=params.get("temporal_chunk_size", 1),
-        non_local=custom_model_params.get("non_local", False),
-        base_block=custom_model_params.get("base_block", "sem"),
-        norm_type=custom_model_params.get("norm_type", "batch"),
-        dropout=custom_model_params.get("dropout", None),
     ).to(device)
     
     # load predict model

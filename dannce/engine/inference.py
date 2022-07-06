@@ -12,6 +12,7 @@ from dannce.engine.data.processing import savedata_tomat, savedata_expval
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import imageio
 
 
 def print_checkpoint(
@@ -613,13 +614,28 @@ def infer_dannce(
             sil_ims = sil_generator.__getitem__(i)
             sil_ims = processing.extract_3d_sil(sil_ims[0][0], 18)
             ims[0][0] = [np.concatenate((ims[0][0], sil_ims, sil_ims, sil_ims), axis=-1)]
+        
+        vols = torch.from_numpy(ims[0][0]).permute(0, 4, 1, 2, 3)
+        # replace occluded view
+        if params["downscale_occluded_view"]:
+            occlusion_scores = ims[0][2]
+            occluded_views = (occlusion_scores > 0.5)
+            for instance in range(occluded_views.shape[0]):
+                occluded = np.where(occluded_views[instance])[0]
+                unoccluded = np.where(~occluded_views[instance])[0]
+                for view in occluded:
+                    alternative = np.random.choice(unoccluded)
+                    vols[instance][view] = vols[instance][alternative]
+                    print(f"Replace view {view} with {alternative}")
 
-        pred = model(
-            torch.from_numpy(ims[0][0]).permute(0, 4, 1, 2, 3).to(device), 
-            torch.from_numpy(ims[0][1]).to(device)
-        )
+        model_inputs = [vols.to(device)]
+        if params["expval"]:
+            model_inputs.append(torch.from_numpy(ims[0][1]).to(device)) 
+        else:
+            model_inputs.append(None)
+        
+        pred = model(*model_inputs)
 
-        # breakpoint()
         if params["expval"]:
             probmap = torch.amax(pred[1], dim=(2, 3, 4)).squeeze(0).detach().cpu().numpy()
             heatmaps = pred[1].squeeze().detach().cpu().numpy()
@@ -636,8 +652,9 @@ def infer_dannce(
                     np.save(os.path.join(save_path, sampleID), heatmaps[j])
 
         else:
+            pred = pred[1]
             for j in range(pred.shape[0]):
-                preds = torch.as_tensor(pred[j], dtype=torch.float32, device=device)
+                preds = pred[j].permute(1, 2, 3, 0).detach()
                 pred_max = preds.max(0).values.max(0).values.max(0).values
                 pred_total = preds.sum((0, 1, 2))
                 (
@@ -652,8 +669,19 @@ def infer_dannce(
                 save_data[idx * pred.shape[0] + j] = {
                     "pred_max": pred_max.cpu().numpy(),
                     "pred_coord": coord.cpu().numpy(),
-                    "true_coord_nogrid": ims[1][j],
+                    "true_coord_nogrid": ims[1][0][j],
                     "logmax": pred_log.cpu().numpy(),
                     "sampleID": sampleID,
                 }
+
+                # save predicted heatmaps
+                savedir = './debug_MAX'
+                if not os.path.exists(savedir):
+                    os.makedirs(savedir)
+                for i in range(preds.shape[-1]):
+                    im = processing.norm_im(preds[..., i].cpu().numpy()) * 255
+                    im = im.astype("uint8")
+                    of = os.path.join(savedir, f"{sampleID}_{i}.tif")
+                    imageio.mimwrite(of, np.transpose(im, [2, 0, 1]))
+
     return save_data

@@ -614,9 +614,12 @@ def prepend_experiment(
             # print(name)
             # print(params["experiment"][e]["chunks"][name])
             if dannce_prediction:
-                new_chunks[name] = params["experiment"][e]["chunks"][
-                    prev_camnames[e][n_cam]
-                ]
+                try:
+                    new_chunks[name] = params["experiment"][e]["chunks"][
+                        prev_camnames[e][n_cam]
+                    ]
+                except:
+                    new_chunks[name] = params["experiment"][e]["chunks"][name]
             else:
                 new_chunks[name] = params["experiment"][e]["chunks"][name]
         params["experiment"][e]["chunks"] = new_chunks

@@ -603,14 +603,25 @@ class PoseDatasetNPY(PoseDatasetFromMem):
         X: [H, W, D, n_cams*3]
         occlusion_scores: [n_cams]
         """
-        occluded_X = np.reshape(X.copy(), (*X.shape[:3], occlusion_scores.shape[-1], -1))
-        occlusion_scores = occlusion_scores[np.newaxis, np.newaxis, np.newaxis, :, np.newaxis]
+        # occluded_X = np.reshape(X.copy(), (*X.shape[:3], occlusion_scores.shape[-1], -1))
+        # occlusion_scores = occlusion_scores[np.newaxis, np.newaxis, np.newaxis, :, np.newaxis]
 
-        occluded_X *= occlusion_scores
+        # occluded_X *= (1-occlusion_scores) # the occlusion score is determined by IoU
 
-        occluded_X = np.reshape(occluded_X, (*X.shape[:3], -1))
+        # occluded_X = np.reshape(occluded_X, (*X.shape[:3], -1))
+        occluded_views = (occlusion_scores > 0.7)
 
-        return occluded_X
+        occluded = np.where(occluded_views)[0]
+        unoccluded = np.where(~occluded_views)[0]
+        
+        if len(occluded) == 0:
+            return X
+        
+        alternatives = np.random.choice(unoccluded, len(occluded), replace=(len(unoccluded) <= len(occluded)))
+        X[occluded] = X[alternatives]
+        # print(f"Replace view {occluded} with {alternatives}")
+
+        return X
     
     def _save_3d_targets(self, listIDs, y_3d, savedir='debug_MAX_target'):
         import imageio

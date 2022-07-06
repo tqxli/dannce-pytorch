@@ -442,55 +442,60 @@ def dannce_predict(params: Dict):
     make_folder("dannce_predict_dir", params)
 
     params, valid_params = config.setup_predict(params)
-
-    (
-        params["experiment"][0],
-        samples_,
-        datadict_,
-        datadict_3d_,
-        cameras_,
-        com3d_dict_,
-        _
-    ) = processing.do_COM_load(
-        params["experiment"][0],
-        params["experiment"][0],
-        0,
-        params,
-        training=False,
-    )
-
-    # Write 3D COM to file. This might be different from the input com3d file
-    # if arena thresholding was applied.
-    processing.write_com_file(params, samples_, com3d_dict_)
-
     # The library is configured to be able to train over multiple animals ("experiments")
     # at once. Because supporting code expects to see an experiment ID# prepended to
     # each of these data keys, we need to add a token experiment ID here.
     samples = []
     datadict = {}
     datadict_3d = {}
-    com3d_dict = {}
-    (samples, datadict, datadict_3d, com3d_dict, _) = serve_data_DANNCE.add_experiment(
-        0,
-        samples,
-        datadict,
-        datadict_3d,
-        com3d_dict,
-        samples_,
-        datadict_,
-        datadict_3d_,
-        com3d_dict_,
-    )
-    cameras = {}
-    cameras[0] = cameras_
+    com3d_dict = {}   
+    cameras = {}     
     camnames = {}
-    camnames[0] = params["experiment"][0]["camnames"]
+
+    num_experiments = len(params["experiment"])
+    for e in range(num_experiments):
+        (
+            params["experiment"][e],
+            samples_,
+            datadict_,
+            datadict_3d_,
+            cameras_,
+            com3d_dict_,
+            _
+        ) = processing.do_COM_load(
+            params["experiment"][e],
+            params["experiment"][e],
+            e,
+            params,
+            training=False,
+        )
+
+        # Write 3D COM to file. This might be different from the input com3d file
+        # if arena thresholding was applied.
+        if e == 0:
+            processing.write_com_file(params, samples_, com3d_dict_)
+
+
+        (samples, datadict, datadict_3d, com3d_dict, _) = serve_data_DANNCE.add_experiment(
+            e,
+            samples,
+            datadict,
+            datadict_3d,
+            com3d_dict,
+            samples_,
+            datadict_,
+            datadict_3d_,
+            com3d_dict_,
+        )
+
+        cameras[e] = cameras_
+        camnames[e] = params["experiment"][e]["camnames"]
 
     # Need a '0' experiment ID to work with processing functions.
     # *NOTE* This function modified camnames in place
     # to add the appropriate experiment ID
     cameras, datadict, params = serve_data_DANNCE.prepend_experiment(
-        params, datadict, 1, camnames, cameras, dannce_prediction=True
+        params, datadict, num_experiments, camnames, cameras, dannce_prediction=True
     )
 
     samples = np.array(samples)
@@ -500,7 +505,8 @@ def dannce_predict(params: Dict):
     # to support tifs
     if params["immode"] == "vid":
         vids = {}
-        vids = processing.initialize_vids(params, datadict, 0, vids, pathonly=True)
+        for e in range(num_experiments):
+            vids = processing.initialize_vids(params, datadict, 0, vids, pathonly=True)
     
     # Parameters
     valid_params = {
@@ -520,7 +526,7 @@ def dannce_predict(params: Dict):
     # Generators
     # Because CUDA_VISBILE_DEVICES is already set to a single GPU, the gpu_id here should be "0"
     device = "cuda:0"
-    genfunc = generator.DataGenerator_3Dconv
+    genfunc = generator.DataGenerator_3Dconv_social if params["social_training"] else generator.DataGenerator_3Dconv
 
     predict_params = [
         partition["valid_sampleIDs"],
@@ -531,9 +537,11 @@ def dannce_predict(params: Dict):
         com3d_dict,
         tifdirs,        
     ]
+    spec_params = {"occlusion": params.get("downscale_occluded_view", False)} if params["social_training"] else {}
     predict_generator = genfunc(
         *predict_params,
-        **valid_params
+        **valid_params,
+        **spec_params
     )
 
     predict_generator_sil = None

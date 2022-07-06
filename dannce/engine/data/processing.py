@@ -134,7 +134,7 @@ LOAD EXP INFO
 """
 
 
-def load_expdict(params, e, expdict, _DEFAULT_VIDDIR, _DEFAULT_VIDDIR_SIL, logger):
+def load_expdict(params, e, expdict, _DEFAULT_VIDDIR, _DEFAULT_VIDDIR_SIL, logger=None):
     """
     Load in camnames and video directories and label3d files for a single experiment
         during training.
@@ -152,18 +152,22 @@ def load_expdict(params, e, expdict, _DEFAULT_VIDDIR, _DEFAULT_VIDDIR_SIL, logge
     else:
         exp["viddir"] = expdict["viddir"]
 
-    logger.info("Experiment {} using videos in {}".format(e, exp["viddir"]))
+    if logger is not None:
+        logger.info("Experiment {} using videos in {}".format(e, exp["viddir"]))
 
     if params["use_silhouette"]:
         exp["viddir_sil"] = os.path.join(exp["base_exp_folder"], _DEFAULT_VIDDIR_SIL) if "viddir_sil" not in expdict else expdict["viddir_sil"]
-        logger.info("Experiment {} also using masked videos in {}".format(e, exp["viddir_sil"]))
+        if logger is not None:
+            logger.info("Experiment {} also using masked videos in {}".format(e, exp["viddir_sil"]))
 
     l3d_camnames = io.load_camnames(expdict["label3d_file"])
     if "camnames" in expdict:
         exp["camnames"] = expdict["camnames"]
     elif l3d_camnames is not None:
         exp["camnames"] = l3d_camnames
-    logger.info("Experiment {} using camnames: {}".format(e, exp["camnames"]))
+    
+    if logger is not None:
+        logger.info("Experiment {} using camnames: {}".format(e, exp["camnames"]))
 
     # Use the camnames to find the chunks for each video
     chunks = {}
@@ -181,7 +185,8 @@ def load_expdict(params, e, expdict, _DEFAULT_VIDDIR, _DEFAULT_VIDDIR_SIL, logge
             [int(x.split(".")[0]) for x in video_files]
         )
     exp["chunks"] = chunks
-    logger.info(chunks)
+    if logger is not None:
+        logger.info(chunks)
 
     # For npy volume training
     if params["use_npy"]:
@@ -795,10 +800,11 @@ def write_debug(
 
 def save_volumes_into_npy(params, npy_generator, missing_npydir, samples, logger, silhouette=False):
     logger.info("Generating missing npy files ...")
-    for i, samp in tqdm(enumerate(npy_generator.list_IDs)):
+    pbar = tqdm(npy_generator.list_IDs)
+    for i, samp in enumerate(pbar):
         fname = "0_{}.npy".format(samp.split("_")[1])
         rr = npy_generator.__getitem__(i)
-        print(i, end="\r")
+        # print(i, end="\r")
 
         if params["social_training"]:
             for j in range(npy_generator.n_instances):
@@ -809,9 +815,10 @@ def save_volumes_into_npy(params, npy_generator, missing_npydir, samples, logger
                     X = rr[0][0][j].astype("uint8")
                     X_grid, y = rr[0][1][j], rr[1][0][j]
 
-                    np.save(os.path.join(save_root, "image_volumes", fname), X)
-                    np.save(os.path.join(save_root, "grid_volumes", fname), X_grid)
-                    np.save(os.path.join(save_root, "targets", fname), y)
+                    for savedir, data in zip(['image_volumes', "grid_volumes", "targets"], [X, X_grid, y]):
+                        outdir = os.path.join(save_root, savedir, fname)
+                        if not os.path.exists(outdir):
+                            np.save(outdir, data)
                     
                     if params["downscale_occluded_view"]:    
                         np.save(os.path.join(save_root, "occlusion_scores", fname), rr[0][2][j]) 
@@ -825,9 +832,10 @@ def save_volumes_into_npy(params, npy_generator, missing_npydir, samples, logger
             X, X_grid, y = rr[0][0][0].astype("uint8"), rr[0][1][0], rr[1][0] 
             
             if not silhouette:
-                np.save(os.path.join(save_root, "image_volumes", fname), X)
-                np.save(os.path.join(save_root, "grid_volumes", fname), X_grid)
-                np.save(os.path.join(save_root, "targets", fname), y) 
+                for savedir, data in zip(['image_volumes', "grid_volumes", "targets"], [X, X_grid, y]):
+                    outdir = os.path.join(save_root, savedir, fname)
+                    if not os.path.exists(outdir):
+                        np.save(outdir, data)
             else:
                 sil = extract_3d_sil(X)
                 np.save(os.path.join(save_root, "visual_hulls", fname), sil) 

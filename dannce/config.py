@@ -1,3 +1,4 @@
+from copy import deepcopy
 import numpy as np
 import imageio
 import os, shutil
@@ -570,6 +571,26 @@ def setup_predict(params):
         
     params["experiment"] = {}
     params["experiment"][0] = params
+
+    if params["social_training"]:
+        # load in parameters from the other animal
+        comfile = params["com_file"]
+        if 'rat1' in comfile:
+            new_comfile = comfile.replace('rat1', 'rat2')
+        elif 'instance0' in comfile:
+            new_comfile = comfile.replace('instance0', 'instance1')
+        else:
+            print("Cannot find corresponding COM file. Please check.")
+            return
+        
+        paired_expdict = {
+            "label3d_file": params["label3d_file"].replace('RAT1', 'RAT2'),
+            "com_file": new_comfile,
+        }
+        paired_exp = deepcopy(params)
+        for k, v in paired_expdict.items():
+            paired_exp[k] = v
+        params["experiment"][1] = paired_exp
 
     if params["start_batch"] is None:
         params["start_batch"] = 0
