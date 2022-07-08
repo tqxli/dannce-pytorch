@@ -59,6 +59,47 @@ class EncoderDecorder_DANNCE(nn.Module):
         features.append(x)
         return x, features
 
+class EncoderDecoder(EncoderDecorder_DANNCE):
+    def __init__(self, in_channels, normalization, input_shape, residual=False, norm_upsampling=False):
+        super().__init__(in_channels, normalization, input_shape, residual=False, norm_upsampling=False)
+        conv_block = Res3DBlock if residual else Basic3DBlock
+        deconv_block = Upsample3DBlock if norm_upsampling else BasicUpSample3DBlock
+
+        self.encoder_res1 = conv_block(in_channels, 32, normalization, [input_shape]*3)
+        self.encoder_pool1 = Pool3DBlock(2)
+        self.encoder_res2 = conv_block(32, 64, normalization, [input_shape//2]*3)
+        self.encoder_pool2 = Pool3DBlock(2)
+        self.encoder_res3 = conv_block(64, 128, normalization, [input_shape//4]*3)
+        self.encoder_pool3 = Pool3DBlock(2)
+        self.encoder_res4 = conv_block(128, 256, normalization, [input_shape//8]*3)
+
+        self.decoder_res3 = conv_block(256, 128, normalization, [input_shape//4]*3)
+        self.decoder_upsample3 = deconv_block(256, 128, 2, 2, normalization, [input_shape//4]*3)
+        self.decoder_res2 = conv_block(128, 64, normalization, [input_shape//2]*3)
+        self.decoder_upsample2 = deconv_block(128, 64, 2, 2, normalization, [input_shape//2]*3)
+        self.decoder_res1 = conv_block(64, 32, normalization, [input_shape]*3)
+        self.decoder_upsample1 = deconv_block(64, 32, 2, 2, normalization, [input_shape]*3)
+
+        # hidden_dims = [int(bottleneck_dim / 2*i) for i in range(n_layers)]
+
+        # encoder = [
+        #     conv_block(in_channels, hidden_dims[-1]), 
+        #     Pool3DBlock(2)
+        # ]
+        # for i in range(n_layers-1):
+        #     encoder.append(conv_block(hidden_dims[-(i+2)], hidden_dims[-(i+3)], [input_shape // 2**i]*3))
+        #     if i != n_layers-2:
+        #         encoder.append(Pool3DBlock(2))
+        
+        # self.encoder = nn.Sequential(*encoder)
+
+        # decoder = []
+        # for i in range(n_layers-1):
+        #     decoder.append(conv_block(hidden_dims[i], hidden_dims[i+1], [input_shape // 2**(n_layers-i-2)]*3))
+        #     decoder.append(deconv_block(hidden_dims[i], hidden_dims[i+1], 2, 2, [input_shape // 2**(n_layers-1)]*3))
+        
+        # self.decoder = nn.Sequential(*decoder)
+
 class DANNCE(nn.Module):
     def __init__(
         self, 
@@ -68,12 +109,18 @@ class DANNCE(nn.Module):
         norm_method='layer', 
         residual=False, 
         norm_upsampling=False,
-        return_inter_features=False
+        return_inter_features=False,
+        compressed=False,
     ):
         super().__init__()
 
-        self.encoder_decoder = EncoderDecorder_DANNCE(input_channels, norm_method, input_shape, residual, norm_upsampling)
-        self.output_layer = nn.Conv3d(64, output_channels, kernel_size=1, stride=1, padding=0)
+        self.compressed = compressed
+        if self.compressed:
+            self.encoder_decoder = EncoderDecoder(input_channels, norm_method, input_shape, residual, norm_upsampling)
+            self.output_layer = nn.Conv3d(32, output_channels, kernel_size=1, stride=1, padding=0)
+        else:
+            self.encoder_decoder = EncoderDecorder_DANNCE(input_channels, norm_method, input_shape, residual, norm_upsampling)
+            self.output_layer = nn.Conv3d(64, output_channels, kernel_size=1, stride=1, padding=0)
         
         self._initialize_weights()
         self.n_joints = output_channels
@@ -121,11 +168,13 @@ def initialize_model(params, n_cams, device):
         "output_channels": params["n_channels_out"],
         "norm_method": params["norm_method"],
         "input_shape": params["nvox"],
-        "return_inter_features": params.get("use_features", False)
+        "return_inter_features": params.get("use_features", False),
     }
 
     if params["net_type"] == "dannce":
         model_params = {**model_params, "residual": False, "norm_upsampling": False}
+    elif params["net_type"] == "compressed_dannce":
+        model_params = {**model_params, "residual": False, "norm_upsampling": False, "compressed": True}
     elif params["net_type"] == "semi-v2v":
         model_params = {**model_params, "residual": False, "norm_upsampling": True}
     elif params["net_type"] == "v2v":
