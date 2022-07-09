@@ -143,6 +143,8 @@ class DANNCE(nn.Module):
 
         if self.return_inter_features:
             return coords, heatmaps, inter_features
+        for f in inter_features:
+            del f
         return coords, heatmaps, None
         
         # torch.amax(heatmaps, dim=(2, 3, 4)).squeeze(0) # torch amax returns max values, not position
