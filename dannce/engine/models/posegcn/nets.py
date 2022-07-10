@@ -53,8 +53,12 @@ class PoseGCN(nn.Module):
         self.use_features = use_features = model_params.get("use_features", False)
 
         # self.gconv_input = _GraphConv(adj, input_dim, hid_dim, dropout, base_block=base_block, norm_type=norm_type)
+        self.compressed = self.pose_generator.compressed
         if use_features:
-            self.fusion_layer = nn.Conv1d(256+128+64, fuse_dim, kernel_size=1)
+            if self.compressed:
+                self.fusion_layer = nn.Conv1d(128+64+32, fuse_dim, kernel_size=1)
+            else:
+                self.fusion_layer = nn.Conv1d(256+128+64, fuse_dim, kernel_size=1)
             self.gconv_input = SemGraphConv(input_dim+fuse_dim, hid_dim, adj)
         else:
             self.gconv_input = SemGraphConv(input_dim, hid_dim, adj)
