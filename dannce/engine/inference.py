@@ -14,6 +14,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import imageio
 
+from tqdm import tqdm
+
 
 def print_checkpoint(
     n_frame: int, start_ind: int, end_time: float, sample_save: int = 100
@@ -577,10 +579,10 @@ def infer_dannce(
         if not os.path.exists(save_path):
             os.makedirs(save_path)
 
-    for idx, i in enumerate(range(start_ind, end_ind)):
+    for idx, i in tqdm(enumerate(range(start_ind, end_ind))):
         print("Predicting on batch {}".format(i), flush=True)
         if (i - start_ind) % 10 == 0 and i != start_ind:
-            print(i)
+            # print(i)
             print("10 batches took {} seconds".format(time.time() - end_time))
             end_time = time.time()
 
@@ -615,11 +617,14 @@ def infer_dannce(
             sil_ims = processing.extract_3d_sil(sil_ims[0][0], 18)
             ims[0][0] = [np.concatenate((ims[0][0], sil_ims, sil_ims, sil_ims), axis=-1)]
         
-        vols = torch.from_numpy(ims[0][0]).permute(0, 4, 1, 2, 3)
+        vols = torch.from_numpy(ims[0][0]).permute(0, 4, 1, 2, 3) # [B, C, H, W, D]
         # replace occluded view
         if params["downscale_occluded_view"]:
             occlusion_scores = ims[0][2]
             occluded_views = (occlusion_scores > 0.5)
+
+            vols = vols.reshape(vols.shape[0], -1, 3, *vols.shape[2:]) #[B, 6, 3, H, W, D]
+
             for instance in range(occluded_views.shape[0]):
                 occluded = np.where(occluded_views[instance])[0]
                 unoccluded = np.where(~occluded_views[instance])[0]
@@ -627,6 +632,8 @@ def infer_dannce(
                     alternative = np.random.choice(unoccluded)
                     vols[instance][view] = vols[instance][alternative]
                     print(f"Replace view {view} with {alternative}")
+            
+            vols = vols.reshape(vols.shape[0], -1, *vols.shape[3:])
 
         model_inputs = [vols.to(device)]
         if params["expval"]:

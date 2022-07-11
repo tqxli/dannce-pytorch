@@ -661,6 +661,9 @@ def predict(params):
         if params["downscale_occluded_view"]:
             occlusion_scores = ims[0][2]
             occluded_views = (occlusion_scores > 0.5)
+            
+            vols = vols.reshape(vols.shape[0], -1, 3, *vols.shape[2:]) #[B, 6, 3, H, W, D]
+
             for instance in range(occluded_views.shape[0]):
                 occluded = np.where(occluded_views[instance])[0]
                 unoccluded = np.where(~occluded_views[instance])[0]
@@ -668,6 +671,8 @@ def predict(params):
                     alternative = np.random.choice(unoccluded)
                     vols[instance][view] = vols[instance][alternative]
                     print(f"Replace view {view} with {alternative}")
+
+            vols = vols.reshape(vols.shape[0], -1, *vols.shape[3:])
 
         model_inputs = [vols.to(device)]
         model_inputs.append(torch.from_numpy(ims[0][1]).to(device))

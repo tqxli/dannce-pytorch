@@ -617,8 +617,10 @@ class PoseDatasetNPY(PoseDatasetFromMem):
         if len(occluded) == 0:
             return X
         
+        X = np.reshape(X, (*X.shape[:3], -1, 3)) #[H, W, D, n_cam, C]
+        
         alternatives = np.random.choice(unoccluded, len(occluded), replace=(len(unoccluded) <= len(occluded)))
-        X[occluded] = X[alternatives]
+        X[:, :, :, occluded, :] = X[:, :, :alternatives, :]
         # print(f"Replace view {occluded} with {alternatives}")
 
         return X
