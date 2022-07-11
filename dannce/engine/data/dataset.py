@@ -623,6 +623,8 @@ class PoseDatasetNPY(PoseDatasetFromMem):
         X[:, :, :, occluded, :] = X[:, :, :, alternatives, :]
         # print(f"Replace view {occluded} with {alternatives}")
 
+        X = np.reshape(X, (*X.shape[:3], -1)) 
+
         return X
     
     def _save_3d_targets(self, listIDs, y_3d, savedir='debug_MAX_target'):
