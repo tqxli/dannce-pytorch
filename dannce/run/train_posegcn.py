@@ -406,7 +406,10 @@ def train(params: Dict):
         n_instances=n_instances,
         n_joints=params["n_channels_out"],
         t_dim=params.get("temporal_chunk_size", 1),
-    ).to(device)
+    )
+    if 'checkpoint' in custom_model_params.keys():
+        model.load_state_dict(torch.load(custom_model_params["checkpoint"])["state_dict"])
+    model = model.to(device)
     logger.info(model)
 
     model_params = [p for p in model.parameters() if p.requires_grad]

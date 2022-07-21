@@ -1,9 +1,10 @@
+from email.mime import base
 from functools import reduce
 from pyexpat import features
 import torch
 import torch.nn as nn
 
-from dannce.engine.models.posegcn.gcn_blocks import _GraphConv, _ResGraphConv_Attention, _ResGraphConv, SemGraphConv, MLP
+from dannce.engine.models.posegcn.gcn_blocks import _ResGraphConv, SemGraphConv, ModulatedGraphConv, _GraphConv
 from dannce.engine.models.posegcn.non_local import _GraphNonLocal
 from dannce.engine.models.posegcn.utils import *
 
@@ -32,6 +33,10 @@ class PoseGCN(nn.Module):
         self.n_layers = n_layers = model_params.get("n_layers", 3)
         self.non_local = model_params.get("non_local", False)
         self.base_block = base_block = model_params.get("base_block", "sem")
+        if base_block == 'sem':
+            gconv_block = SemGraphConv 
+        elif base_block == 'modulated':
+            gconv_block = ModulatedGraphConv
         self.norm_type = norm_type = model_params.get("norm_type", "batch")
         self.dropout = dropout = model_params.get("dropout", None)
 
@@ -55,13 +60,11 @@ class PoseGCN(nn.Module):
         # self.gconv_input = _GraphConv(adj, input_dim, hid_dim, dropout, base_block=base_block, norm_type=norm_type)
         self.compressed = self.pose_generator.compressed
         if use_features:
-            if self.compressed:
-                self.fusion_layer = nn.Conv1d(128+64+32, fuse_dim, kernel_size=1)
-            else:
-                self.fusion_layer = nn.Conv1d(256+128+64, fuse_dim, kernel_size=1)
-            self.gconv_input = SemGraphConv(input_dim+fuse_dim, hid_dim, adj)
+            self.multi_scale_fdim = 128+64+32 if self.compressed else 256+128+64
+            self.fusion_layer = nn.Conv1d(self.multi_scale_fdim, fuse_dim, kernel_size=1)
+            self.gconv_input = _GraphConv(adj, input_dim+fuse_dim, hid_dim, dropout, base_block, norm_type)
         else:
-            self.gconv_input = SemGraphConv(input_dim, hid_dim, adj)
+            self.gconv_input = _GraphConv(adj, input_dim, hid_dim, dropout, base_block, norm_type)
         
         gconv_layers = []
         if not self.non_local:
@@ -86,7 +89,7 @@ class PoseGCN(nn.Module):
         
         self.gconv_layers = nn.Sequential(*gconv_layers)
 
-        self.gconv_output = SemGraphConv(hid_dim, input_dim, adj)
+        self.gconv_output = gconv_block(hid_dim, input_dim, adj)
 
         # self.aggre = model_params.get("aggre", None)
         #if self.aggre == "mlp":

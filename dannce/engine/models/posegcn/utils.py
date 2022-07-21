@@ -7,7 +7,7 @@ from dannce.engine.data.body_profiles.utils import load_body_profile
 
 NUM_JOINTS = 23
 EDGE = load_body_profile("rat23")["limbs"]
-TEMPORAL_FLOW = np.array([0, 4, 9, 13, 17, 21]) # restrict the flows along temporal dimension 
+TEMPORAL_FLOW = np.arange(NUM_JOINTS) #np.array([0, 4, 9, 13, 17, 21]) # restrict the flows along temporal dimension 
 
 # using to build edge using GCN
 def build_adj_mx_from_edges(num_joints=NUM_JOINTS, edge=EDGE, social=False, t_dim=1, t_flow=TEMPORAL_FLOW):
