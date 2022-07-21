@@ -8,7 +8,6 @@ from __future__ import print_function
 
 import os
 import logging
-from easydict import EasyDict as edict
 
 import torch
 import torch.nn as nn
