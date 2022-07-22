@@ -400,12 +400,12 @@ def max_coord_3d(heatmaps):
     heatmaps = spatial_softmax(heatmaps)
     bs, channels, h, w, d = heatmaps.shape
 
-    accu_x = heatmaps.sum(dim=2)
-    accu_x = accu_x.sum(dim=2)
+    accu_x = heatmaps.sum(dim=3)
+    accu_x = accu_x.sum(dim=3)
     accu_y = heatmaps.sum(dim=2)
     accu_y = accu_y.sum(dim=3)
-    accu_z = heatmaps.sum(dim=3)
-    accu_z = accu_z.sum(dim=3)
+    accu_z = heatmaps.sum(dim=2)
+    accu_z = accu_z.sum(dim=2)
 
     accu_x = accu_x * torch.arange(h).float().to(heatmaps.device)
     accu_y = accu_y * torch.arange(w).float().to(heatmaps.device)
