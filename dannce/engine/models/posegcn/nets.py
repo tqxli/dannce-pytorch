@@ -27,6 +27,9 @@ class PoseGCN(nn.Module):
         # primary pose estimator
         self.pose_generator = pose_generator
 
+        # use relative voxel coordinates instead of absolute 3D world coordinates
+        self.use_relpose = model_params.get("use_relpose", True)
+
         # GCN architecture
         self.input_dim = input_dim = model_params.get("input_dim", 3)
         self.hid_dim = hid_dim = model_params.get("hidden_dim", 128)
@@ -49,8 +52,10 @@ class PoseGCN(nn.Module):
         self.t_flow = t_flow = model_params.get("t_flow", TEMPORAL_FLOW)
         inter_social = model_params.get("inter_social", False)
         self.social = (n_instances > 1) and inter_social
+        
         # adjacency matrix
         self.adj = adj = build_adj_mx_from_edges(social=self.social, t_dim=t_dim, t_flow=t_flow)
+        
         # nonlocal joint groups
         self.nodes_group = nodes_group = model_params.get("nodes_group", NODES_GROUP)
 
@@ -58,13 +63,15 @@ class PoseGCN(nn.Module):
         self.use_features = use_features = model_params.get("use_features", False)
 
         # self.gconv_input = _GraphConv(adj, input_dim, hid_dim, dropout, base_block=base_block, norm_type=norm_type)
+        self.gconv_input = []
         self.compressed = self.pose_generator.compressed
+        # use multi-scale features extracted from decoder layers
         if use_features:
             self.multi_scale_fdim = 128+64+32 if self.compressed else 256+128+64
             self.fusion_layer = nn.Conv1d(self.multi_scale_fdim, fuse_dim, kernel_size=1)
-            self.gconv_input = _GraphConv(adj, input_dim+fuse_dim, hid_dim, dropout, base_block, norm_type)
+            self.gconv_input.append(_GraphConv(adj, input_dim+fuse_dim, hid_dim, dropout, base_block, norm_type))
         else:
-            self.gconv_input = _GraphConv(adj, input_dim, hid_dim, dropout, base_block, norm_type)
+            self.gconv_input.append(_GraphConv(adj, input_dim, hid_dim, dropout, base_block, norm_type))
         
         gconv_layers = []
         if not self.non_local:
@@ -87,8 +94,8 @@ class PoseGCN(nn.Module):
                 gconv_layers.append(_ResGraphConv(adj, hid_dim, hid_dim, hid_dim, dropout, base_block=base_block, norm_type=norm_type))
                 gconv_layers.append(_GraphNonLocal(hid_dim, grouped_order, restored_order, group_size))
         
+        self.gconv_input = nn.Sequential(*self.gconv_input)
         self.gconv_layers = nn.Sequential(*gconv_layers)
-
         self.gconv_output = gconv_block(hid_dim, input_dim, adj)
 
         # self.aggre = model_params.get("aggre", None)
@@ -98,10 +105,10 @@ class PoseGCN(nn.Module):
         self.use_residual = model_params.get("use_residual", True)
 
     def forward(self, volumes, grid_centers):
-        # initial pose generation
+        # initial pose generation from encoder-decoder
         init_poses, heatmaps, inter_features = self.pose_generator(volumes, grid_centers)
-
-        final_poses = self.inference(init_poses, heatmaps, inter_features)
+        
+        final_poses = self.inference(init_poses, grid_centers, heatmaps, inter_features)
         
         if self.use_residual:
             final_poses += init_poses
@@ -109,8 +116,15 @@ class PoseGCN(nn.Module):
         # print("Mean Euclidean correction:", torch.norm(final_poses, dim=1).mean())
         return init_poses, final_poses, heatmaps
     
-    def inference(self, init_poses, heatmaps=None, inter_features=None):
+    def inference(self, init_poses, grid_centers, heatmaps=None, inter_features=None):
         coord_grids = ops.max_coord_3d(heatmaps).unsqueeze(2).unsqueeze(2) #[B, 23, 1, 1, 3]
+
+        # normalize the absolute 3D coordinates to relative voxel coordinates
+        if self.use_relpose:
+            com3d = torch.mean(grid_centers, dim=1).unsqueeze(-1) #[N, 3, 1]
+            nvox = round(grid_centers.shape[1]**(1/3))
+            vsize = (grid_centers[0, :, 0].max() - grid_centers[0, :, 0].min()) / nvox
+            init_poses = (init_poses - com3d) / vsize
         
         x = init_poses.transpose(2, 1).contiguous() #[B, 23, 3]
         

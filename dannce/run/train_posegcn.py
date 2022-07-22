@@ -678,15 +678,19 @@ def predict(params):
             vols = vols.reshape(vols.shape[0], -1, *vols.shape[3:])
 
         model_inputs = [vols.to(device)]
-        model_inputs.append(torch.from_numpy(ims[0][1]).to(device))
-
+        grid_centers = torch.from_numpy(ims[0][1]).to(device)
+        model_inputs.append(grid_centers)
 
         init_poses, heatmaps, inter_features = model.pose_generator(*model_inputs)
 
         if not params["social_training"]:
-            final_poses = model.inference(init_poses, heatmaps, inter_features) + init_poses
+            final_poses = model.inference(init_poses, grid_centers, heatmaps, inter_features) #+ init_poses
         else:
             final_poses = init_poses
+        
+        nvox = round(grid_centers.shape[1]**(1/3))
+        vsize = (grid_centers[0, :, 0].max() - grid_centers[0, :, 0].min()) / nvox
+        final_poses = final_poses * vsize + init_poses
 
         probmap = torch.amax(heatmaps, dim=(2, 3, 4)).squeeze(0).detach().cpu().numpy()
         heatmaps = heatmaps.squeeze().detach().cpu().numpy()

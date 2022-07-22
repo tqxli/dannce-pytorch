@@ -7,19 +7,26 @@ from dannce.engine.trainer.train_utils import prepare_batch
 import dannce.engine.models.loss as custom_losses
 
 class GCNTrainer(DannceTrainer):
-    def __init__(self, predict_diff=True, multi_stage=False, **kwargs):
+    def __init__(self, predict_diff=True, multi_stage=False, relpose=True, **kwargs):
         super().__init__(**kwargs)
 
+        # GCN-specific training options
         self.predict_diff = predict_diff
         self.multi_stage = multi_stage
-        if self.predict_diff and (not self.multi_stage):
+        self.relpose = relpose
+
+        if self.relpose:
+            self.loss_sup = custom_losses.L1Loss()
+            self.loss.loss_fcns.pop("L1Loss")
+
+        elif self.predict_diff and (not self.multi_stage):
             self.loss_sup = custom_losses.L1Loss()
             self.loss.loss_fcns.pop("L1Loss")
 
             self._del_loss_attr(["L1Loss"])
             self._add_loss_attr(["L1DiffLoss"])
         
-        if self.multi_stage:
+        elif self.multi_stage:
             self.loss_sup = custom_losses.L1Loss()
             self.loss.loss_fcns.pop("L1Loss")
 
@@ -68,7 +75,7 @@ class GCNTrainer(DannceTrainer):
             if not isinstance(keypoints_3d_pred, list):
                 keypoints_3d_gt, keypoints_3d_pred, heatmaps = self._split_data(keypoints_3d_gt, keypoints_3d_pred, heatmaps)
             
-            if self.predict_diff and (not self.multi_stage):
+            if self.predict_diff and (not self.multi_stage) and (not self.relpose):
                 # predictions are offsets from the initial predictions
                 diff_gt = keypoints_3d_gt - init_poses
                 loss_sup = self.loss_sup(diff_gt, keypoints_3d_pred)
@@ -99,6 +106,26 @@ class GCNTrainer(DannceTrainer):
                     loss_dict["Stage3L1Loss"] = loss_sup3.clone().detach().cpu().item()
 
                 total_loss = loss_sup1 + loss_sup2 + loss_sup3 + aux_loss
+            elif self.relpose:
+                com3d = torch.mean(grid_centers, dim=1).unsqueeze(-1) #[N, 3, 1]
+                nvox = round(grid_centers.shape[1]**(1/3))
+                vsize = (grid_centers[0, :, 0].max() - grid_centers[0, :, 0].min()) / nvox
+                keypoints_3d_gt_rel = (keypoints_3d_gt - com3d) / vsize
+
+                if not self.predict_diff:
+                    loss_sup = self.loss_sup(keypoints_3d_gt_rel, keypoints_3d_pred)
+                    keypoints_3d_pred = keypoints_3d_pred * vsize + com3d
+                    total_loss, loss_dict = self.loss.compute_loss(keypoints_3d_gt, keypoints_3d_pred, heatmaps, grid_centers, aux)
+                    total_loss += loss_sup
+                    loss_dict["L1Loss"] = loss_sup.clone().detach().cpu().item()
+                else:
+                    init_poses_rel = (init_poses - com3d) / vsize
+                    diff_gt_rel = keypoints_3d_gt_rel - init_poses_rel
+                    loss_sup = self.loss_sup(diff_gt_rel, keypoints_3d_pred)
+                    keypoints_3d_pred = keypoints_3d_pred * vsize #+ com3d
+                    total_loss, loss_dict = self.loss.compute_loss(keypoints_3d_gt, init_poses + keypoints_3d_pred, heatmaps, grid_centers, aux)
+                    total_loss += loss_sup
+                    loss_dict["L1Loss"] = loss_sup.clone().detach().cpu().item()
             else:
                 total_loss, loss_dict = self.loss.compute_loss(keypoints_3d_gt, keypoints_3d_pred, heatmaps, grid_centers, aux)
             
@@ -148,7 +175,7 @@ class GCNTrainer(DannceTrainer):
 
                 keypoints_3d_gt, keypoints_3d_pred, heatmaps = self._split_data(keypoints_3d_gt, keypoints_3d_pred, heatmaps)
 
-                if self.predict_diff and (not self.multi_stage):
+                if self.predict_diff and (not self.multi_stage) and (not self.relpose):
                     # predictions are offsets from the initial predictions
                     diff_gt = keypoints_3d_gt - init_poses
                     loss_sup = self.loss_sup(diff_gt, keypoints_3d_pred)
@@ -176,6 +203,26 @@ class GCNTrainer(DannceTrainer):
                         loss_dict["Stage1L1Loss"] = loss_sup1.clone().detach().cpu().item()
                         loss_dict["Stage2L1Loss"] = loss_sup2.clone().detach().cpu().item()
                         loss_dict["Stage3L1Loss"] = loss_sup3.clone().detach().cpu().item()
+                elif self.relpose:
+                    com3d = torch.mean(grid_centers, dim=1).unsqueeze(-1) #[N, 3, 1]
+                    nvox = round(grid_centers.shape[1]**(1/3))
+                    vsize = (grid_centers[0, :, 0].max() - grid_centers[0, :, 0].min()) / nvox
+                    keypoints_3d_gt_rel = (keypoints_3d_gt - com3d) / vsize
+
+                    if not self.predict_diff:
+                        loss_sup = self.loss_sup(keypoints_3d_gt_rel, keypoints_3d_pred)
+                        keypoints_3d_pred = keypoints_3d_pred * vsize + com3d
+                        total_loss, loss_dict = self.loss.compute_loss(keypoints_3d_gt, keypoints_3d_pred, heatmaps, grid_centers, aux)
+                        total_loss += loss_sup
+                        loss_dict["L1Loss"] = loss_sup.clone().detach().cpu().item()
+                    else:
+                        init_poses_rel = (init_poses - com3d) / vsize
+                        diff_gt_rel = keypoints_3d_gt_rel - init_poses_rel
+                        loss_sup = self.loss_sup(diff_gt_rel, keypoints_3d_pred)
+                        keypoints_3d_pred = keypoints_3d_pred * vsize #+ com3d
+                        total_loss, loss_dict = self.loss.compute_loss(keypoints_3d_gt, init_poses + keypoints_3d_pred, heatmaps, grid_centers, aux)
+                        total_loss += loss_sup
+                        loss_dict["L1Loss"] = loss_sup.clone().detach().cpu().item()
                 else:
                     _, loss_dict = self.loss.compute_loss(keypoints_3d_gt, keypoints_3d_pred, heatmaps, grid_centers, aux)
                 
