@@ -397,7 +397,7 @@ def expected_value_3d(prob_map, grid_centers):
     return weighted_centers # [bs, 3, channels]
 
 def max_coord_3d(heatmaps):
-    # heatmaps = spatial_softmax(heatmaps)
+    heatmaps = spatial_softmax(heatmaps)
     bs, channels, h, w, d = heatmaps.shape
 
     accu_x = heatmaps.sum(dim=3)
@@ -415,6 +415,7 @@ def max_coord_3d(heatmaps):
     y = accu_y.sum(dim=2, keepdim=True)
     z = accu_z.sum(dim=2, keepdim=True)
 
+    # normalize to [-1, 1] for subsequent grid sampling
     x = x / float(h) - 0.5
     y = y / float(w) - 0.5
     z = z / float(d) - 0.5
