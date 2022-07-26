@@ -437,6 +437,8 @@ def train(params: Dict):
         lr_scheduler=lr_scheduler,
         predict_diff=custom_model_params.get("predict_diff", False),
         multi_stage=(custom_model_params.get("model") == "PoseGCN_MultiStage"),
+        relpose=custom_model_params.get("relpose", True),
+        dual_sup=custom_model_params.get("dual_sup", False),
     )
 
     trainer.train()
@@ -688,9 +690,13 @@ def predict(params):
         else:
             final_poses = init_poses
         
-        nvox = round(grid_centers.shape[1]**(1/3))
-        vsize = (grid_centers[0, :, 0].max() - grid_centers[0, :, 0].min()) / nvox
-        final_poses = final_poses * vsize + init_poses
+        if custom_model_params.get("relpose", True):
+            nvox = round(grid_centers.shape[1]**(1/3))
+            vsize = (grid_centers[0, :, 0].max() - grid_centers[0, :, 0].min()) / nvox
+            final_poses = final_poses * vsize
+        
+        if custom_model_params.get("predict_diff", True):
+            final_poses += init_poses
 
         probmap = torch.amax(heatmaps, dim=(2, 3, 4)).squeeze(0).detach().cpu().numpy()
         heatmaps = heatmaps.squeeze().detach().cpu().numpy()
