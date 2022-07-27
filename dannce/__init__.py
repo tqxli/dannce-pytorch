@@ -2,6 +2,7 @@
 # Default parameters, which can be superseded by CL arguments or
 # config files
 _param_defaults_shared = {
+    "random_seed": None,
     "immode": "vid",
     "verbose": 1,
     "gpu_id": "0",

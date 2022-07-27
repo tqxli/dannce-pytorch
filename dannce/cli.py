@@ -319,6 +319,12 @@ def add_shared_args(
         dest="custom_model",
     )
 
+    parser.add_argument(
+        "--random-seed",
+        dest="random_seed",
+        type=int,
+    )
+
     return parser
 
 

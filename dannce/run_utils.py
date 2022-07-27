@@ -2,16 +2,22 @@
 High-level wrapper functions for interface
 """
 import numpy as np
-import os
+import os, random
 from copy import deepcopy
-from datetime import datetime
 from typing import Dict, Text
-
 import torch
-from dannce import config
+
 from dannce.engine.data import serve_data_DANNCE, dataset, generator, processing
 from dannce.engine.models.segmentation import get_instance_segmentation_model
 from dannce.engine.data.processing import _DEFAULT_SEG_MODEL
+
+def set_random_seed(seed: int):
+    random.seed(seed)
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.backends.cudnn.deterministic = True
 
 def make_folder(key: Text, params: Dict):
     """Make the prediction or training directories.

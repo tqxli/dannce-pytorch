@@ -64,6 +64,11 @@ def train(params: Dict):
     logger.info("***Use {} GPU for training.***".format(params["gpu_id"]))
     # device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
+    # fix random seed if specified
+    if params["random_seed"] is not None:
+        set_random_seed(params["random_seed"])
+        logger.info("***Fix random seed as {}***".format(params["random_seed"]))
+
     train_dataloader, valid_dataloader, n_cams = make_dataset(
         params,  
         base_params,
