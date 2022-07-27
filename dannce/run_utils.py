@@ -398,7 +398,6 @@ def get_segmentation_model(params, valid_params, vids):
     return segmentation_model, valid_params_sil
 
 def make_dataset_inference(params, valid_params):
-    params, valid_params = config.setup_predict(params)
     # The library is configured to be able to train over multiple animals ("experiments")
     # at once. Because supporting code expects to see an experiment ID# prepended to
     # each of these data keys, we need to add a token experiment ID here.
