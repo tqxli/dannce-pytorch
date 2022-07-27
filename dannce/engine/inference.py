@@ -579,8 +579,9 @@ def infer_dannce(
         if not os.path.exists(save_path):
             os.makedirs(save_path)
 
-    for idx, i in tqdm(enumerate(range(start_ind, end_ind))):
-        print("Predicting on batch {}".format(i), flush=True)
+    pbar = tqdm(range(start_ind, end_ind))
+    for idx, i in enumerate(pbar):
+        # print("Predicting on batch {}".format(i), flush=True)
         if (i - start_ind) % 10 == 0 and i != start_ind:
             # print(i)
             print("10 batches took {} seconds".format(time.time() - end_time))
