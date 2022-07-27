@@ -4,6 +4,7 @@ import dannce.run.train_motiondannce as motiondannce
 import dannce.run.train_backbone2d as backbone2d
 import dannce.run.train_dannce_dbbox as dbbox
 import dannce.run.train_posegcn as posegcn
+import dannce.run.train_transformer as trans
 from dannce.interface import (
     # com_predict,
     # com_train,
@@ -168,6 +169,7 @@ def custom_model_train_cli():
         'backbone2d': backbone2d.train,
         'dbbox': dbbox.train,
         'posegcn': posegcn.train,
+        'transformer': trans.train,
     }
 
     parser = argparse.ArgumentParser(
