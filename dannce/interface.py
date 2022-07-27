@@ -184,6 +184,3 @@ def dannce_predict(params: Dict):
             num_markers=params["n_markers"],
             tcoord=False,
         )
-
-# def social_dannce_train(params):
-#     return

@@ -10,7 +10,6 @@ from dannce.interface import (
     # com_train,
     dannce_predict,
     dannce_train,
-    social_dannce_train,
 )
 from dannce.config import check_config, infer_params, build_params
 from dannce import (
@@ -150,17 +149,6 @@ def dannce_train_cli():
     args = parse_clargs(parser, model_type="dannce", prediction=False)
     params = build_clarg_params(args, dannce_net=True, prediction=False)
     dannce_train(params)
-
-def social_dannce_train_cli():
-    """Entrypoint for dannce training."""
-    parser = argparse.ArgumentParser(
-        description="Dannce train CLI",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    parser.set_defaults(**{**_param_defaults_shared, **_param_defaults_dannce})
-    args = parse_clargs(parser, model_type="dannce", prediction=False)
-    params = build_clarg_params(args, dannce_net=True, prediction=False)
-    social_dannce_train(params)
 
 def custom_model_train_cli():
     _TYPES = {
