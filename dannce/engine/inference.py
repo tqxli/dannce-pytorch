@@ -5,6 +5,7 @@ import os
 import time
 import dannce.engine.data.processing as processing
 from dannce.engine.data import ops
+from dannce.config import print_and_set
 from typing import List, Dict, Text, Tuple, Union
 import torch
 import matplotlib
@@ -568,6 +569,12 @@ def infer_dannce(
         device (Text): Gpu device name
         n_chn (int): Number of output channels
     """
+    if params["maxbatch"] != "max" and params["maxbatch"] > len(generator):
+        print("Maxbatch was set to a larger number of matches than exist in the video. Truncating")
+        print_and_set(params, "maxbatch", len(generator))
+
+    if params["maxbatch"] == "max":
+        print_and_set(params, "maxbatch", len(generator))
 
     end_time = time.time()
     save_data = {}
@@ -693,3 +700,41 @@ def infer_dannce(
                     imageio.mimwrite(of, np.transpose(im, [2, 0, 1]))
 
     return save_data
+
+def save_results(params, save_data):
+    if params["expval"]:
+        if params["save_tag"] is not None:
+            path = os.path.join(
+                params["dannce_predict_dir"],
+                "save_data_AVG%d.mat" % (params["save_tag"]),
+            )
+        else:
+            path = os.path.join(params["dannce_predict_dir"], "save_data_AVG.mat")
+        p_n = savedata_expval(
+            path,
+            params,
+            write=True,
+            data=save_data,
+            tcoord=False,
+            num_markers=params["n_markers"],
+            pmax=True,
+        )
+    else:
+        if params["save_tag"] is not None:
+            path = os.path.join(
+                params["dannce_predict_dir"],
+                "save_data_MAX%d.mat" % (params["save_tag"]),
+            )
+        else:
+            path = os.path.join(params["dannce_predict_dir"], "save_data_MAX.mat")
+        p_n = savedata_tomat(
+            path,
+            params,
+            params["vmin"],
+            params["vmax"],
+            params["nvox"],
+            write=True,
+            data=save_data,
+            num_markers=params["n_markers"],
+            tcoord=False,
+        )

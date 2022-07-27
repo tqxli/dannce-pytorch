@@ -1,25 +1,18 @@
 """Handle training and prediction for DANNCE and COM networks."""
-import numpy as np
 import os
-from copy import deepcopy
-from typing import Dict, Text
+from typing import Dict
 import psutil
-
 import torch
 
-from dannce.engine.data import serve_data_DANNCE, generator, processing
-from dannce.engine.data.processing import savedata_tomat, savedata_expval
 import dannce.config as config
 import dannce.engine.inference as inference
 from dannce.engine.models.nets import initialize_train, initialize_model
-from dannce.engine.trainer.dannce_trainer import DannceTrainer, AutoEncoderTrainer
-from dannce.config import print_and_set
+from dannce.engine.trainer.dannce_trainer import DannceTrainer
 from dannce.engine.logging.logger import setup_logging, get_logger
+from dannce.run_utils import *
 
 process = psutil.Process(os.getpid())
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "1"
-
-from dannce.run_utils import *
 
 def dannce_train(params: Dict):
     """Train dannce network.
@@ -77,7 +70,7 @@ def dannce_train(params: Dict):
     logger.info("COMPLETE\n")
 
     # set up trainer
-    trainer_class = AutoEncoderTrainer if "ReconstructionLoss" in params["loss"].keys() else DannceTrainer
+    trainer_class = DannceTrainer
     trainer = trainer_class(
         params=params,
         model=model,
@@ -114,29 +107,6 @@ def dannce_predict(params: Dict):
     model.load_state_dict(torch.load(params["dannce_predict_model"])['state_dict'])
     model.eval()
 
-    if params["maxbatch"] != "max" and params["maxbatch"] > len(predict_generator):
-        print(
-            "Maxbatch was set to a larger number of matches than exist in the video. Truncating"
-        )
-        print_and_set(params, "maxbatch", len(predict_generator))
-
-    if params["maxbatch"] == "max":
-        print_and_set(params, "maxbatch", len(predict_generator))
-
-    if params["write_npy"] is not None:
-        # Instead of running inference, generate all samples
-        # from valid_generator and save them to npy files. Useful
-        # for working with large datasets (such as Rat 7M) because
-        # .npy files can be loaded in quickly with random access
-        # during training.
-        print("Writing samples to .npy files")
-        processing.write_npy(params["write_npy"], predict_generator)
-        return
-    
-    if params["write_visual_hull"] is not None:
-        print("Writing visual hull to .npy files")
-        processing.write_sil_npy(params["write_visual_hull"], predict_generator_sil)
-
     save_data = inference.infer_dannce(
         predict_generator,
         params,
@@ -148,39 +118,4 @@ def dannce_predict(params: Dict):
         save_heatmaps=False
     )
 
-    if params["expval"]:
-        if params["save_tag"] is not None:
-            path = os.path.join(
-                params["dannce_predict_dir"],
-                "save_data_AVG%d.mat" % (params["save_tag"]),
-            )
-        else:
-            path = os.path.join(params["dannce_predict_dir"], "save_data_AVG.mat")
-        p_n = savedata_expval(
-            path,
-            params,
-            write=True,
-            data=save_data,
-            tcoord=False,
-            num_markers=params["n_markers"],
-            pmax=True,
-        )
-    else:
-        if params["save_tag"] is not None:
-            path = os.path.join(
-                params["dannce_predict_dir"],
-                "save_data_MAX%d.mat" % (params["save_tag"]),
-            )
-        else:
-            path = os.path.join(params["dannce_predict_dir"], "save_data_MAX.mat")
-        p_n = savedata_tomat(
-            path,
-            params,
-            params["vmin"],
-            params["vmax"],
-            params["nvox"],
-            write=True,
-            data=save_data,
-            num_markers=params["n_markers"],
-            tcoord=False,
-        )
+    inference.save_results(params, save_data)
