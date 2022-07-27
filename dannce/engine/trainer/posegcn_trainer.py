@@ -197,7 +197,7 @@ class GCNTrainer(DannceTrainer):
                     loss_sup2 = self.loss_sup(gt, keypoints_3d_pred[1])
                     loss_sup3 = self.loss_sup(gt, keypoints_3d_pred[2])
 
-                    aux_loss, loss_dict = self.loss.compute_loss(keypoints_3d_gt, init_poses+keypoints_3d_pred[2], heatmaps, grid_centers, aux)
+                    _, loss_dict = self.loss.compute_loss(keypoints_3d_gt, init_poses+keypoints_3d_pred[2], heatmaps, grid_centers, aux)
 
                     if self.predict_diff:
                         loss_dict["Stage1L1DiffLoss"] = loss_sup1.clone().detach().cpu().item()
@@ -216,8 +216,7 @@ class GCNTrainer(DannceTrainer):
                     if not self.predict_diff:
                         loss_sup = self.loss_sup(keypoints_3d_gt_rel, keypoints_3d_pred)
                         keypoints_3d_pred = keypoints_3d_pred * vsize + com3d
-                        total_loss, loss_dict = self.loss.compute_loss(keypoints_3d_gt, keypoints_3d_pred, heatmaps, grid_centers, aux)
-                        total_loss += loss_sup
+                        _, loss_dict = self.loss.compute_loss(keypoints_3d_gt, keypoints_3d_pred, heatmaps, grid_centers, aux)
                         loss_dict["L1Loss"] = loss_sup.clone().detach().cpu().item()
                     else:
                         diff_gt_rel = (keypoints_3d_gt - init_poses) / vsize
@@ -225,14 +224,12 @@ class GCNTrainer(DannceTrainer):
 
                         # scale back to original, so that bone length loss can be correctly computed
                         keypoints_3d_pred = keypoints_3d_pred * vsize #+ com3d
-                        total_loss, loss_dict = self.loss.compute_loss(keypoints_3d_gt, init_poses + keypoints_3d_pred, heatmaps, grid_centers, aux)
-                        total_loss += diff_loss
+                        _, loss_dict = self.loss.compute_loss(keypoints_3d_gt, init_poses + keypoints_3d_pred, heatmaps, grid_centers, aux)
                         loss_dict["L1DiffLoss"] = diff_loss.clone().detach().cpu().item()
                         if self.dual_sup:
                             init_poses_rel = (init_poses - com3d) / vsize
                             diff_gt_rel = keypoints_3d_gt_rel - init_poses_rel
                             pose_loss = 0.1 * self.loss_sup(keypoints_3d_gt, init_poses)
-                            total_loss += pose_loss
                             loss_dict["L1Loss"] = pose_loss.clone().detach().cpu().item()
                 else:
                     _, loss_dict = self.loss.compute_loss(keypoints_3d_gt, keypoints_3d_pred, heatmaps, grid_centers, aux)
