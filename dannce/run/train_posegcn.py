@@ -217,7 +217,7 @@ def predict(params):
         if (i - start_ind) % 1000 == 0 and i != start_ind:
             print("Saving checkpoint at {}th batch".format(i))
             p_n = savedata_expval(
-                params["dannce_predict_dir"] + "save_data_AVG.mat",
+                params["dannce_predict_dir"] + "/save_data_AVG.mat",
                 params,
                 write=True,
                 data=save_data,
@@ -226,10 +226,10 @@ def predict(params):
                 pmax=True,
             )
             p_n = savedata_expval(
-                params["dannce_predict_dir"] + "init_save_data_AVG.mat",
+                params["dannce_predict_dir"] + "/init_save_data_AVG.mat",
                 params,
                 write=True,
-                data=save_data,
+                data=save_data_init,
                 tcoord=False,
                 num_markers=params["n_markers"],
                 pmax=True,
@@ -264,12 +264,15 @@ def predict(params):
             final_poses = model.inference(init_poses, grid_centers, heatmaps, inter_features) #+ init_poses
         else:
             final_poses = init_poses
-        
+
         if custom_model_params.get("relpose", True):
+            com3d = torch.mean(grid_centers, dim=1).unsqueeze(-1) #[N, 3, 1]
             nvox = round(grid_centers.shape[1]**(1/3))
             vsize = (grid_centers[0, :, 0].max() - grid_centers[0, :, 0].min()) / nvox
             final_poses = final_poses * vsize
-        
+            if not custom_model_params.get("predict_diff", True):
+                final_poses += com3d
+
         if custom_model_params.get("predict_diff", True):
             final_poses += init_poses
 

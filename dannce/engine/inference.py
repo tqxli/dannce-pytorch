@@ -598,7 +598,7 @@ def infer_dannce(
             print("Saving checkpoint at {}th batch".format(i))
             if params["expval"]:
                 p_n = savedata_expval(
-                    params["dannce_predict_dir"] + "save_data_AVG.mat",
+                    params["dannce_predict_dir"] + "/save_data_AVG.mat",
                     params,
                     write=True,
                     data=save_data,
@@ -608,7 +608,7 @@ def infer_dannce(
                 )
             else:
                 p_n = savedata_tomat(
-                    params["dannce_predict_dir"] + "save_data_MAX.mat",
+                    params["dannce_predict_dir"] + "/save_data_MAX.mat",
                     params,
                     params["vmin"],
                     params["vmax"],
