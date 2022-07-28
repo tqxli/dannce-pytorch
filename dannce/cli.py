@@ -5,6 +5,7 @@ import dannce.run.train_backbone2d as backbone2d
 import dannce.run.train_dannce_dbbox as dbbox
 import dannce.run.train_posegcn as posegcn
 import dannce.run.train_transformer as trans
+import dannce.run.train_crossattn as socialattn
 from dannce.interface import (
     # com_predict,
     # com_train,
@@ -158,6 +159,7 @@ def custom_model_train_cli():
         'dbbox': dbbox.train,
         'posegcn': posegcn.train,
         'transformer': trans.train,
+        'socialattn': socialattn.train,
     }
 
     parser = argparse.ArgumentParser(
@@ -174,6 +176,7 @@ def custom_model_predict_cli():
         'motiondannce': motiondannce.inference,
         'posegcn': posegcn.predict,
         'posegcn-multi': posegcn.predict_multi_animal,
+        'socialattn': socialattn.predict,
     }
 
     parser = argparse.ArgumentParser(
