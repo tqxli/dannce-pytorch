@@ -30,28 +30,20 @@ class GCNTrainer(DannceTrainer):
         if not self.dual_sup:
             self._del_loss_attr(["L1Loss"])
             self.loss.loss_fcns.pop("L1Loss")
-        
     
-    def _rewrite_csv(self):
-        stats_file = open(os.path.join(self.params["dannce_train_dir"], "training.csv"), 'w', newline='')
-        stats_writer = csv.writer(stats_file)
-        stats_writer.writerow(["Epoch", *self.train_stats_keys, *self.valid_stats_keys])
-        stats_file.close()
-    
-    def _add_loss_attr(self, names):
-        self.stats_keys = names + self.stats_keys
-        self.train_stats_keys = [f"train_{k}" for k in names] + self.train_stats_keys
-        self.valid_stats_keys = [f"val_{k}" for k in names] + self.valid_stats_keys
+    def _forward(self, epoch, batch):
+        volumes, grid_centers, keypoints_3d_gt, aux = prepare_batch(batch, self.device)
 
-        self._rewrite_csv()
-    
-    def _del_loss_attr(self, names):
-        for name in names:
-            self.stats_keys.remove(name)
-            self.train_stats_keys.remove(f"train_{name}")
-            self.valid_stats_keys.remove(f"val_{name}")
+        if self.visualize_batch:
+            self.visualize(epoch, volumes)
+            return
+
+        init_poses, keypoints_3d_pred, heatmaps = self.model(volumes, grid_centers)
         
-        self._rewrite_csv()
+        if not isinstance(keypoints_3d_pred, list):
+            keypoints_3d_gt, keypoints_3d_pred, heatmaps = self._split_data(keypoints_3d_gt, keypoints_3d_pred, heatmaps)   
+
+        return init_poses, keypoints_3d_gt, keypoints_3d_pred, heatmaps, grid_centers, aux     
 
     def _train_epoch(self, epoch):
         self.model.train()
@@ -59,18 +51,10 @@ class GCNTrainer(DannceTrainer):
         epoch_loss_dict, epoch_metric_dict = {}, {}
         pbar = tqdm(self.train_dataloader)
         for batch in pbar: 
-            volumes, grid_centers, keypoints_3d_gt, aux = prepare_batch(batch, self.device)
-
-            if self.visualize_batch:
-                self.visualize(epoch, volumes)
-                return
-
             self.optimizer.zero_grad()
-            init_poses, keypoints_3d_pred, heatmaps = self.model(volumes, grid_centers)
-            
-            if not isinstance(keypoints_3d_pred, list):
-                keypoints_3d_gt, keypoints_3d_pred, heatmaps = self._split_data(keypoints_3d_gt, keypoints_3d_pred, heatmaps)
-            
+
+            init_poses, keypoints_3d_gt, keypoints_3d_pred, heatmaps, grid_centers, aux = self._forward(epoch, batch)
+
             if self.predict_diff and (not self.multi_stage) and (not self.relpose):
                 # predictions are offsets from the initial predictions
                 diff_gt = keypoints_3d_gt - init_poses
@@ -174,10 +158,7 @@ class GCNTrainer(DannceTrainer):
         pbar = tqdm(self.valid_dataloader)
         with torch.no_grad():
             for batch in pbar:
-                volumes, grid_centers, keypoints_3d_gt, aux = prepare_batch(batch, self.device)
-                init_poses, keypoints_3d_pred, heatmaps = self.model(volumes, grid_centers)
-
-                keypoints_3d_gt, keypoints_3d_pred, heatmaps = self._split_data(keypoints_3d_gt, keypoints_3d_pred, heatmaps)
+                init_poses, keypoints_3d_gt, keypoints_3d_pred, heatmaps, grid_centers, aux = self._forward(epoch, batch)
 
                 if self.predict_diff and (not self.multi_stage) and (not self.relpose):
                     # predictions are offsets from the initial predictions
