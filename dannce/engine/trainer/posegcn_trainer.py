@@ -28,8 +28,12 @@ class GCNTrainer(DannceTrainer):
             self._add_loss_attr(["Stage1L1Loss", "Stage2L1Loss", "Stage3L1Loss"])
         
         if not self.dual_sup:
-            self._del_loss_attr(["L1Loss"])
-            self.loss.loss_fcns.pop("L1Loss")
+            try:
+                self._del_loss_attr(["L1Loss"])
+                self.loss.loss_fcns.pop("L1Loss")
+            except:
+                self._del_loss_attr(["WeightedL1Loss"])
+                self.loss.loss_fcns.pop("WeightedL1Loss")
     
     def _forward(self, epoch, batch):
         volumes, grid_centers, keypoints_3d_gt, aux = prepare_batch(batch, self.device)

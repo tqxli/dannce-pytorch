@@ -80,6 +80,26 @@ class L1Loss(BaseLoss):
         loss = compute_mask_nan_loss(nn.L1Loss(reduction="sum"), kpts_gt, kpts_pred)
         return self.loss_weight * loss
 
+class WeightedL1Loss(BaseLoss):
+    def __init__(self, joint_weights=None, num_joints=23, **kwargs):
+        super().__init__(**kwargs)
+
+        self.weighting = np.ones((num_joints, ))
+        if isinstance(joint_weights, list): 
+            for joint, weight in joint_weights:
+                self.weighting[joint] = weight
+    
+    def forward(self, kpts_gt, kpts_pred):
+        loss = []
+        for joint_idx in range(kpts_gt.shape[-1]):
+            gt, pred = kpts_gt[:, :, joint_idx], kpts_pred[:, :, joint_idx]
+
+            joint_loss = compute_mask_nan_loss(nn.L1Loss(reduction="sum"), gt, pred)
+            joint_loss *= self.weighting[joint_idx]
+            loss += joint_loss
+        
+        return self.loss_weight * sum(loss)
+
 class TemporalLoss(BaseLoss):
     def __init__(self, temporal_chunk_size, method="l1", downsample=1, **kwargs):
         super().__init__(**kwargs)
