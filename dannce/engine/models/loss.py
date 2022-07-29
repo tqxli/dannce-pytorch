@@ -96,9 +96,11 @@ class WeightedL1Loss(BaseLoss):
 
             joint_loss = compute_mask_nan_loss(nn.L1Loss(reduction="sum"), gt, pred)
             joint_loss *= self.weighting[joint_idx]
-            loss += joint_loss
+            loss.append(joint_loss)
         
-        return self.loss_weight * sum(loss)
+        loss_mean = sum(loss) / len(loss)
+
+        return self.loss_weight * loss_mean
 
 class TemporalLoss(BaseLoss):
     def __init__(self, temporal_chunk_size, method="l1", downsample=1, **kwargs):

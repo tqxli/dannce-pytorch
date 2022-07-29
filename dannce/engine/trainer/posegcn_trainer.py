@@ -18,7 +18,10 @@ class GCNTrainer(DannceTrainer):
 
         # adjust loss functions and attributes
         if predict_diff or multi_stage or relpose:
-            self.loss_sup = custom_losses.L1Loss()
+            if 'WeightedL1Loss' in self.loss.loss_fcns.keys():
+                self.loss_sup = self.loss.loss_fcns['WeightedL1Loss']
+            else:
+                self.loss_sup = custom_losses.L1Loss()
 
         if predict_diff and (not self.multi_stage): 
             self._add_loss_attr(["L1DiffLoss"])
