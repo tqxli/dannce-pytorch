@@ -95,7 +95,7 @@ class WeightedL1Loss(BaseLoss):
             gt, pred = kpts_gt[:, :, joint_idx], kpts_pred[:, :, joint_idx]
 
             joint_loss = compute_mask_nan_loss(nn.L1Loss(reduction="sum"), gt, pred)
-            joint_loss *= self.weighting[joint_idx]
+            joint_loss = joint_loss * self.weighting[joint_idx]
             loss.append(joint_loss)
         
         loss_mean = sum(loss) / len(loss)
