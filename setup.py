@@ -20,6 +20,8 @@ setup(
         'tensorboard',
         "mat73",
         "psutil",
+        "tqdm",
+        "easydict"
     ],
     # scripts=[],
     entry_points={
