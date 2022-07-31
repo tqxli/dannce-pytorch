@@ -47,7 +47,8 @@ class SocialXAttn(nn.Module):
 
     def _freeze_stages(self):
         for name, param in self.posenet.named_parameters():
-            param.requires_grad = False
+            if 'output' not in name:
+                param.requires_grad = False
 
     def forward(self, volumes, grid_centers):
         # initial pose generation from encoder-decoder
