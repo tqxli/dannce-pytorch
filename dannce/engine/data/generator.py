@@ -584,10 +584,10 @@ class DataGenerator_3Dconv(DataGenerator):
         if self.var_reg or self.norm_im:
             X = processing.preprocess_3d(X)
 
-        inputs, targets = [X], [y_3d]
+        inputs, targets = [X, X_grid], [y_3d]
 
-        if self.expval:
-            inputs.append(X_grid)
+        # if self.expval:
+        #     inputs.append(X_grid)
         
         if self.var_reg:
             targets.append(torch.zeros((self.batch_size, 1)))
@@ -909,8 +909,7 @@ class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
 
         # check depths
         instance_front, instance_back = np.argmin(depths), np.argmax(depths)
-        occlusion_scores = np.ones((self.n_instances)) # the foreground animal is not occluded
-
+        occlusion_scores = np.zeros((self.n_instances)) # the foreground animal is not occluded
         # check overlap region
         occlusion_scores[instance_back] = processing.bbox_iou(bb1, bb2)
 
