@@ -64,6 +64,19 @@ class MSELoss(BaseLoss):
 
         return self.loss_weight * loss
 
+class BCELoss(BaseLoss):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def forward(self, heatmap_gt, heatmap_pred):
+        if len(heatmap_gt.shape) == 5:
+            heatmap_gt = heatmap_gt.permute(0, 4, 1, 2, 3)
+        
+        heatmap_pred = torch.sigmoid(heatmap_pred)
+        loss = F.binary_cross_entropy(heatmap_pred, heatmap_gt)
+
+        return self.loss_weight * loss
+
 class ReconstructionLoss(BaseLoss):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -119,6 +132,31 @@ class TemporalLoss(BaseLoss):
         else:
             loss_temp = (diff**2).sum(1).sqrt().mean()
         return self.loss_weight * loss_temp
+
+class BoneVectorLoss(BaseLoss):
+    def __init__(self, body_profile="rat23", mask=None, **kwargs):
+        super().__init__(**kwargs)
+
+        self.animal = body_profile
+        self.limbs = torch.LongTensor(load_body_profile(body_profile)["limbs"]) #[n_limbs, 2]
+
+        if mask is not None:
+            x = torch.arange(len(self.limbs))
+            self.limbs = [self.limbs[l] for l in x if l not in mask]
+
+    def get_bone_vectors(self, kpts):
+        device = kpts.device
+        kpts_from = kpts[:, :, self.limbs[:, 0].to(device)] #[bs, 3, n_limbs]
+        kpts_to = kpts[:, :, self.limbs[:, 1].to(device)] #[bs, 3, n_limbs]   
+
+        return kpts_from - kpts_to     
+
+    def forward(self, kpts_gt, kpts_pred):
+        bvec_gt = self.get_bone_vectors(kpts_gt)
+        bvec_pred = self.get_bone_vectors(kpts_pred)
+
+        loss = torch.norm(bvec_gt-bvec_pred, dim=1).mean()
+        return loss * self.loss_weight
 
 class BoneLengthLoss(BaseLoss):
     def __init__(self, priors, body_profile="rat23", mask=None, **kwargs):
@@ -271,6 +309,36 @@ class GaussianRegLoss(BaseLoss):
             loss = F.binary_cross_entropy(heatmaps, gaussian_gt)
 
         return self.loss_weight * loss
+
+class PairConsistencyLoss(BaseLoss):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+    
+    def forward(self, kpts_gt, kpts_pred):
+        """
+        Assume each batch contains social volumes
+        kpts_gt, kpts_pred: [B*2, 3, n_joints]
+        """
+        kpts_gt = kpts_gt.reshape(-1, 2, *kpts_gt.shape[1:])
+        kpts_pred = kpts_pred.reshape(-1, 2, *kpts_pred.shape[1:]) #[B, 2, 3, n_joints]
+
+        kpts_gt = kpts_gt.reshape(-1, 2, *kpts_gt.shape[2:]) #[b, 2, 2, 3, n_joints]
+        kpts_pred = kpts_pred.reshape(-1, 2, *kpts_pred.shape[2:]) 
+        
+        gt_notnan = ~torch.isnan(kpts_gt[:, 0])
+        gt_counter_notnan = ~torch.isnan(kpts_gt[:, 1].flip(1))
+        notnan = gt_notnan & gt_counter_notnan 
+
+        if notnan.sum() == 0:
+            return kpts_pred.new_zeros((), requires_grad=True)
+        
+        animal1_pred = kpts_pred[:, 0] # [B//2, 2, 3, n_joints]
+        animal2_pred = kpts_pred[:, 1].flip(1) # also in order of [animal1, animal2]
+
+        loss = F.l1_loss(animal1_pred[notnan], animal2_pred[notnan], reduction='sum') / notnan.sum()
+
+        return loss * self.loss_weight
+
 
 class PairRepulsionLoss(BaseLoss):
     def __init__(self, delta=5, pairwise=False, **kwargs):
