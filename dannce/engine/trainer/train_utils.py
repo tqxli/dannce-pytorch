@@ -30,7 +30,7 @@ class LossHelper:
         for k, lossfcn in self.loss_fcns.items():
             if k == "GaussianRegLoss":
                 loss_val = lossfcn(kpts_gt, kpts_pred.clone().detach(), heatmaps, grid_centers.clone().detach())
-            elif k == "MSELoss":
+            elif k == "MSELoss" or k == "BCELoss":
                 loss_val = lossfcn(kpts_gt, heatmaps)
             elif k == 'SilhouetteLoss' or k == 'ReconstructionLoss':
                 loss_val = lossfcn(aux, heatmaps)
