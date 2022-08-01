@@ -55,6 +55,7 @@ _param_defaults_shared = {
     "label3d_index": 0
 }
 _param_defaults_dannce = {
+    "rat7m": False,
     "metric": ["euclidean_distance_3D"],
     "sigma": 10,
     "lr": 1e-3,

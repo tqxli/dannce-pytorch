@@ -11,6 +11,9 @@ from dannce.engine.data import serve_data_DANNCE, dataset, generator, processing
 from dannce.engine.models.segmentation import get_instance_segmentation_model
 from dannce.engine.data.processing import _DEFAULT_SEG_MODEL
 
+import imageio
+from tqdm import tqdm
+
 def set_random_seed(seed: int):
     random.seed(seed)
     os.environ['PYTHONHASHSEED'] = str(seed)
@@ -123,21 +126,196 @@ def make_dataset(
      
     return train_dataloader, valid_dataloader, len(camnames[0])
 
+def _convert_rat7m_to_label3d(annot_dict, all_exps):
+    camnames = annot_dict["camera_names"]
+
+    samples = []
+    datadict, datadict_3d, com3d_dict  = {}, {}, {}
+    cameras = {}
+
+    all_data = annot_dict["table"]
+    print("** Loading in RAT7M annotation **")
+    for i, expname in enumerate(tqdm(all_exps)):
+        subject_idx, day_idx = expname.split('-')
+        subject_idx, day_idx = int(subject_idx[-1]), int(day_idx[-1])
+
+        data_idx = np.where(
+            (all_data["subject_idx"] == subject_idx) & (all_data["day_idx"] == day_idx)
+        )[0]
+
+        sampleIDs = [str(i)+"_"+str(frame) for frame in all_data["frame_idx"][camnames[0]][data_idx]]
+        samples += sampleIDs
+
+        data3d = np.transpose(all_data["3D_keypoints"][data_idx], (0, 2, 1)) #[N, 3, 20]
+        com3d = np.mean(data3d, axis=-1) #[N, 3]
+        data2d, frames = [], []
+
+        for cam in camnames:
+            data2d_cam = np.transpose(all_data["2D_keypoints"][cam][data_idx], (0, 2, 1))
+            frames_cam = all_data["frame_idx"][cam][data_idx]
+            data2d.append(data2d_cam)
+            frames.append(frames_cam)
+
+        for j, samp in enumerate(sampleIDs):
+            data, frame = {}, {}
+            for camidx, camname in enumerate(camnames):
+                data[str(i)+"_"+camname] = data2d[camidx][j]
+                frame[str(i)+"_"+camname] = frames[camidx][j]
+    
+            datadict[samp] = {"data": data, "frames": frame}
+            datadict_3d[samp] = data3d[j]
+            com3d_dict[samp] = com3d[j]
+
+        # prepare cameras
+        cameras[i] = {}
+        for camname in camnames:  
+            new_params = {}
+            old_params = annot_dict["cameras"][subject_idx][day_idx][camname]
+            new_params["K"] = old_params["IntrinsicMatrix"]
+            new_params["R"] = old_params["rotationMatrix"]
+            new_params["t"] = old_params["translationVector"]
+            new_params["RDistort"] = old_params["RadialDistortion"]
+            new_params["TDistort"] = old_params["TangentialDistortion"]
+            cameras[i][str(i)+"_"+camname] = new_params
+
+    samples = np.array(samples)
+    return samples, datadict, datadict_3d, com3d_dict, camnames, cameras
+
+def make_rat7m(
+    params,  
+    base_params,
+    shared_args,
+    shared_args_train,
+    shared_args_valid,
+    logger,
+    root="/media/mynewdrive/datasets/rat7m",
+    annot="final_annotations_w_correct_clusterIDs.pkl",
+    viddir="videos_concat"
+):
+    # load annotations from disk
+    annot_dict = np.load(os.path.join(root, annot), allow_pickle=True)
+
+    # convert everything to label3d format
+    experiments_train = ['s1-d1', 's2-d1', 's2-d2', 's3-d1', 's4-d1']
+    experiments_test = ['s5-d1', 's5-d2']
+    all_exps = experiments_train + experiments_test
+    num_experiments = len(all_exps)
+    params["experiment"] = {}
+
+    samples, datadict, datadict_3d, com3d_dict, camnames, cameras = _convert_rat7m_to_label3d(annot_dict, all_exps)
+    temporal_chunks = {}
+
+    # Use the camnames to find the chunks for each video
+    all_vids = [f for f in os.listdir(os.path.join(root, viddir)) if f.endswith('.mp4')]
+    vids = {}
+    total_chunks = {}
+    print("** Preparing video readers **")
+    for e in tqdm(range(num_experiments)):
+        for name in camnames:
+            video_files = [f for f in all_vids if all_exps[e]+"-"+name.replace("C", "c") in f]
+            video_files = sorted(video_files, key=lambda x: int(x.split("-")[-1].split(".mp4")[0]))
+            total_chunks[str(e) + "_" + name] = np.sort([
+            int(x.split("-")[-1].split(".mp4")[0]) for x in video_files])
+            vids[str(e) + "_" + name] = {}
+            for file in video_files:
+                vids[str(e) + "_" + name][str(e) + "_" + name + "/0.mp4"] = os.path.join(root, viddir, file)
+    
+    new_camnames = {}
+    for e in range(len(all_exps)):
+        new_camnames[e] = [str(e)+"_"+camname for camname in camnames]
+    camnames = new_camnames
+
+    # make train/valid splits
+    partition = processing.make_data_splits(
+        samples, params, params["dannce_train_dir"], num_experiments, 
+        temporal_chunks=temporal_chunks)
+    pairs = None
+
+    # Dump the params into file for reproducibility
+    processing.save_params_pickle(params)
+
+    # Setup additional variables for later use
+    tifdirs = []  # Training from single images not yet supported in this demo
+    # vid_exps = np.arange(num_experiments)
+    
+    # initialize needed videos
+    # vids = processing.initialize_all_vids(params, datadict, vid_exps, pathonly=True)
+
+    base_params = {
+        **base_params,
+        "camnames": camnames,
+        "vidreaders": vids,
+        "chunks": total_chunks,
+    }
+
+    # Prepare datasets and dataloaders
+    NPY_DIRNAMES = ["image_volumes", "grid_volumes", "targets"]
+
+    TO_BE_EXAMINED = NPY_DIRNAMES
+    npydir, missing_npydir = {}, {}
+
+    for e, name in enumerate(all_exps):
+        # for social, cannot use the same default npy volume dir for both animals
+        npy_folder = os.path.join(root, "npy_volumes", name)
+        npydir[e] = npy_folder
+
+        # create missing npy directories
+        if not os.path.exists(npydir[e]):
+            missing_npydir[e] = npydir[e]
+            for dir in TO_BE_EXAMINED:
+                os.makedirs(os.path.join(npydir[e], dir)) 
+        else:
+            for dir in TO_BE_EXAMINED:
+                dirpath = os.path.join(npydir[e], dir)
+                if (not os.path.exists(dirpath)) or (len(os.listdir(dirpath)) == 0):
+                    missing_npydir[e] = npydir[e]
+                    os.makedirs(dirpath, exist_ok=True)
+
+    missing_samples = [samp for samp in samples if int(samp.split("_")[0]) in list(missing_npydir.keys())]
+    
+    # check any other missing npy samples
+    for samp in list(set(samples) - set(missing_samples)):
+        e, sampleID = int(samp.split("_")[0]), samp.split("_")[1]
+        if not os.path.exists(os.path.join(npydir[e], "image_volumes", f"0_{sampleID}.npy")):
+            missing_samples.append(samp)
+            missing_npydir[e] = npydir[e]
+
+    missing_samples = np.array(sorted(missing_samples))
+
+    train_generator, valid_generator = _make_data_npy(
+        params, base_params, shared_args, shared_args_train, shared_args_valid,
+        datadict, datadict_3d, com3d_dict, 
+        cameras, camnames, 
+        samples, partition, pairs, tifdirs, vids,
+        logger,
+        rat7m=True, rat7m_npy=[npydir, missing_npydir, missing_samples]
+    )
+
+    train_dataloader, valid_dataloader = serve_data_DANNCE.setup_dataloaders(train_generator, valid_generator, params)
+     
+    return train_dataloader, valid_dataloader, len(camnames[0])
+
+
 def _make_data_npy(
         params, base_params, shared_args, shared_args_train, shared_args_valid,
         datadict, datadict_3d, com3d_dict, 
         cameras, camnames, 
         samples, partition, pairs, tifdirs, vids,
-        logger
+        logger,
+        rat7m=False, rat7m_npy=None,
     ):
     """
     Pre-generate the volumetric data and save as .npy.
     Good for large training set that is unable to fit in memory.
     Can be reused for future experiments.
     """
-
-    # Examine through experiments for missing npy data files
-    npydir, missing_npydir, missing_samples = serve_data_DANNCE.examine_npy_training(params, samples)
+    if rat7m:
+        assert rat7m_npy is not None
+        npydir, missing_npydir, missing_samples = rat7m_npy
+    else:
+        missing_samples = np.array(sorted(missing_samples))
+        # Examine through experiments for missing npy data files
+        npydir, missing_npydir, missing_samples = serve_data_DANNCE.examine_npy_training(params, samples)
 
     if len(missing_samples) != 0:
         logger.info("{} npy files for experiments {} are missing.".format(len(missing_samples), list(missing_npydir.keys())))

@@ -59,7 +59,10 @@ def dannce_train(params: Dict):
         set_random_seed(params["random_seed"])
         logger.info("***Fix random seed as {}***".format(params["random_seed"]))
 
-    train_dataloader, valid_dataloader, n_cams = make_dataset(
+    
+    dataset_preparer = make_rat7m if params["rat7m"] else make_dataset
+
+    train_dataloader, valid_dataloader, n_cams = dataset_preparer(
         params,  
         base_params,
         shared_args,

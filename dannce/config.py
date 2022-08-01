@@ -445,6 +445,7 @@ def setup_train(params):
     # n_views, relevant lists will be duplicated in order to match n_views, if
     # possible.
     params["n_views"] = int(params["n_views"])
+    params["n_channels_out"] = 20 if params["rat7m"] else params["n_channels_out"]
 
     params = adjust_loss_params(params)
 
