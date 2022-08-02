@@ -312,8 +312,8 @@ def _make_data_npy(
     if rat7m:
         assert rat7m_npy is not None
         npydir, missing_npydir, missing_samples = rat7m_npy
-    else:
         missing_samples = np.array(sorted(missing_samples))
+    else:
         # Examine through experiments for missing npy data files
         npydir, missing_npydir, missing_samples = serve_data_DANNCE.examine_npy_training(params, samples)
 
