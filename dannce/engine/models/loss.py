@@ -1,4 +1,5 @@
 from abc import abstractmethod
+from lib2to3.pytree import Base
 import imageio, os
 
 import numpy as np
@@ -196,6 +197,59 @@ class BoneLengthLoss(BaseLoss):
         loss = torch.maximum(lens - self.ubound.to(device), torch.zeros(())) + torch.maximum(self.lbound.to(device) - lens, torch.zeros(()))
 
         return self.loss_weight * loss.mean()
+
+class KCSLoss(BaseLoss):
+    def __init__(self, body_profile="rat23", **kwargs):
+        super().__init__(**kwargs)
+
+        self.animal = load_body_profile(body_profile)
+        self.n_joints = 23 #len(self.animal["joints_name"])
+        self.limbs = torch.LongTensor(self.animal["limbs"]) #[n_limbs, 2]
+        self._construct_c()
+        self.l1_loss = L1Loss()
+
+    def _construct_c(self):
+        C = torch.zeros(self.n_joints, self.n_joints)
+        for col, (r, t) in enumerate(self.limbs):
+            C[r, col] = 1
+            C[t, col] = -1
+        self.C = C
+
+    def forward(self, kpts_gt, kpts_pred):
+        # represent the keypoint predictions in the kinematic chain space
+        device = kpts_pred.device
+        C = self.C.to(device)
+        B_pred = torch.mm(kpts_pred, C)
+        B_gt = torch.mm(kpts_gt, C)
+        kcs_pred = torch.bmm(B_pred.permute(0, 2, 1), B_pred)
+        kcs_gt = torch.bmm(B_gt.permute(0, 2, 1), B_gt)
+
+        return self.loss_weight * self.l1_loss(kcs_gt, kcs_pred)
+
+class JointAngleLoss(KCSLoss):
+    def __init__(self, angle_prior, std_multiplier=1.0, **kwargs):
+        self.priors = np.load(angle_prior, allow_pickle=True)
+        super().__init__(**kwargs)
+
+        self.std_multiplier = std_multiplier
+        self._construct_intervals()
+    
+    def _construct_intervals(self):
+        mean, std = self.priors
+        self.lbound, self.ubound = mean-self.std_multiplier*std, mean+self.std_multiplier #[23, 23]
+        self.lbound, self.ubound = torch.from_numpy(self.lbound).unsqueeze(0), torch.from_numpy(self.ubound).unsqueeze(0)
+
+    def forward(self, kpts_gt, kpts_pred):
+        device = kpts_pred.device
+        C = self.C.to(device)
+        B = kpts_pred @ C
+        KCS = B.permute(0, 2, 1) @ B
+        angles = KCS / torch.norm(B.permute(0, 2, 1), dim=-1, keepdim=True) / torch.norm(B, dim=1, keepdim=True)
+
+        diff = torch.maximum(angles - self.ubound.to(device), torch.zeros(())) \
+            + torch.maximum(self.lbound.to(device) - angles, torch.zeros(())) #[B, 23, 23]
+
+        return self.loss_weight * torch.norm(diff, p=1)
 
 
 class BodySymmetryLoss(BaseLoss):
