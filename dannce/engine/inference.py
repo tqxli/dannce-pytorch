@@ -649,7 +649,8 @@ def infer_dannce(
         else:
             model_inputs.append(None)
         
-        pred = model(*model_inputs)
+        with torch.no_grad():
+            pred = model(*model_inputs)
 
         if params["expval"]:
             probmap = torch.amax(pred[1], dim=(2, 3, 4)).squeeze(0).detach().cpu().numpy()
@@ -738,3 +739,163 @@ def save_results(params, save_data):
             num_markers=params["n_markers"],
             tcoord=False,
         )
+
+def inference_ttt(
+    generator,
+    params,
+    model, 
+    optimizer,
+    device,
+    partition,
+    online=False,
+    niter=10,
+    gcn=False,
+    transform=False,
+):
+    from dannce.engine.trainer.train_utils import LossHelper
+
+    ckpt = torch.load(params["dannce_predict_model"])["state_dict"]
+    if online:
+        model.load_state_dict(ckpt)
+
+    # freeze stages 
+    if gcn:
+        for name, param in model.named_parameters():
+            if ('pose_generator' in name) and ('output' not in name):
+                param.requires_grad = False
+    else:
+        for name, param in model.named_parameters():
+            if 'output' not in name:
+                param.requires_grad = False
+
+    criterion = LossHelper(params)
+
+    if params["maxbatch"] != "max" and params["maxbatch"] > len(generator):
+        print("Maxbatch was set to a larger number of matches than exist in the video. Truncating")
+        print_and_set(params, "maxbatch", len(generator))
+
+    if params["maxbatch"] == "max":
+        print_and_set(params, "maxbatch", len(generator))
+
+    save_data = {}
+    start_ind = params["start_batch"]
+    end_ind = params["maxbatch"]
+    
+    pbar = tqdm(range(start_ind, end_ind))
+    for idx, i in enumerate(pbar):
+        if not online:
+            model.load_state_dict(ckpt)
+        
+        batch = generator.__getitem__(i)
+        batch = [*batch[0], *batch[1]]
+        volumes = torch.from_numpy(batch[0]).float().permute(0, 4, 1, 2, 3).to(device)
+        grid_centers = torch.from_numpy(batch[1]).float().to(device)
+        keypoints_3d_gt = torch.from_numpy(batch[2]).float().to(device)
+        aux = None
+        inputs = [volumes, grid_centers]
+
+        # form each batch with transformed versions of a single test data
+        if transform:
+            volumes_train, grid_centers_train = form_batch(volumes.permute(0, 2, 3, 4, 1), grid_centers)
+            volumes_train = volumes_train.permute(0, 4, 1, 2, 3)
+            inputs = [volumes_train, grid_centers_train]
+
+        model.train()
+        for _ in range(niter):
+            optimizer.zero_grad()
+
+            if gcn:
+                init_poses, heatmaps, inter_features = model.pose_generator(*inputs)
+                final_poses = model.inference(init_poses, grid_centers, heatmaps, inter_features)
+                nvox = round(grid_centers.shape[1]**(1/3))
+                vsize = (grid_centers[0, :, 0].max() - grid_centers[0, :, 0].min()) / nvox
+                final_poses = final_poses * vsize
+                final_poses += init_poses
+                keypoints_3d_pred = final_poses
+            else:
+                keypoints_3d_pred, heatmaps, _ = model(*inputs)
+
+            bone_loss = criterion.compute_loss(
+                keypoints_3d_gt,
+                keypoints_3d_pred,
+                heatmaps, 
+                grid_centers,
+                aux
+            )[0]
+
+            if transform:
+                consist_loss = torch.abs(torch.diff(keypoints_3d_pred, dim=0)).mean()
+            else:
+                consist_loss = bone_loss.new_zeros(())
+            
+            total_loss = bone_loss + consist_loss
+
+            pbar.set_description("Consistency Loss {:.4f} Bone Loss {:.4f}".format(consist_loss.item(), bone_loss.item()))
+
+            total_loss.backward()
+            optimizer.step()
+        
+        model.eval()
+        with torch.no_grad():
+            if gcn:
+                init_poses, heatmaps, inter_features = model.pose_generator(volumes, grid_centers)
+                final_poses = model.inference(init_poses, grid_centers, heatmaps, inter_features)
+                nvox = round(grid_centers.shape[1]**(1/3))
+                vsize = (grid_centers[0, :, 0].max() - grid_centers[0, :, 0].min()) / nvox
+                final_poses = final_poses * vsize
+                final_poses += init_poses
+                pred = [final_poses, heatmaps]
+            else:
+                pred = model(volumes, grid_centers)
+
+            probmap = torch.amax(pred[1], dim=(2, 3, 4)).squeeze(0).detach().cpu().numpy()
+            heatmaps = pred[1].squeeze().detach().cpu().numpy()
+            pred = pred[0].detach().cpu().numpy()
+            for j in range(pred.shape[0]):
+                pred_max = probmap[j]
+                sampleID = partition["valid_sampleIDs"][i * pred.shape[0] + j]
+                save_data[idx * pred.shape[0] + j] = {
+                    "pred_max": pred_max,
+                    "pred_coord": pred[j],
+                    "sampleID": sampleID,
+                }
+
+    return save_data
+
+def random_rotate(X, y_3d):
+    def rot90(X):
+        X = X.permute(1, 0, 2, 3)
+        return X.flip(1)
+    
+    def rot180(X):
+        return X.flip(0).flip(1)
+
+    rot = np.random.choice(np.arange(4), 1)
+    for j in range(X.shape[0]):
+        if rot == 0:
+            pass
+        elif rot == 1:
+            # Rotate180
+            X[j], y_3d[j] = rot180(X[j]), rot180(y_3d[j])
+        elif rot  == 2:
+            # Rotate90
+            X[j], y_3d[j] = rot90(X[j]), rot90(y_3d[j])
+        elif rot == 3:
+            # Rotate -90/270
+            X[j], y_3d[j] = rot180(rot90(X[j])), rot180(rot90(y_3d[j]))
+    return X, y_3d
+
+def apply_random_transforms(volumes, grids):
+    grids = grids.reshape(grids.shape[0], 80, 80, 80, 3)
+
+    volumes, grids = random_rotate(volumes, grids)
+    grids = grids.reshape(grids.shape[0], -1, 3)
+    return volumes, grids
+
+def form_batch(volumes, grids, batch_size=4):
+    copies = [apply_random_transforms(volumes.clone(), grids.clone()) for i in range(batch_size)]
+    
+    volumes = torch.cat([copy[0] for copy in copies], dim=0)
+    grids = torch.cat([copy[1] for copy in copies], dim=0)
+
+    return volumes, grids

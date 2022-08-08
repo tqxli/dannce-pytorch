@@ -14,6 +14,7 @@ from dannce.engine.trainer.posegcn_trainer import GCNTrainer
 from dannce.config import print_and_set
 from dannce.engine.logging.logger import setup_logging, get_logger
 from dannce.interface import make_folder
+from dannce.engine import inference
 from dannce.run_utils import *
 
 process = psutil.Process(os.getpid())
@@ -170,6 +171,25 @@ def predict(params):
         n_joints=params["n_channels_out"],
         t_dim=params.get("temporal_chunk_size", 1),
     ).to(device)
+
+    if params.get("inference_ttt", None) is not None:
+        ttt_params = params["inference_ttt"]
+        model_params = [p for p in model.parameters() if p.requires_grad]
+        optimizer = torch.optim.Adam(model_params, lr=params["lr"], eps=1e-7)
+        save_data = inference.inference_ttt(
+            predict_generator,
+            params,
+            model,
+            optimizer,
+            device,
+            partition,
+            online=ttt_params.get("online", False),
+            niter=ttt_params.get("niter", 20),
+            transform=ttt_params.get("transform", False),
+            gcn=True,
+        )
+        inference.save_results(params, save_data)
+        return 
 
     # load predict model
     model.load_state_dict(torch.load(params["dannce_predict_model"])['state_dict'])
