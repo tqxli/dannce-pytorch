@@ -5,6 +5,7 @@ from tqdm import tqdm
 from dannce.engine.trainer.dannce_trainer import DannceTrainer
 from dannce.engine.trainer.train_utils import prepare_batch
 import dannce.engine.models.loss as custom_losses
+from dannce.engine.inference import form_batch
 
 class GCNTrainer(DannceTrainer):
     def __init__(self, predict_diff=True, multi_stage=False, relpose=True, dual_sup=False, **kwargs):
@@ -38,12 +39,17 @@ class GCNTrainer(DannceTrainer):
                 self._del_loss_attr(["WeightedL1Loss"])
                 self.loss.loss_fcns.pop("WeightedL1Loss")
     
-    def _forward(self, epoch, batch):
+    def _forward(self, epoch, batch, train=True):
         volumes, grid_centers, keypoints_3d_gt, aux = prepare_batch(batch, self.device)
 
         if self.visualize_batch:
             self.visualize(epoch, volumes)
             return
+
+        if train and self.form_batch:
+            volumes, grid_centers = form_batch(volumes.permute(0, 2, 3, 4, 1), grid_centers, batch_size=self.form_bs)
+            volumes = volumes.permute(0, 4, 1, 2, 3)
+            keypoints_3d_gt = keypoints_3d_gt.repeat(self.form_bs, 1, 1)
 
         init_poses, keypoints_3d_pred, heatmaps = self.model(volumes, grid_centers)
         
@@ -165,7 +171,7 @@ class GCNTrainer(DannceTrainer):
         pbar = tqdm(self.valid_dataloader)
         with torch.no_grad():
             for batch in pbar:
-                init_poses, keypoints_3d_gt, keypoints_3d_pred, heatmaps, grid_centers, aux = self._forward(epoch, batch)
+                init_poses, keypoints_3d_gt, keypoints_3d_pred, heatmaps, grid_centers, aux = self._forward(epoch, batch, False)
 
                 if self.predict_diff and (not self.multi_stage) and (not self.relpose):
                     # predictions are offsets from the initial predictions

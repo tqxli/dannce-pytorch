@@ -7,6 +7,7 @@ from tqdm import tqdm
 from dannce.engine.trainer.base_trainer import BaseTrainer
 from dannce.engine.trainer.train_utils import prepare_batch, LossHelper, MetricHelper
 import dannce.engine.data.processing as processing
+from dannce.engine.inference import form_batch
 
 class DannceTrainer(BaseTrainer):
     def __init__(self, device, train_dataloader, valid_dataloader, lr_scheduler=None, visualize_batch=False, **kwargs):
@@ -22,6 +23,10 @@ class DannceTrainer(BaseTrainer):
         self.visualize_batch = visualize_batch
 
         self.split = self.params.get("social_joint_training", False)
+
+        # whether each batch only contains transformed versions of one single instance
+        self.form_batch = self.params.get("form_batch", False)        
+        self.form_bs = self.params.get("form_bs", None)
 
         # set up csv file for tracking training and validation stats
         stats_file = open(os.path.join(self.params["dannce_train_dir"], "training.csv"), 'w', newline='')
@@ -69,12 +74,17 @@ class DannceTrainer(BaseTrainer):
             # if epoch % self.save_period == 0 or epoch == self.epochs:
             self._save_checkpoint(epoch)
 
-    def _forward(self, epoch, batch):
+    def _forward(self, epoch, batch, train=True):
         volumes, grid_centers, keypoints_3d_gt, aux = prepare_batch(batch, self.device)
 
         if self.visualize_batch:
             self.visualize(epoch, volumes)
             return
+
+        if train and self.form_batch:
+            volumes, grid_centers = form_batch(volumes.permute(0, 2, 3, 4, 1), grid_centers, batch_size=self.form_bs)
+            volumes = volumes.permute(0, 4, 1, 2, 3)
+            keypoints_3d_gt = keypoints_3d_gt.repeat(self.form_bs, 1, 1)
 
         keypoints_3d_pred, heatmaps, _ = self.model(volumes, grid_centers)
 
@@ -120,7 +130,7 @@ class DannceTrainer(BaseTrainer):
         pbar = tqdm(self.valid_dataloader)
         with torch.no_grad():
             for batch in pbar:
-                keypoints_3d_gt, keypoints_3d_pred, heatmaps, grid_centers, aux = self._forward(epoch, batch)
+                keypoints_3d_gt, keypoints_3d_pred, heatmaps, grid_centers, aux = self._forward(epoch, batch, False)
 
                 _, loss_dict = self.loss.compute_loss(keypoints_3d_gt, keypoints_3d_pred, heatmaps, grid_centers, aux)
                 epoch_loss_dict = self._update_step(epoch_loss_dict, loss_dict)

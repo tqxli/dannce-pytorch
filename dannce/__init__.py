@@ -117,6 +117,9 @@ _param_defaults_dannce = {
     "social_joint_training": False,
     ## test time training
     "inference_ttt": None,
+    ## augmentation
+    "form_batch": False,
+    "form_bs": None
 }
 _param_defaults_com = {
     "dsmode": "nn",

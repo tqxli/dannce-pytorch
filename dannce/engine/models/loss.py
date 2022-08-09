@@ -116,6 +116,20 @@ class WeightedL1Loss(BaseLoss):
 
         return self.loss_weight * loss_mean
 
+class ConsistencyLoss(BaseLoss):
+    def __init__(self, method="l1", **kwargs):
+        super().__init__(**kwargs)
+        assert method in ["l1", "l2"]
+        self.method = method
+
+    def forward(self, kpts_gt, kpts_pred):
+        diff = torch.diff(kpts_pred, dim=0)
+        if self.method == 'l1':
+            loss_temp = torch.abs(diff).mean()
+        else:
+            loss_temp = (diff**2).sum(1).sqrt().mean()
+        return self.loss_weight * loss_temp
+
 class TemporalLoss(BaseLoss):
     def __init__(self, temporal_chunk_size, method="l1", downsample=1, **kwargs):
         super().__init__(**kwargs)
