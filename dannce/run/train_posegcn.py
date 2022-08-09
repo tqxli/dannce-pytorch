@@ -186,6 +186,7 @@ def predict(params):
             online=ttt_params.get("online", False),
             niter=ttt_params.get("niter", 20),
             transform=ttt_params.get("transform", False),
+            downsample=ttt_params.get("downsample", 1),
             gcn=True,
         )
         inference.save_results(params, save_data)

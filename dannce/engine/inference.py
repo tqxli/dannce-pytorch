@@ -751,12 +751,13 @@ def inference_ttt(
     niter=10,
     gcn=False,
     transform=False,
+    downsample=1,
 ):
     from dannce.engine.trainer.train_utils import LossHelper
 
-    ckpt = torch.load(params["dannce_predict_model"])["state_dict"]
+    ckpt = torch.load(params["dannce_predict_model"])
     if online:
-        model.load_state_dict(ckpt)
+        model.load_state_dict(ckpt["state_dict"])
 
     # freeze stages 
     if gcn:
@@ -781,10 +782,10 @@ def inference_ttt(
     start_ind = params["start_batch"]
     end_ind = params["maxbatch"]
     
-    pbar = tqdm(range(start_ind, end_ind))
+    pbar = tqdm(range(start_ind, end_ind, downsample))
     for idx, i in enumerate(pbar):
         if not online:
-            model.load_state_dict(ckpt)
+            model.load_state_dict(ckpt["state_dict"])
         
         batch = generator.__getitem__(i)
         batch = [*batch[0], *batch[1]]
@@ -859,6 +860,15 @@ def inference_ttt(
                     "pred_coord": pred[j],
                     "sampleID": sampleID,
                 }
+
+    if online:
+        state = {
+            'state_dict': model.state_dict(),
+            'params': ckpt["params"],
+            'optimizer': ckpt["optimizer"],
+            'epoch': ckpt['epoch'],
+        }
+        torch.save(state, os.path.join(params["dannce_predict_dir"], "checkpoint-online-iter{}.pth".format(((end_ind-start_ind) // downsample)*niter)))
 
     return save_data
 
