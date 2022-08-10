@@ -1,6 +1,4 @@
-import enum
 import os
-from pathlib import PurePosixPath
 import cv2
 import numpy as np
 from dannce.engine.data import processing
@@ -76,7 +74,8 @@ class PoseDatasetFromMem(torch.utils.data.Dataset):
         aux_labels=None,
         temporal_chunk_list=None,
         occlusion=False,
-        pairs=None
+        pairs=None,
+        transformed_batch=False,
     ):
         """Initialize data generator.
         """
@@ -787,6 +786,160 @@ class PoseDatasetNPY(PoseDatasetFromMem):
 
         return self._convert_numpy_to_tensor(X, X_grid, y_3d, aux)
 
+class COMDatasetFromMem(torch.utils.data.Dataset):
+    def __init__(
+        self,
+        list_IDs,
+        data,
+        labels,
+        batch_size,
+        chan_num=3,
+        shuffle=True,
+        augment_brightness=False,
+        augment_hue=False,
+        augment_rotation=False,
+        augment_zoom=False,
+        augment_shear=False,
+        augment_shift=False,
+        bright_val=0.05,
+        hue_val=0.05,
+        shift_val=0.05,
+        rotation_val=5,
+        shear_val=5,
+        zoom_val=0.05,
+    ):
+        """Initialize data generator."""
+        self.list_IDs = list_IDs
+        self.data = data
+        self.labels = labels
+        self.batch_size = batch_size
+        self.chan_num = chan_num
+        self.shuffle = shuffle
+
+        self.augment_brightness = augment_brightness
+        self.augment_hue = augment_hue
+        self.augment_rotation = augment_rotation
+        self.augment_zoom = augment_zoom
+        self.augment_shear = augment_shear
+        self.augment_shift = augment_shift
+        self.bright_val = bright_val
+        self.hue_val = hue_val
+        self.shift_val = shift_val
+        self.rotation_val = rotation_val
+        self.shear_val = shear_val
+        self.zoom_val = zoom_val   
+
+    def __len__(self):
+        return len(self.list_IDs)
+
+    def shift_im(self, im, lim, dim=2):
+        ulim = im.shape[dim] - np.abs(lim)
+
+        if dim == 2:
+            if lim < 0:
+                im[:, :, :ulim] = im[:, :, np.abs(lim) :]
+                im[:, :, ulim:] = im[:, :, ulim : ulim + 1]
+            else:
+                im[:, :, lim:] = im[:, :, :ulim]
+                im[:, :, :lim] = im[:, :, lim : lim + 1]
+        elif dim == 1:
+            if lim < 0:
+                im[:, :ulim] = im[:, np.abs(lim) :]
+                im[:, ulim:] = im[:, ulim : ulim + 1]
+            else:
+                im[:, lim:] = im[:, :ulim]
+                im[:, :lim] = im[:, lim : lim + 1]
+        else:
+            raise Exception("Not a valid dimension for shift indexing")
+
+        return im
+
+    def random_shift(self, X, y_2d, im_h, im_w, scale):
+        """
+        Randomly shifts all images in batch, in the range [-im_w*scale, im_w*scale]
+            and [im_h*scale, im_h*scale]
+        """
+        wrng = np.random.randint(-int(im_w * scale), int(im_w * scale))
+        hrng = np.random.randint(-int(im_h * scale), int(im_h * scale))
+
+        X = self.shift_im(X, wrng)
+        X = self.shift_im(X, hrng, dim=1)
+
+        y_2d = self.shift_im(y_2d, wrng)
+        y_2d = self.shift_im(y_2d, hrng, dim=1)
+
+        return X, y_2d
+
+    def __getitem__(self, index):
+        list_IDs_temp = [self.list_IDs[index]]
+        X, y = self.__data_generation(list_IDs_temp)
+
+        return X, y
+    def __data_generation(self, list_IDs_temp):
+        """Generate data containing batch_size samples."""
+        # Initialization
+
+        X = np.zeros((self.batch_size, *self.data.shape[1:]))
+        y_2d = np.zeros((self.batch_size, *self.labels.shape[1:]))
+
+        for i, ID in enumerate(list_IDs_temp):
+            X[i] = self.data[ID].copy()
+            y_2d[i] = self.labels[ID]
+
+        if self.augment_rotation or self.augment_shear or self.augment_zoom:
+
+            affine = {}
+            affine["zoom"] = 1
+            affine["rotation"] = 0
+            affine["shear"] = 0
+
+            # Because we use views down below,
+            # don't change the targets in memory.
+            # But also, don't deep copy y_2d unless necessary (that's
+            # why it's here and not above)
+            y_2d = y_2d.copy()
+
+        # TODO: replace with torchvision.transforms
+        if self.augment_rotation:
+            affine["rotation"] = self.rotation_val * (np.random.rand() * 2 - 1)
+        # if self.augment_zoom:
+        #     affine["zoom"] = self.zoom_val * (np.random.rand() * 2 - 1) + 1
+        if self.augment_shear:
+            affine["shear"] = self.shear_val * (np.random.rand() * 2 - 1)
+
+        X = TF.affine(
+            torch.from_numpy(X).permute(0, 3, 1, 2),
+            angle=affine["rotation"],
+            shear=affine["shear"],
+        )
+        y_2d = TF.affine(
+            torch.from_numpy(y_2d).permute(0, 3, 1, 2),
+            angle=affine["rotation"],
+            shear=affine["shear"],
+        )
+
+        if self.augment_shift:
+            X, y_2d = self.random_shift(
+                X, y_2d.copy(), X.shape[1], X.shape[2], self.shift_val
+            )
+
+        if self.augment_brightness:
+            X_temp = torch.as_tensor(X).permute(0, 3, 1, 2) #[bs, 3, H, W]
+            random_bright_val = float(torch.empty(1).uniform_(1-self.bright_val, 1+self.bright_val))
+            X_temp = TF.adjust_brightness(X_temp, random_bright_val)
+            X = X_temp.permute(0, 2, 3, 1).numpy() 
+        
+        if self.augment_hue:
+            if self.chan_num == 3:
+                X_temp = torch.as_tensor(X).permute(0, 3, 1, 2) #[bs, 3, H, W]
+                random_hue_val = float(torch.empty(1).uniform_(-self.hue_val, self.hue_val))
+                X_temp = TF.adjust_hue(X_temp, random_hue_val)
+                X = X_temp.permute(0, 2, 3, 1).numpy() 
+            else:
+                warnings.warn("Hue augmention set to True for mono. Ignoring.")
+
+        return X, y_2d
+
 class MultiViewImageDataset(torch.utils.data.Dataset):
     def __init__(
         self,
@@ -949,7 +1102,6 @@ class ImageDataset(torch.utils.data.Dataset):
             return im, target
 
         return im, kpts2d
-
 
 class RAT7MSeqDataset(torch.utils.data.Dataset):
     def __init__(

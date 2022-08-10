@@ -647,3 +647,39 @@ def setup_predict(params):
         params["n_markers"] *= 2
 
     return params, valid_params
+
+def setup_com_train(params):
+    #os.environ["CUDA_VISIBLE_DEVICES"] = params["gpu_id"]
+
+    # MULTI_MODE is where the full set of markers is trained on, rather than
+    # the COM only. In some cases, this can help improve COMfinder performance.
+    params["multi_mode"] = (params["n_channels_out"] > 1) & (params["n_instances"] == 1)
+    params["n_channels_out"] = params["n_channels_out"] + int(params["multi_mode"])
+
+    train_params = {
+        "dim_in": (
+            params["crop_height"][1] - params["crop_height"][0],
+            params["crop_width"][1] - params["crop_width"][0],
+        ),
+        "n_channels_in": params["n_channels_in"],
+        "batch_size": 1,
+        "n_channels_out": params["n_channels_out"],
+        "out_scale": params["sigma"],
+        # "camnames": camnames,
+        "crop_width": params["crop_width"],
+        "crop_height": params["crop_height"],
+        "downsample": params["downfac"],
+        "shuffle": False,
+        # "chunks": total_chunks,
+        "dsmode": params["dsmode"],
+        "mono": params["mono"],
+        "mirror": params["mirror"],
+    }
+
+    valid_params = deepcopy(train_params)
+    valid_params["shuffle"] = False
+
+    params["multi_mode"] = (params["n_channels_out"] > 1) & (params["n_instances"] == 1)
+    params["n_channels_out"] = params["n_channels_out"] + int(params["multi_mode"])
+    
+    return params, train_params, valid_params

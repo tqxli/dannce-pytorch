@@ -6,8 +6,9 @@ import torch
 
 import dannce.config as config
 import dannce.engine.inference as inference
-from dannce.engine.models.nets import initialize_train, initialize_model
+from dannce.engine.models.nets import initialize_train, initialize_model, initialize_com_train
 from dannce.engine.trainer.dannce_trainer import DannceTrainer
+from dannce.engine.trainer.com_trainer import COMTrainer
 from dannce.engine.logging.logger import setup_logging, get_logger
 from dannce.run_utils import *
 
@@ -126,7 +127,9 @@ def dannce_predict(params: Dict):
             online=ttt_params.get("online", False),
             niter=ttt_params.get("niter", 20),
             transform=ttt_params.get("transform", False),
+            downsample=ttt_params.get("downsample", 1),
         )
+        inference.save_results(params, save_data)
         return
 
     model.load_state_dict(torch.load(params["dannce_predict_model"])['state_dict'])
@@ -142,5 +145,51 @@ def dannce_predict(params: Dict):
         predict_generator_sil,
         save_heatmaps=False
     )
-
     inference.save_results(params, save_data)
+
+def com_train(params: Dict):
+    """Train COM network
+    Args:
+        params (Dict): Parameters dictionary.
+    """
+    params, train_params, valid_params = config.setup_com_train(params)
+
+    # make the train directory if does not exist
+    make_folder("dannce_train_dir", params)
+
+    # setup logger
+    setup_logging(params["com_train_dir"])
+    logger = get_logger("training.log", verbosity=2) 
+    
+    assert torch.cuda.is_available(), "No available GPU device."
+    params["gpu_id"] = [0]
+    device = torch.device("cuda")
+    logger.info("***Use {} GPU for training.***".format(params["gpu_id"]))
+
+    # fix random seed if specified
+    if params["random_seed"] is not None:
+        set_random_seed(params["random_seed"])
+        logger.info("***Fix random seed as {}***".format(params["random_seed"]))
+
+    train_dataloader, valid_dataloader = make_data_com(params, train_params, valid_params, logger)
+
+    # Build network
+    logger.info("Initializing Network...")
+    model, optimizer, lr_scheduler = initialize_com_train(params, logger)
+    logger.info(model)
+    logger.info("COMPLETE\n")
+
+    # set up trainer
+    trainer_class = COMTrainer
+    trainer = trainer_class(
+        params=params,
+        model=model,
+        train_dataloader=train_dataloader,
+        valid_dataloader=valid_dataloader,
+        optimizer=optimizer,
+        device=device,
+        logger=logger,
+        lr_scheduler=lr_scheduler
+    )
+
+    trainer.train()

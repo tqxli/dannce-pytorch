@@ -699,3 +699,139 @@ def make_dataset_inference(params, valid_params):
         )
     
     return predict_generator, predict_generator_sil, camnames, partition
+
+def make_data_com(params, train_params, valid_params, logger):
+    if params["com_exp"] is not None:
+        exps = params["com_exp"]
+    else:
+        exps = params["exp"]
+    num_experiments = len(exps)
+    (
+        samples, 
+        datadict, datadict_3d, 
+        cameras, camnames, 
+        total_chunks
+    ) = processing.load_all_com_exps(params, exps)
+
+    cameras, datadict, params = serve_data_DANNCE.prepend_experiment(
+        params, datadict, num_experiments, camnames, cameras
+    )
+
+    # make train/valid splits
+    partition = processing.make_data_splits(
+        samples, params, params["com_train_dir"], num_experiments
+    )
+
+    # Initialize video objects
+    vids = {}
+    for e in range(num_experiments):
+        vids = processing.initialize_vids(params, datadict, e, vids, pathonly=True)
+
+    train_params = {
+        **train_params,
+        "camnames": camnames,
+        "vidreaders": vids,
+        "chunks": total_chunks,
+    }
+
+    valid_params = {
+        **valid_params,
+        "camnames": camnames,
+        "vidreaders": vids,
+        "chunks": total_chunks,
+    }
+
+    # Set up generators
+    labels = datadict
+    dh = (params["crop_height"][1] - params["crop_height"][0]) // params["downfac"]
+    dw = (params["crop_width"][1] - params["crop_width"][0]) // params["downfac"]
+    # effective n_channels, which is different if using a mirror arena configuration
+    eff_n_channels_out = len(camnames[0]) if params["mirror"] else params["n_channels_out"]
+    if params["mirror"]:
+        ncams = 1 # Effectively, for the purpose of batch indexing
+    else:
+        ncams = len(camnames[0])
+
+    train_generator = generator.DataGenerator_COM(
+        params["n_instances"],
+        partition["train_sampleIDs"],
+        labels,
+        vids,
+        **train_params
+    )
+    valid_generator = generator.DataGenerator_COM(
+        params["n_instances"],
+        partition["valid_sampleIDs"],
+        labels,
+        vids,
+        **valid_params
+    )
+
+    print("Loading data")
+    ims_train = np.zeros(
+        (
+            ncams * len(partition["train_sampleIDs"]),
+            dh,
+            dw,
+            params["chan_num"],
+        ),
+        dtype="float32",
+    )
+    y_train = np.zeros(
+        (ncams * len(partition["train_sampleIDs"]), dh, dw, eff_n_channels_out),
+        dtype="float32",
+    )
+    ims_valid = np.zeros(
+        (
+            ncams * len(partition["valid_sampleIDs"]),
+            dh,
+            dw,
+            params["chan_num"],
+        ),
+        dtype="float32",
+    )
+    y_valid = np.zeros(
+        (ncams * len(partition["valid_sampleIDs"]), dh, dw, eff_n_channels_out),
+        dtype="float32",
+    )
+    for i in range(len(partition["train_sampleIDs"])):
+        print(i, end="\r")
+        ims = train_generator.__getitem__(i)
+        ims_train[i * ncams : (i + 1) * ncams] = ims[0]
+        y_train[i * ncams : (i + 1) * ncams] = ims[1]
+
+    for i in range(len(partition["valid_sampleIDs"])):
+        print(i, end="\r")
+        ims = valid_generator.__getitem__(i)
+        ims_valid[i * ncams : (i + 1) * ncams] = ims[0]
+        y_valid[i * ncams : (i + 1) * ncams] = ims[1]
+    
+    train_generator = dataset.COMDatasetFromMem(
+        np.arange(ims_train.shape[0]),
+        ims_train,
+        y_train,
+        batch_size=params["batch_size"] * ncams,
+        augment_hue=params["augment_hue"],
+        augment_brightness=params["augment_brightness"],
+        augment_rotation=params["augment_rotation"],
+        augment_shear=params["augment_hue"],
+        augment_shift=params["augment_brightness"],
+        augment_zoom=params["augment_rotation"],
+        bright_val=params["augment_bright_val"],
+        hue_val=params["augment_hue_val"],
+        shift_val=params["augment_shift_val"],
+        rotation_val=params["augment_rotation_val"],
+        shear_val=params["augment_shear_val"],
+        zoom_val=params["augment_zoom_val"],
+        chan_num=params["chan_num"],
+    )
+    valid_generator = dataset.COMDatasetFromMem(
+        np.arange(ims_valid.shape[0]),
+        ims_valid,
+        y_valid,
+        batch_size=ncams,
+        shuffle=False,
+        chan_num=params["chan_num"],
+    )
+
+    return train_generator, valid_generator
