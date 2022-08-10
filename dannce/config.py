@@ -653,6 +653,7 @@ def setup_com_train(params):
 
     # MULTI_MODE is where the full set of markers is trained on, rather than
     # the COM only. In some cases, this can help improve COMfinder performance.
+    params["chan_num"] = 1 if params["mono"] else params["n_channels_in"]
     params["multi_mode"] = (params["n_channels_out"] > 1) & (params["n_instances"] == 1)
     params["n_channels_out"] = params["n_channels_out"] + int(params["multi_mode"])
 
@@ -678,8 +679,5 @@ def setup_com_train(params):
 
     valid_params = deepcopy(train_params)
     valid_params["shuffle"] = False
-
-    params["multi_mode"] = (params["n_channels_out"] > 1) & (params["n_instances"] == 1)
-    params["n_channels_out"] = params["n_channels_out"] + int(params["multi_mode"])
     
     return params, train_params, valid_params

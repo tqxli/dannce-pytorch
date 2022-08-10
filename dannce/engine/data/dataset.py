@@ -899,24 +899,24 @@ class COMDatasetFromMem(torch.utils.data.Dataset):
             # why it's here and not above)
             y_2d = y_2d.copy()
 
-        # TODO: replace with torchvision.transforms
-        if self.augment_rotation:
-            affine["rotation"] = self.rotation_val * (np.random.rand() * 2 - 1)
-        # if self.augment_zoom:
-        #     affine["zoom"] = self.zoom_val * (np.random.rand() * 2 - 1) + 1
-        if self.augment_shear:
-            affine["shear"] = self.shear_val * (np.random.rand() * 2 - 1)
+            # TODO: replace with torchvision.transforms
+            if self.augment_rotation:
+                affine["rotation"] = self.rotation_val * (np.random.rand() * 2 - 1)
+            # if self.augment_zoom:
+            #     affine["zoom"] = self.zoom_val * (np.random.rand() * 2 - 1) + 1
+            if self.augment_shear:
+                affine["shear"] = self.shear_val * (np.random.rand() * 2 - 1)
 
-        X = TF.affine(
-            torch.from_numpy(X).permute(0, 3, 1, 2),
-            angle=affine["rotation"],
-            shear=affine["shear"],
-        )
-        y_2d = TF.affine(
-            torch.from_numpy(y_2d).permute(0, 3, 1, 2),
-            angle=affine["rotation"],
-            shear=affine["shear"],
-        )
+            X = TF.affine(
+                torch.from_numpy(X).permute(0, 3, 1, 2),
+                angle=affine["rotation"],
+                shear=affine["shear"],
+            )
+            y_2d = TF.affine(
+                torch.from_numpy(y_2d).permute(0, 3, 1, 2),
+                angle=affine["rotation"],
+                shear=affine["shear"],
+            )
 
         if self.augment_shift:
             X, y_2d = self.random_shift(
@@ -938,6 +938,8 @@ class COMDatasetFromMem(torch.utils.data.Dataset):
             else:
                 warnings.warn("Hue augmention set to True for mono. Ignoring.")
 
+        X = torch.from_numpy(X).permute(0, 3, 1, 2)
+        y_2d = torch.from_numpy(y_2d).permute(0, 3, 1, 2)
         return X, y_2d
 
 class MultiViewImageDataset(torch.utils.data.Dataset):

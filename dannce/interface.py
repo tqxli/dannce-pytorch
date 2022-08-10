@@ -155,7 +155,7 @@ def com_train(params: Dict):
     params, train_params, valid_params = config.setup_com_train(params)
 
     # make the train directory if does not exist
-    make_folder("dannce_train_dir", params)
+    make_folder("com_train_dir", params)
 
     # setup logger
     setup_logging(params["com_train_dir"])
@@ -175,7 +175,7 @@ def com_train(params: Dict):
 
     # Build network
     logger.info("Initializing Network...")
-    model, optimizer, lr_scheduler = initialize_com_train(params, logger)
+    model, optimizer, lr_scheduler = initialize_com_train(params, device, logger)
     logger.info(model)
     logger.info("COMPLETE\n")
 

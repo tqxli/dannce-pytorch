@@ -155,7 +155,7 @@ def load_expdict(params, e, expdict, _DEFAULT_VIDDIR, _DEFAULT_VIDDIR_SIL, logge
     if logger is not None:
         logger.info("Experiment {} using videos in {}".format(e, exp["viddir"]))
 
-    if params["use_silhouette"]:
+    if params.get("use_silhouette", False):
         exp["viddir_sil"] = os.path.join(exp["base_exp_folder"], _DEFAULT_VIDDIR_SIL) if "viddir_sil" not in expdict else expdict["viddir_sil"]
         if logger is not None:
             logger.info("Experiment {} also using masked videos in {}".format(e, exp["viddir_sil"]))
@@ -260,10 +260,10 @@ def load_all_com_exps(params, exps):
     samples = []
     for e, expdict in enumerate(exps):
 
-        exp = load_expdict(params, e, expdict, _DEFAULT_VIDDIR)
+        exp = load_expdict(params, e, expdict, _DEFAULT_VIDDIR, _DEFAULT_VIDDIR_SIL)
 
         params["experiment"][e] = exp
-        (samples_, datadict_, datadict_3d_, cameras_,) = serve_data_DANNCE.prepare_data(
+        (samples_, datadict_, datadict_3d_, cameras_, _) = serve_data_DANNCE.prepare_data(
             params["experiment"][e],
             com_flag=not params["multi_mode"],
         )
@@ -271,7 +271,7 @@ def load_all_com_exps(params, exps):
         # No need to prepare any COM file (they don't exist yet).
         # We call this because we want to support multiple experiments,
         # which requires appending the experiment ID to each data object and key
-        samples, datadict, datadict_3d, ddd = serve_data_DANNCE.add_experiment(
+        samples, datadict, datadict_3d, _, _ = serve_data_DANNCE.add_experiment(
             e,
             samples,
             datadict,
@@ -282,6 +282,7 @@ def load_all_com_exps(params, exps):
             datadict_3d_,
             {},
         )
+
         cameras[e] = cameras_
         camnames[e] = params["experiment"][e]["camnames"]
         for name, chunk in exp["chunks"].items():
@@ -437,7 +438,7 @@ def make_data_splits(samples, params, results_dir, num_experiments, temporal_chu
     # and change.
 
     partition = {}
-    if params["use_temporal"]:
+    if params.get("use_temporal", False):
         if params["load_valid"] is None:
             assert temporal_chunks != None, "If use temporal, do partitioning over chunks."
             v = params["num_validation_per_exp"]
@@ -1840,7 +1841,7 @@ def prepare_joint_volumes(params, pairs, com3d_dict, datadict_3d):
 
     return datadict_3d
 
-def _preprocess_numpy_input(x, data_format, mode):
+def _preprocess_numpy_input(x, data_format="channels_last", mode="torch"):
   """Preprocesses a Numpy array encoding a batch of images.
   Args:
     x: Input array, 3D or 4D.

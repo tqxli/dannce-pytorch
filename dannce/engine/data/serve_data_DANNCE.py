@@ -74,7 +74,7 @@ def prepare_data(
         )
 
     # enable temporal training
-    TEMPORAL_FLAG = (not prediction) and (params["use_temporal"]) #and (not valid)
+    TEMPORAL_FLAG = (not prediction) and (params.get("use_temporal", False)) #and (not valid)
     chunk_list = None
     if TEMPORAL_FLAG:
         samples, labels, chunk_list = prepare_temporal_seqs(params, samples, labels, downsample, valid, support)

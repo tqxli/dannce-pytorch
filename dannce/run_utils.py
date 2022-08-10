@@ -705,6 +705,7 @@ def make_data_com(params, train_params, valid_params, logger):
         exps = params["com_exp"]
     else:
         exps = params["exp"]
+
     num_experiments = len(exps)
     (
         samples, 
@@ -730,14 +731,12 @@ def make_data_com(params, train_params, valid_params, logger):
     train_params = {
         **train_params,
         "camnames": camnames,
-        "vidreaders": vids,
         "chunks": total_chunks,
     }
 
     valid_params = {
         **valid_params,
         "camnames": camnames,
-        "vidreaders": vids,
         "chunks": total_chunks,
     }
 
@@ -794,14 +793,13 @@ def make_data_com(params, train_params, valid_params, logger):
         (ncams * len(partition["valid_sampleIDs"]), dh, dw, eff_n_channels_out),
         dtype="float32",
     )
-    for i in range(len(partition["train_sampleIDs"])):
-        print(i, end="\r")
+
+    for i in tqdm(range(len(partition["train_sampleIDs"]))):
         ims = train_generator.__getitem__(i)
         ims_train[i * ncams : (i + 1) * ncams] = ims[0]
         y_train[i * ncams : (i + 1) * ncams] = ims[1]
 
-    for i in range(len(partition["valid_sampleIDs"])):
-        print(i, end="\r")
+    for i in tqdm(range(len(partition["valid_sampleIDs"]))):
         ims = valid_generator.__getitem__(i)
         ims_valid[i * ncams : (i + 1) * ncams] = ims[0]
         y_valid[i * ncams : (i + 1) * ncams] = ims[1]
@@ -833,5 +831,20 @@ def make_data_com(params, train_params, valid_params, logger):
         shuffle=False,
         chan_num=params["chan_num"],
     )
+    
+    def collate_fn(batch):
+        X = torch.cat([item[0] for item in batch], dim=0)
+        y = torch.cat([item[1] for item in batch], dim=0)
 
-    return train_generator, valid_generator
+        return X, y
+
+    train_dataloader = torch.utils.data.DataLoader(
+        train_generator, batch_size=params["batch_size"], shuffle=True, collate_fn=collate_fn,
+        num_workers=1,
+    )
+    valid_dataloader = torch.utils.data.DataLoader(
+        valid_generator, batch_size=1, shuffle=False, collate_fn=collate_fn,
+        num_workers=1
+    )
+
+    return train_dataloader, valid_dataloader
