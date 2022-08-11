@@ -744,6 +744,7 @@ def make_data_com(params, train_params, valid_params, logger):
     labels = datadict
     dh = (params["crop_height"][1] - params["crop_height"][0]) // params["downfac"]
     dw = (params["crop_width"][1] - params["crop_width"][0]) // params["downfac"]
+    params["input_shape"] = (dh, dw)
     # effective n_channels, which is different if using a mirror arena configuration
     eff_n_channels_out = len(camnames[0]) if params["mirror"] else params["n_channels_out"]
     if params["mirror"]:
@@ -804,11 +805,13 @@ def make_data_com(params, train_params, valid_params, logger):
         ims_valid[i * ncams : (i + 1) * ncams] = ims[0]
         y_valid[i * ncams : (i + 1) * ncams] = ims[1]
     
+    processing.write_debug(params, ims_train, ims_valid, y_train)
+    
     train_generator = dataset.COMDatasetFromMem(
         np.arange(ims_train.shape[0]),
         ims_train,
         y_train,
-        batch_size=params["batch_size"] * ncams,
+        batch_size=ncams,
         augment_hue=params["augment_hue"],
         augment_brightness=params["augment_brightness"],
         augment_rotation=params["augment_rotation"],

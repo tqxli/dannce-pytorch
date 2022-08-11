@@ -382,7 +382,7 @@ def add_shared_train_args(
         help="List of additional metrics to report. See losses.py",
     )
 
-    parser.add_argument("--lr", dest="lr", help="Learning rate.")
+    parser.add_argument("--lr", dest="lr", type=float, help="Learning rate.")
 
     parser.add_argument(
         "--augment-hue",

@@ -657,6 +657,8 @@ def setup_com_train(params):
     params["multi_mode"] = (params["n_channels_out"] > 1) & (params["n_instances"] == 1)
     params["n_channels_out"] = params["n_channels_out"] + int(params["multi_mode"])
 
+    params["lr"] = float(params["lr"])
+
     train_params = {
         "dim_in": (
             params["crop_height"][1] - params["crop_height"][0],

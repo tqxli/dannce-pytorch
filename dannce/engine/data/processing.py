@@ -782,7 +782,7 @@ def write_debug(
     ims_train: np.ndarray,
     ims_valid: np.ndarray,
     y_train: np.ndarray,
-    model,
+    # model,
     trainData: bool = True,
 ):
     """Factoring re-used debug output code.
@@ -810,10 +810,10 @@ def write_debug(
             outdir = "debug_im_out"
             ims_out = ims_train
             label_out = y_train
-        else:
-            outdir = "debug_im_out_valid"
-            ims_out = ims_valid
-            label_out = model.predict(ims_valid, batch_size=1)
+        # else:
+        #     outdir = "debug_im_out_valid"
+        #     ims_out = ims_valid
+        #     label_out = model.predict(ims_valid, batch_size=1)
 
         # Plot all training images and save
         # create new directory for images if necessary

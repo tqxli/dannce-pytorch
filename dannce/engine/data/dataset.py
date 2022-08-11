@@ -938,8 +938,8 @@ class COMDatasetFromMem(torch.utils.data.Dataset):
             else:
                 warnings.warn("Hue augmention set to True for mono. Ignoring.")
 
-        X = torch.from_numpy(X).permute(0, 3, 1, 2)
-        y_2d = torch.from_numpy(y_2d).permute(0, 3, 1, 2)
+        X = torch.from_numpy(X).permute(0, 3, 1, 2).float()
+        y_2d = torch.from_numpy(y_2d).permute(0, 3, 1, 2).float()
         return X, y_2d
 
 class MultiViewImageDataset(torch.utils.data.Dataset):

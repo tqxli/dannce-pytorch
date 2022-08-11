@@ -162,31 +162,40 @@ class DANNCE(nn.Module):
 
 class UNet2D(nn.Module):
     def __init__(self, input_channels, output_channels, input_shape, n_layers=4, hidden_dims=[32, 64, 128, 256, 512], norm_method="layer"):
+        super().__init__()
+
         assert n_layers == len(hidden_dims)-1, "Hidden dimensions do not match with the number of layers."
         conv_block = Basic2DBlock
         deconv_block = BasicUpSample2DBlock
 
-        self.encoder_res1 = conv_block(input_channels, 32, norm_method, [input_shape]*3)
-        self.encoder_pool1 = Pool2DBlock(2)
-        self.encoder_res2 = conv_block(32, 64, norm_method, [input_shape//2]*3)
-        self.encoder_pool2 = Pool2DBlock(2)
-        self.encoder_res3 = conv_block(64, 128, norm_method, [input_shape//4]*3)
-        self.encoder_pool3 = Pool2DBlock(2)
-        self.encoder_res4 = conv_block(128, 256, norm_method, [input_shape//8]*3)
-        self.encoder_pool4 = Pool2DBlock(2)
-        self.encoder_res5 = conv_block(512, 512, norm_method, [input_shape//16]*3)
+        self.n_layers = n_layers
+        self._compute_input_dims(input_shape)
 
-        self.decoder_res4 = conv_block(512, 256, norm_method, [input_shape//8]*3)
-        self.decoder_upsample4 = deconv_block(512, 256, 2, 2, norm_method, [input_shape//4]*3)
-        self.decoder_res3 = conv_block(256, 128, norm_method, [input_shape//4]*3)
-        self.decoder_upsample3 = deconv_block(256, 128, 2, 2, norm_method, [input_shape//2]*3)
-        self.decoder_res2 = conv_block(128, 64, norm_method, [input_shape//2]*3)
-        self.decoder_upsample2 = deconv_block(128, 64, 2, 2, norm_method, [input_shape]*3)
-        self.decoder_res1 = conv_block(64, 32, norm_method, [input_shape//2]*3)
-        self.decoder_upsample1 = deconv_block(64, 32, 2, 2, norm_method, [input_shape]*3)
+        # construct layers
+        self.encoder_res1 = conv_block(input_channels, 32, norm_method, self.input_dims[0])
+        self.encoder_pool1 = Pool2DBlock(2)
+        self.encoder_res2 = conv_block(32, 64, norm_method, self.input_dims[1])
+        self.encoder_pool2 = Pool2DBlock(2)
+        self.encoder_res3 = conv_block(64, 128, norm_method, self.input_dims[2])
+        self.encoder_pool3 = Pool2DBlock(2)
+        self.encoder_res4 = conv_block(128, 256, norm_method, self.input_dims[3])
+        self.encoder_pool4 = Pool2DBlock(2)
+        self.encoder_res5 = conv_block(256, 512, norm_method, self.input_dims[4])
+
+        self.decoder_res4 = conv_block(512, 256, norm_method, self.input_dims[3])
+        self.decoder_upsample4 = deconv_block(512, 256, 2, 2, norm_method, self.input_dims[3])
+        self.decoder_res3 = conv_block(256, 128, norm_method, self.input_dims[2])
+        self.decoder_upsample3 = deconv_block(256, 128, 2, 2, norm_method, self.input_dims[2])
+        self.decoder_res2 = conv_block(128, 64, norm_method, self.input_dims[1])
+        self.decoder_upsample2 = deconv_block(128, 64, 2, 2, norm_method, self.input_dims[1])
+        self.decoder_res1 = conv_block(64, 32, norm_method, self.input_dims[0])
+        self.decoder_upsample1 = deconv_block(64, 32, 2, 2, norm_method, self.input_dims[0])
 
         self.output_layer = nn.Conv2d(32, output_channels, 1, 1, 0)
-    
+     
+    def _compute_input_dims(self, input_shape):
+        self.input_dims = [(input_shape[0] // (2**i), input_shape[1] // (2**i)) for i in range(self.n_layers+1)]
+
     def forward(self, x):
         features = []
         # encoder
@@ -197,10 +206,6 @@ class UNet2D(nn.Module):
         x = self.encoder_res2(x)    
         skip_x2 = x    
         x = self.encoder_pool2(x)
-
-        x = self.encoder_res3(x)
-        skip_x3 = x
-        x = self.encoder_pool3(x)
 
         x = self.encoder_res3(x)
         skip_x3 = x
@@ -323,12 +328,10 @@ def initialize_train(params, n_cams, device, logger):
     return model, optimizer, lr_scheduler
 
 def initialize_com_model(params, device):
-    model = UNet2D(params["n_channels_in"], params["n_channels_out"])
+    model = UNet2D(params["n_channels_in"], params["n_channels_out"], params["input_shape"]).to(device)
     return model
 
 def initialize_com_train(params, device, logger):
-    params["start_epoch"] = 1
-
     if params["train_mode"] == "new":
         logger.info("*** Traininig from scratch. ***")
         model = initialize_com_model(params, device)
@@ -336,8 +339,8 @@ def initialize_com_train(params, device, logger):
         optimizer = torch.optim.Adam(model_params, lr=params["lr"], eps=1e-7)
 
     elif params["train_mode"] == "finetune":
-        logger.info("*** Finetuning from {}. ***".format(params["dannce_finetune_weights"]))
-        checkpoints = torch.load(params["dannce_finetune_weights"])
+        logger.info("*** Finetuning from {}. ***".format(params["com_finetune_weights"]))
+        checkpoints = torch.load(params["com_finetune_weights"])
         model = initialize_com_model(params, device)
 
         state_dict = checkpoints["state_dict"]

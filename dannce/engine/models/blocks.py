@@ -105,7 +105,7 @@ class Basic2DBlock(nn.Module):
 
 class Pool2DBlock(nn.Module):
     def __init__(self, pool_size):
-        super(Pool3DBlock, self).__init__()
+        super(Pool2DBlock, self).__init__()
         self.pool_size = pool_size
 
     def forward(self, x):
@@ -113,7 +113,7 @@ class Pool2DBlock(nn.Module):
 
 class BasicUpSample2DBlock(nn.Module):
     def __init__(self, in_planes, out_planes, kernel_size, stride, norm_method, input_shape):
-        super(BasicUpSample3DBlock, self).__init__()
+        super(BasicUpSample2DBlock, self).__init__()
         self.block = nn.Sequential(
             nn.ConvTranspose2d(in_planes, out_planes, kernel_size=kernel_size, stride=stride, padding=0, output_padding=0)
         )

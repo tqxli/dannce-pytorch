@@ -21,7 +21,7 @@ class LossHelper:
         for name, args in self.loss_params["loss"].items():
             self.loss_fcns[name] = getattr(custom_losses, name)(**args)
         
-    def compute_loss(self, kpts_gt, kpts_pred, heatmaps, grid_centers, aux):
+    def compute_loss(self, kpts_gt, kpts_pred, heatmaps, grid_centers=None, aux=None):
         """
         Compute each loss and return their weighted sum for backprop.
         """
