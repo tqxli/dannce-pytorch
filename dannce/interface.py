@@ -193,3 +193,65 @@ def com_train(params: Dict):
     )
 
     trainer.train()
+
+def com_predict(params):
+    os.environ["CUDA_VISIBLE_DEVICES"] = params["gpu_id"]
+    make_folder("com_predict_dir", params)
+    setup_logging(params["com_predict_dir"])
+    logger = get_logger("training.log", verbosity=2) 
+
+    device = "cuda:0"
+    params, predict_params = config.setup_com_predict(params)
+    predict_generator, params, partition, camera_mats, cameras, datadict = make_dataset_com_inference(params, predict_params)
+
+    print("Initializing Network...")
+    model = initialize_com_train(params, device, logger)[0]
+    model.load_state_dict(torch.load(params["com_predict_weights"])['state_dict'])
+    model.eval()
+
+    save_data = {}
+    if params["max_num_samples"] == "max":
+        save_data = inference.infer_com(
+            params["start_sample"],
+            len(predict_generator),
+            predict_generator,
+            params,
+            model,
+            partition,
+            save_data,
+            camera_mats,
+            cameras,
+            device
+        )
+        processing.save_COM_checkpoint(
+            save_data, params["com_predict_dir"], datadict, cameras, params
+        )
+    else:
+        endIdx = np.min(
+            [
+                params["start_sample"] + params["max_num_samples"],
+                len(predict_generator),
+            ]
+        )
+        save_data = inference.infer_com(
+            params["start_sample"],
+            endIdx,
+            predict_generator,
+            params,
+            model,
+            partition,
+            save_data,
+            camera_mats,
+            cameras,
+            device
+        )
+        processing.save_COM_checkpoint(
+            save_data,
+            params["com_predict_dir"],
+            datadict,
+            cameras,
+            params,
+            file_name="com3d%d" % (params["start_sample"]),
+        )
+
+    print("done!")

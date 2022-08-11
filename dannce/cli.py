@@ -7,7 +7,7 @@ import dannce.run.train_posegcn as posegcn
 import dannce.run.train_transformer as trans
 import dannce.run.train_crossattn as socialattn
 from dannce.interface import (
-    # com_predict,
+    com_predict,
     com_train,
     dannce_predict,
     dannce_train,
@@ -104,16 +104,16 @@ def sbatch_dannce_train_cli():
 #     os.system(cmd)
 
 
-# def com_predict_cli():
-#     """Entrypoint for com prediction."""
-#     parser = argparse.ArgumentParser(
-#         description="Com predict CLI",
-#         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-#     )
-#     parser.set_defaults(**{**_param_defaults_shared, **_param_defaults_com})
-#     args = parse_clargs(parser, model_type="com", prediction=True)
-#     params = build_clarg_params(args, dannce_net=False, prediction=True)
-#     com_predict(params)
+def com_predict_cli():
+    """Entrypoint for com prediction."""
+    parser = argparse.ArgumentParser(
+        description="Com predict CLI",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.set_defaults(**{**_param_defaults_shared, **_param_defaults_com})
+    args = parse_clargs(parser, model_type="com", prediction=True)
+    params = build_clarg_params(args, dannce_net=False, prediction=True)
+    com_predict(params)
 
 
 def com_train_cli():

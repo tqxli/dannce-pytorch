@@ -851,3 +851,48 @@ def make_data_com(params, train_params, valid_params, logger):
     )
 
     return train_dataloader, valid_dataloader
+
+def make_dataset_com_inference(params, predict_params):
+    (
+        samples,
+        datadict,
+        datadict_3d,
+        cameras,
+        camera_mats,
+    ) = serve_data_DANNCE.prepare_data(
+        params,
+        prediction=True,
+        return_cammat=True,
+    )
+
+    # Zero any negative frames
+    for key in datadict.keys():
+        for key_ in datadict[key]["frames"].keys():
+            if datadict[key]["frames"][key_] < 0:
+                datadict[key]["frames"][key_] = 0
+
+    # The generator expects an experimentID in front of each sample key
+    samples = ["0_" + str(f) for f in samples]
+    datadict_ = {}
+    for key in datadict.keys():
+        datadict_["0_" + str(key)] = datadict[key]
+
+    datadict = datadict_
+
+    # Initialize video dictionary. paths to videos only.
+    vids = {}
+    vids = processing.initialize_vids(params, datadict, 0, vids, pathonly=True)
+
+    partition = {}
+    partition["valid_sampleIDs"] = samples
+    labels = datadict
+
+    predict_generator = generator.DataGenerator_COM(
+        params["n_instances"],
+        partition["valid_sampleIDs"],
+        labels,
+        vids,
+        **predict_params
+    )
+
+    return predict_generator, params, partition, camera_mats, cameras, datadict

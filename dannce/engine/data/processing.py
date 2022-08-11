@@ -1083,13 +1083,13 @@ def prepare_save_metadata(params):
     # Need to convert None to string but still want to conserve the metadat structure
     # format, so we don't want to convert the whole dict to a string
     meta = params.copy()
-    # if "experiment" in meta:
-    #     del meta["experiment"]
-    # if "loss" in meta:
-    #     try: 
-    #         meta["loss"] = [loss.__name__ for loss in meta["loss"]]
-    #     except:
-    #         meta["loss"] = meta["loss"].__name__
+    if "experiment" in meta:
+        del meta["experiment"]
+    if "loss" in meta:
+        try: 
+            meta["loss"] = [loss.__name__ for loss in meta["loss"]]
+        except:
+            meta["loss"] = list(meta["loss"].keys())
     # if "net" in meta:
     #     meta["net"] = meta["net"].__name__
     # if "metric" in meta:
