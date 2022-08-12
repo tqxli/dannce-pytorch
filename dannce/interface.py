@@ -209,49 +209,31 @@ def com_predict(params):
     model.load_state_dict(torch.load(params["com_predict_weights"])['state_dict'])
     model.eval()
 
+    # do frame-wise inference
     save_data = {}
-    if params["max_num_samples"] == "max":
-        save_data = inference.infer_com(
-            params["start_sample"],
+    endIdx = np.min(
+        [
+            params["start_sample"] + params["max_num_samples"],
             len(predict_generator),
-            predict_generator,
-            params,
-            model,
-            partition,
-            save_data,
-            camera_mats,
-            cameras,
-            device
-        )
-        processing.save_COM_checkpoint(
-            save_data, params["com_predict_dir"], datadict, cameras, params
-        )
-    else:
-        endIdx = np.min(
-            [
-                params["start_sample"] + params["max_num_samples"],
-                len(predict_generator),
-            ]
-        )
-        save_data = inference.infer_com(
-            params["start_sample"],
-            endIdx,
-            predict_generator,
-            params,
-            model,
-            partition,
-            save_data,
-            camera_mats,
-            cameras,
-            device
-        )
-        processing.save_COM_checkpoint(
-            save_data,
-            params["com_predict_dir"],
-            datadict,
-            cameras,
-            params,
-            file_name="com3d%d" % (params["start_sample"]),
-        )
+        ]
+    ) if params["max_num_samples"] != "max" else len(predict_generator)
+
+    save_data = inference.infer_com(
+        params["start_sample"],
+        endIdx,
+        predict_generator,
+        params,
+        model,
+        partition,
+        save_data,
+        camera_mats,
+        cameras,
+        device
+    )
+
+    filename = "com3d" if params["max_num_samples"] != "max" else "com3d%d" % (params["start_sample"])
+    processing.save_COM_checkpoint(
+        save_data, params["com_predict_dir"], datadict, cameras, params, file_name=filename
+    )
 
     print("done!")
