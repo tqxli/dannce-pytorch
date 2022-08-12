@@ -576,10 +576,10 @@ def infer_com(
         sample_save (int, optional): Number of samples to use in fps estimation.
     """
     end_time = time.time()
-    for n_frame in range(start_ind, end_ind):
-        end_time = print_checkpoint(
-            n_frame, start_ind, end_time, sample_save=sample_save
-        )
+    for n_frame in tqdm(range(start_ind, end_ind)):
+        #end_time = print_checkpoint(
+        #    n_frame, start_ind, end_time, sample_save=sample_save
+        #)
         pred_batch = predict_batch(model, generator, n_frame, params, device)
         n_batches = pred_batch.shape[0]
 
@@ -680,10 +680,10 @@ def infer_dannce(
     pbar = tqdm(range(start_ind, end_ind))
     for idx, i in enumerate(pbar):
         # print("Predicting on batch {}".format(i), flush=True)
-        if (i - start_ind) % 10 == 0 and i != start_ind:
+        # if (i - start_ind) % 10 == 0 and i != start_ind:
             # print(i)
-            print("10 batches took {} seconds".format(time.time() - end_time))
-            end_time = time.time()
+            # print("10 batches took {} seconds".format(time.time() - end_time))
+            # end_time = time.time()
 
         if (i - start_ind) % 1000 == 0 and i != start_ind:
             print("Saving checkpoint at {}th batch".format(i))

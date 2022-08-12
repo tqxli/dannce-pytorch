@@ -767,7 +767,7 @@ def make_data_com(params, train_params, valid_params, logger):
         **valid_params
     )
 
-    print("Loading data")
+    logger.info("Loading data")
     ims_train = np.zeros(
         (
             ncams * len(partition["train_sampleIDs"]),
