@@ -92,14 +92,18 @@ def generate_readers(
 ):
     """Open all mp4 objects with imageio, and return them in a dictionary."""
     out = {}
-    mp4files = [
-        os.path.join(camname, f)
-        for f in os.listdir(os.path.join(viddir, camname))
-        if extension in f
-        and int(f.rsplit(extension)[0]) <= maxopt
-        and int(f.rsplit(extension)[0]) >= minopt
-    ]
-
+    try:
+        mp4files = [
+            os.path.join(camname, f)
+            for f in os.listdir(os.path.join(viddir, camname))
+            if extension in f
+            and (f[0] != '_')
+            and (f[0] != '.')
+            and int(f.rsplit(extension)[0]) <= maxopt
+            and int(f.rsplit(extension)[0]) >= minopt
+        ]
+    except:
+        breakpoint()
     # This is a trick (that should work) for getting rid of
     # awkward sub-directory folder names when they are being used
     mp4files_scrub = [
@@ -179,7 +183,7 @@ def load_expdict(params, e, expdict, _DEFAULT_VIDDIR, _DEFAULT_VIDDIR_SIL, logge
             intermediate_folder = os.listdir(camdir)
             camdir = os.path.join(camdir, intermediate_folder[0])
         video_files = os.listdir(camdir)
-        video_files = [f for f in video_files if ".mp4" in f]
+        video_files = [f for f in video_files if (".mp4" in f) and (f[0] != '_') and f[0] != '.']
         video_files = sorted(video_files, key=lambda x: int(x.split(".")[0]))
         chunks[str(e) + "_" + name] = np.sort(
             [int(x.split(".")[0]) for x in video_files]
