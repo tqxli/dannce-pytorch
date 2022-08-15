@@ -610,7 +610,11 @@ def add_dannce_shared_args(
         type=ast.literal_eval,
         dest="soft_silhouette",
     )
-
+    parser.add_argument(
+        "--dataset",
+        default="label3d",
+        dest="dataset"
+    )
     return parser
 
 

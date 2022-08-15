@@ -3,6 +3,8 @@ High-level wrapper functions for interface
 """
 import numpy as np
 import os, random
+import pandas as pd
+import json
 from copy import deepcopy
 from typing import Dict, Text
 import torch
@@ -896,3 +898,204 @@ def make_dataset_com_inference(params, predict_params):
     )
 
     return predict_generator, params, partition, camera_mats, cameras, datadict
+
+def _convert_pair_to_label3d(
+    root, metadata, camnames, 
+    experiments, total_n, count,
+    samples, datadict, datadict_3d, com3d_dict, cameras
+):
+    exps = []
+    for exp in tqdm(experiments):
+        filter = metadata["FolderPath"].str.contains(exp) & (~metadata["FolderPath"].str.contains("m")) 
+        candidates = metadata["FolderPath"][filter]
+        n_candidates = len(candidates)
+        print(candidates)
+        for can in candidates:
+            exps.append(can)
+            data = pd.read_csv(os.path.join(root, can, 'markerDataset.csv'))
+            good1 = data["goodFrame_an1"] == 1
+            good2 = data["goodFrame_an2"] == 1
+            good = good1 & good2
+            
+            pose3d1 = data.loc[:, data.columns.str.contains("absolutePosition_an1")].to_numpy()
+            pose3d2 = data.loc[:, data.columns.str.contains("absolutePosition_an2")].to_numpy() 
+            pose3d1 = np.transpose(np.reshape(pose3d1, (pose3d1.shape[0], -1, 3)), (0, 2, 1))
+            pose3d2 = np.transpose(np.reshape(pose3d2, (pose3d2.shape[0], -1, 3)), (0, 2, 1))
+            com3d1 = data.loc[:, data.columns.str.contains("centerOfmass_an1")].to_numpy() 
+            com3d2 = data.loc[:, data.columns.str.contains("centerOfmass_an2")].to_numpy() 
+
+            frames = np.arange(len(data))[good]
+            frames = np.random.choice(frames, total_n // n_candidates // 2)
+
+            sampleIDs_an1 = [str(count)+"_"+str(frame) for frame in frames]
+            sampleIDs_an2 = [str(count+1)+"_"+str(frame) for frame in frames] 
+            samples += sampleIDs_an1
+            samples += sampleIDs_an2
+
+            for j, samp in enumerate(sampleIDs_an1):
+                data, frame = {}, {}
+                for camidx, camname in enumerate(camnames):
+                    data[str(count)+"_"+camname] = np.ones((2, pose3d1.shape[1])) * np.nan
+                    frame[str(count)+"_"+camname] = frames[j]
+    
+                datadict[samp] = {"data": data, "frames": frame}
+                datadict_3d[samp] = pose3d1[frames][j]
+                com3d_dict[samp] = com3d1[frames][j]
+            
+            for j, samp in enumerate(sampleIDs_an2):
+                data, frame = {}, {}
+                for camidx, camname in enumerate(camnames):
+                    data[str(count+1)+"_"+camname] = np.ones((2, pose3d1.shape[1])) * np.nan
+                    frame[str(count+1)+"_"+camname] = frames[j]
+    
+                datadict[samp] = {"data": data, "frames": frame}
+                datadict_3d[samp] = pose3d2[frames][j]
+                com3d_dict[samp] = com3d2[frames][j]
+            
+            # load camera information
+            cameras[count] = {}
+            cameras[count+1] = {}
+            for i in range(1, 7):
+                campath = os.path.join(root, can, 'calibration', f"camera{i}_calibration.json")
+                camparam = json.load(open(campath))
+                newparam = {}
+                newparam["K"] = np.array(camparam["intrinsicMatrix"])
+                newparam["R"] = np.array(camparam["rotationMatrix"])
+                t = np.array(camparam["translationVector"]).T
+                newparam["t"] = t[np.newaxis, :]
+                newparam["RDistort"] = np.array(camparam["radialDistortion"]).T
+                newparam["TDistort"] = np.array(camparam["tangentialDistortion"]).T 
+
+                cameras[count][str(count)+"_"+f"Camera{i}"] = newparam
+                cameras[count+1][str(count+1)+"_"+f"Camera{i}"] = newparam 
+        
+        count += 2
+    return samples, datadict, datadict_3d, com3d_dict, cameras, exps
+
+def make_pair(
+    params,  
+    base_params,
+    shared_args,
+    shared_args_train,
+    shared_args_valid,
+    logger,
+    root="/media/mynewdrive/datasets/PAIR/PAIR-R24M-Dataset",
+    viddir='videos_merged',
+    train=True,
+):
+    experiments_train = ['SR1_SR2', 'SR1_SR3', 'SR1_SR4', 'SR2_SR3', 'SR2_SR4', 'SR3_SR4', 'SR9_SR10']
+    experiments_test = ['SR1_SR5', 'SR3_SR5', 'SR4_SR5']
+    
+    metadata = pd.read_csv(os.path.join(root, 'metadata.csv'))
+    camnames = [f"Camera{i}" for i in range(1, 7)]
+    all_exps = experiments_train + experiments_test
+    num_experiments = len(all_exps)
+    params["experiment"] = {}
+
+    # load data
+    samples = []
+    datadict, datadict_3d, com3d_dict  = {}, {}, {}
+    cameras = {}
+    partition = {}
+    pairs = None
+
+    samples, datadict, datadict_3d, com3d_dict, cameras, exps_train = _convert_pair_to_label3d(root, metadata, camnames, experiments_train, 50, 0, samples, datadict, datadict_3d, com3d_dict, cameras)
+    partition["train_sampleIDs"] = sorted(samples)
+    samples, datadict, datadict_3d, com3d_dict, cameras, exps_valid = _convert_pair_to_label3d(root, metadata, camnames, experiments_test, 10, len(experiments_train)*2, samples, datadict, datadict_3d, com3d_dict, cameras)
+    partition["valid_sampleIDs"] = sorted(list(set(samples) - set(partition["train_sampleIDs"])))
+    samples = np.array(samples)
+
+    vids = {}
+    total_chunks = {}
+    print("** Preparing video readers **")
+    exps = exps_train + exps_valid
+
+    for e in tqdm(range(len(exps))):
+        for name in camnames:
+            vidroot = os.path.join(root, exps[e], viddir, name)
+            video_files = os.listdir(vidroot)
+            video_files = sorted(video_files, key=lambda x: int(x.split("-")[-1].split(".mp4")[0]))
+            for i in range(2):
+                total_chunks[str(2*e+i) + "_" + name] = np.sort([
+                int(x.split("-")[-1].split(".mp4")[0]) for x in video_files])
+                vids[str(2*e+i) + "_" + name] = {}
+                for file in video_files:
+                    vids[str(2*e+i) + "_" + name][str(2*e+i) + "_" + name + "/0.mp4"] = os.path.join(vidroot, file)
+
+    new_camnames = {}
+    for e in range(2*num_experiments):
+        new_camnames[e] = [str(e)+"_"+camname for camname in camnames]
+    camnames = new_camnames
+
+    # Dump the params into file for reproducibility
+    processing.save_params_pickle(params)
+    # Setup additional variables for later use
+    tifdirs = []  # Training from single images not yet supported in this demo
+    # vid_exps = np.arange(num_experiments)
+    
+    # initialize needed videos
+    # vids = processing.initialize_all_vids(params, datadict, vid_exps, pathonly=True)
+
+    base_params = {
+        **base_params,
+        "camnames": camnames,
+        "vidreaders": vids,
+        "chunks": total_chunks,
+    }
+
+    # Prepare datasets and dataloaders
+    if params["use_npy"]:
+        NPY_DIRNAMES = ["image_volumes", "grid_volumes", "targets"]
+
+        TO_BE_EXAMINED = NPY_DIRNAMES
+        npydir, missing_npydir = {}, {}
+
+        for e, name in enumerate(all_exps):
+            # for social, cannot use the same default npy volume dir for both animals
+            for j in range(2):
+                npy_folder = os.path.join(root, "npy_folder", name+f"an{j+1}")
+                npydir[e+j] = npy_folder
+
+                # create missing npy directories
+                if not os.path.exists(npydir[e]):
+                    missing_npydir[e] = npydir[e]
+                    for dir in TO_BE_EXAMINED:
+                        os.makedirs(os.path.join(npydir[e], dir)) 
+                else:
+                    for dir in TO_BE_EXAMINED:
+                        dirpath = os.path.join(npydir[e], dir)
+                        if (not os.path.exists(dirpath)) or (len(os.listdir(dirpath)) == 0):
+                            missing_npydir[e] = npydir[e]
+                            os.makedirs(dirpath, exist_ok=True)
+
+        missing_samples = [samp for samp in samples if int(samp.split("_")[0]) in list(missing_npydir.keys())]
+        
+        # check any other missing npy samples
+        for samp in list(set(samples) - set(missing_samples)):
+            e, sampleID = int(samp.split("_")[0]), samp.split("_")[1]
+            if not os.path.exists(os.path.join(npydir[e], "image_volumes", f"0_{sampleID}.npy")):
+                missing_samples.append(samp)
+                missing_npydir[e] = npydir[e]
+
+        missing_samples = np.array(sorted(missing_samples))
+
+        train_generator, valid_generator = _make_data_npy(
+            params, base_params, shared_args, shared_args_train, shared_args_valid,
+            datadict, datadict_3d, com3d_dict, 
+            cameras, camnames, 
+            samples, partition, pairs, tifdirs, vids,
+            logger,
+            rat7m=True, rat7m_npy=[npydir, missing_npydir, missing_samples]
+        )
+    else:
+        train_generator, valid_generator = _make_data_mem(
+            params, base_params, shared_args, shared_args_train, shared_args_valid,
+            datadict, datadict_3d, com3d_dict, 
+            cameras, camnames, 
+            samples, partition, pairs, tifdirs, vids,
+            logger
+    ) 
+
+    train_dataloader, valid_dataloader = serve_data_DANNCE.setup_dataloaders(train_generator, valid_generator, params)
+     
+    return train_dataloader, valid_dataloader, len(camnames[0])
