@@ -8,8 +8,6 @@ import scipy.io as sio
 import torch
 import torchvision.transforms.functional as TF
 
-from dannce.engine.data.generator import MultiviewImageGenerator
-
 MISSING_KEYPOINTS_MSG = (
     "If mirror augmentation is used, the right_keypoints indices and left_keypoints "
     + "indices must be specified as well. "
@@ -1217,11 +1215,154 @@ class RAT7MSeqDataset(torch.utils.data.Dataset):
                 ax.clear()
         plt.close()
 
+class RAT7MImageDataset(torch.utils.data.Dataset):
+    def __init__(
+        self,
+        root="/media/mynewdrive/datasets/rat7m",
+        annot="final_annotations_w_correct_clusterIDs.pkl",
+        imgdir='images_unpacked',
+        train=True,
+        downsample=1,
+    ):
+        super().__init__()
+
+        self.root = root
+        self.train = train
+        experiments_train = ['s1-d1', 's2-d1', 's2-d2', 's3-d1', 's4-d1']
+        experiments_test = ['s5-d1', 's5-d2']
+        self.experiments = experiments_train + experiments_test
+
+        # load annotations from disk
+        self.annot_dict = annot_dict = np.load(os.path.join(root, annot), allow_pickle=True)
+
+        # select subjects
+        if train:
+            filter = np.where(annot_dict["table"]["subject_idx"] == 5)[0][::downsample]
+        else:
+            filter = np.where(annot_dict["table"]["subject_idx"] != 5)[0][::downsample]
+
+        labels, coms, impaths = [], [], []
+        for camname in annot_dict["camera_names"]:
+            labels.append(annot_dict["table"]["2D_keypoints"][camname][filter])
+            coms.append(annot_dict["table"]["2D_com"][camname][filter])
+            impaths.append(annot_dict["table"]["image_paths"][camname][filter])
+        self.labels = np.concatenate(labels)
+        self.coms = np.concatenate(coms)
+        self.impaths = np.concatenate(impaths)
+        self.n_samples = len(self.labels)
+        
+        self._prepare_cameras()
+
+        self.dim_out = [256, 256]
+        self.out_scale = 5
+        self.rotation_val = 15
+        
+    def __len__(self):
+        return self.n_samples
+    
+    def _prepare_cameras(self):
+        cameras = {}
+        camnames = self.annot_dict["camera_names"]
+        for i, expname in enumerate(self.experiments):
+            subject_idx, day_idx = expname.split('-')
+            subject_idx, day_idx = int(subject_idx[-1]), int(day_idx[-1])
+        
+            cameras[i] = {}
+            for camname in camnames:  
+                new_params = {}
+                old_params = self.annot_dict["cameras"][subject_idx][day_idx][camname]
+                new_params["K"] = old_params["IntrinsicMatrix"]
+                new_params["R"] = old_params["rotationMatrix"]
+                new_params["t"] = old_params["translationVector"]
+                new_params["RDistort"] = old_params["RadialDistortion"]
+                new_params["TDistort"] = old_params["TangentialDistortion"]
+                cameras[i][str(i)+"_"+camname] = new_params
+
+        self.cameras = cameras
+
+    def _crop_im(self, im, com, labels):
+        im, cropdim = processing.cropcom(im, com, size=self.dim_out[0]) 
+        labels[0, :] -= cropdim[2]
+        labels[1, :] -= cropdim[0]
+    
+        return im, labels
+
+    def _vis_heatmap(self, im, target, kpts2d):
+        import matplotlib
+        import matplotlib.pyplot as plt
+        matplotlib.use('TkAgg')
+
+        fig = plt.figure(figsize=(10, 10))
+        ax = fig.add_subplot(121)
+        ax.imshow(im.permute(1, 2, 0).numpy().astype(np.uint8))
+
+        ax.scatter(kpts2d[0], kpts2d[1])
+
+        ax = fig.add_subplot(122)
+        ax.imshow(target.sum(0).numpy())
+
+        plt.show(block=True)
+        input("Press Enter to continue...")
+
+    def __getitem__(self, idx):
+        impath = os.path.join(self.root, self.impaths[idx])
+        im = cv2.imread(impath)
+        im = cv2.cvtColor(im, cv2.COLOR_BGR2RGB)
+
+        labels = np.transpose(self.labels[idx], (1, 0))
+        com = self.coms[idx]
+        im, labels = self._crop_im(im, com, labels)
+
+        # generate gaussian targets
+        (x_coord, y_coord) = np.meshgrid(
+            np.arange(self.dim_out[1]), np.arange(self.dim_out[0])
+        )
+        
+        targets = []
+        for joint in range(labels.shape[-1]):
+            target = np.exp(
+                    -(
+                        (y_coord - labels[1, joint]) ** 2
+                        + (x_coord - labels[0, joint]) ** 2
+                    )
+                    / (2 * self.out_scale ** 2)
+                )
+            targets.append(target)
+
+        targets = np.stack(targets, axis=0)
+        im = processing._preprocess_numpy_input(im)
+
+        im, targets = torch.from_numpy(im).permute(2, 0, 1).float(), torch.from_numpy(targets).float()
+
+        # apply transformations
+        #rot = self.rotation_val * (np.random.rand() * 2 - 1) if self.train else 0
+        #im = TF.affine(im, angle=rot, translate=[0, 0], scale=1.0, shear=0)
+        #target = TF.affine(im, angle=rot, translate=[0, 0], scale=1.0, shear=0)
+
+        # self._vis_heatmap(im, targets, labels)
+
+        return im, targets
+
+
 if __name__ == "__main__":
     import time
 
+    # start = time.time()
+    # rat7m_dataset = RAT7MSeqDataset(downsample=1)
+    # print("initialization: ", time.time()-start)
+
+    # n_samples = len(rat7m_dataset)
+    # print(n_samples)
+
+    # idx = np.random.choice(n_samples)
+
+    # seq = rat7m_dataset.__getitem__(idx)
+    # print(seq.shape)
+
+    # RAT7MSeqDataset.vis_seq(seq, '/media/mynewdrive/datasets/rat7m/vis', idx)
+
     start = time.time()
-    rat7m_dataset = RAT7MSeqDataset(downsample=1)
+    rat7m_dataset = RAT7MImageDataset()
     print("initialization: ", time.time()-start)
 
     n_samples = len(rat7m_dataset)
@@ -1229,7 +1370,6 @@ if __name__ == "__main__":
 
     idx = np.random.choice(n_samples)
 
-    seq = rat7m_dataset.__getitem__(idx)
-    print(seq.shape)
-
-    RAT7MSeqDataset.vis_seq(seq, '/media/mynewdrive/datasets/rat7m/vis', idx)
+    X, y = rat7m_dataset.__getitem__(idx)
+    print(X.shape)
+    print(y.shape)

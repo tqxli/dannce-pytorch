@@ -1,11 +1,8 @@
-import numpy as np
 import torch
 import csv, os
-import imageio
 from tqdm import tqdm
 
 from dannce.engine.trainer.dannce_trainer import DannceTrainer
-from dannce.engine.trainer.train_utils import prepare_batch
 
 class COMTrainer(DannceTrainer):
     def __init__(self, **kwargs):
@@ -32,7 +29,7 @@ class COMTrainer(DannceTrainer):
                 stats.append(train_stats[k])
                     
             result_msg = f"Epoch[{epoch}/{self.epochs}] " \
-                + "".join(f"train_{k}: {val:.4f} " for k, val in train_stats.items()) 
+                + "".join(f"train_{k}: {val:.6f} " for k, val in train_stats.items()) 
             
             # validation
             valid_stats= self._valid_epoch(epoch)
@@ -41,7 +38,7 @@ class COMTrainer(DannceTrainer):
                 stats.append(valid_stats[k])
                     
             result_msg = result_msg \
-                + "".join(f"val_{k}: {val:.4f} " for k, val in valid_stats.items()) 
+                + "".join(f"val_{k}: {val:.6f} " for k, val in valid_stats.items()) 
             self.logger.info(result_msg)
 
             # write stats to csv
@@ -65,7 +62,7 @@ class COMTrainer(DannceTrainer):
             
             imgs, gt = batch[0].to(self.device), batch[1].to(self.device)
             pred = self.model(imgs)
-            
+
             total_loss, loss_dict = self.loss.compute_loss(gt, pred, pred)
             result = f"Epoch[{epoch}/{self.epochs}] " + "".join(f"train_{loss}: {val:.6f} " for loss, val in loss_dict.items())
             pbar.set_description(result)
@@ -80,7 +77,8 @@ class COMTrainer(DannceTrainer):
                 epoch_metric_dict = self._update_step(epoch_metric_dict, metric_dict)
 
         if self.lr_scheduler is not None:
-            self.lr_scheduler.step()
+            if self.params["lr_scheduler"]["type"] != "ReduceLROnPlateau":
+                self.lr_scheduler.step()
 
         epoch_loss_dict, epoch_metric_dict = self._average(epoch_loss_dict), self._average(epoch_metric_dict)
         return {**epoch_loss_dict, **epoch_metric_dict}
@@ -97,7 +95,7 @@ class COMTrainer(DannceTrainer):
                 imgs, gt = batch[0].to(self.device), batch[1].to(self.device)
                 pred = self.model(imgs)
 
-                _, loss_dict = self.loss.compute_loss(gt, pred, pred)
+                total_loss, loss_dict = self.loss.compute_loss(gt, pred, pred)
                 result = f"Epoch[{epoch}/{self.epochs}] " + "".join(f"train_{loss}: {val:.6f} " for loss, val in loss_dict.items())
                 pbar.set_description(result)
 
@@ -106,6 +104,10 @@ class COMTrainer(DannceTrainer):
                 if len(self.metrics.names) != 0: 
                     metric_dict = self.metrics.evaluate(pred.detach().cpu().numpy(), gt.clone().cpu().numpy())
                     epoch_metric_dict = self._update_step(epoch_metric_dict, metric_dict)
+        
+        if self.lr_scheduler is not None:
+            if self.params["lr_scheduler"]["type"] == "ReduceLROnPlateau":
+                self.lr_scheduler.step(total_loss)
         
         epoch_loss_dict, epoch_metric_dict = self._average(epoch_loss_dict), self._average(epoch_metric_dict)
         return {**epoch_loss_dict, **epoch_metric_dict}

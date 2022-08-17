@@ -2,6 +2,7 @@
 import dannce.run.train_voxelpose as voxelpose
 import dannce.run.train_motiondannce as motiondannce
 import dannce.run.train_backbone2d as backbone2d
+import dannce.run.train_pose2d as pose2d
 import dannce.run.train_dannce_dbbox as dbbox
 import dannce.run.train_posegcn as posegcn
 import dannce.run.train_transformer as trans
@@ -160,6 +161,7 @@ def custom_model_train_cli():
         'posegcn': posegcn.train,
         'transformer': trans.train,
         'socialattn': socialattn.train,
+        'pose2d': pose2d.train,
     }
 
     parser = argparse.ArgumentParser(
@@ -177,6 +179,7 @@ def custom_model_predict_cli():
         'posegcn': posegcn.predict,
         'posegcn-multi': posegcn.predict_multi_animal,
         'socialattn': socialattn.predict,
+        'pose2d': pose2d.predict,
     }
 
     parser = argparse.ArgumentParser(
