@@ -9,6 +9,7 @@ from dannce.engine.data import processing
 from dannce.engine.data.processing import savedata_tomat, savedata_expval
 import dannce.config as config
 import dannce.engine.models.posegcn.nets as gcn_nets
+from dannce.engine.models.social.nets import SocialXAttn
 from dannce.engine.models.nets import initialize_model, initialize_train
 from dannce.engine.trainer.posegcn_trainer import GCNTrainer
 from dannce.config import print_and_set
@@ -83,8 +84,25 @@ def train(params: Dict):
     logger.info("Initializing Network...")
 
     # first stage: pose generator    
-    params["use_features"] = custom_model_params.get("use_features", False)    
-    pose_generator = initialize_train(params, n_cams, 'cpu', logger)[0]
+    if custom_model_params.get("social_attn", False):
+        params_attn = deepcopy(params)
+        params_attn["use_features"] = True
+        params_attn["train_mode"] = "new"
+        pose_generator = initialize_train(params_attn, n_cams, 'cpu', logger)[0]
+        pose_generator = SocialXAttn(pose_generator, gcn=True)
+        
+        ckpt = torch.load(params["dannce_finetune_weights"])["state_dict"]
+        try:
+            pose_generator.load_state_dict(ckpt)
+        except:
+            logger.info("Cannot load checkpoints for the social attention model")
+            
+        # for name, param in pose_generator.named_parameters():
+        #     if 'linear_pose' not in name:
+        #         param.requires_grad = False
+    else:
+        params["use_features"] = custom_model_params.get("use_features", False)    
+        pose_generator = initialize_train(params, n_cams, 'cpu', logger)[0]
 
     # second stage: pose refiner
     model_class = getattr(gcn_nets, custom_model_params.get("model", "PoseGCN"))
@@ -92,7 +110,7 @@ def train(params: Dict):
         custom_model_params,
         pose_generator,
         n_instances=n_instances,
-        n_joints=params["n_channels_out"],
+        n_joints=params["n_channels_out"] // 2 if custom_model_params.get("social_attn", False) else params["n_channels_out"],
         t_dim=params.get("temporal_chunk_size", 1),
     )
     if 'checkpoint' in custom_model_params.keys():
@@ -127,6 +145,8 @@ def train(params: Dict):
         multi_stage=(custom_model_params.get("model") == "PoseGCN_MultiStage"),
         relpose=custom_model_params.get("relpose", True),
         dual_sup=custom_model_params.get("dual_sup", False),
+        reg=custom_model_params.get("reg", False),
+        reg_weight=custom_model_params.get("reg_weight", 0.1)
     )
 
     trainer.train()

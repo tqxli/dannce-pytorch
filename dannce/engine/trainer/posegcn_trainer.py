@@ -8,7 +8,7 @@ import dannce.engine.models.loss as custom_losses
 from dannce.engine.inference import form_batch
 
 class GCNTrainer(DannceTrainer):
-    def __init__(self, predict_diff=True, multi_stage=False, relpose=True, dual_sup=False, **kwargs):
+    def __init__(self, predict_diff=True, multi_stage=False, relpose=True, dual_sup=False, reg=False, reg_weight=0.1, **kwargs):
         super().__init__(**kwargs)
 
         # GCN-specific training options
@@ -16,6 +16,9 @@ class GCNTrainer(DannceTrainer):
         self.multi_stage = multi_stage
         self.relpose = relpose
         self.dual_sup = dual_sup and relpose
+
+        self.reg = reg & (not predict_diff)
+        self.reg_weight = reg_weight
 
         # adjust loss functions and attributes
         if predict_diff or multi_stage or relpose:
@@ -30,6 +33,8 @@ class GCNTrainer(DannceTrainer):
             self._add_loss_attr(["Stage1L1DiffLoss", "Stage2L1DiffLoss", "Stage3L1DiffLoss"])
         elif self.multi_stage:
             self._add_loss_attr(["Stage1L1Loss", "Stage2L1Loss", "Stage3L1Loss"])
+        elif self.reg:
+            self._add_loss_attr(["RegLoss"])
         
         if not self.dual_sup:
             try:
@@ -107,10 +112,18 @@ class GCNTrainer(DannceTrainer):
                 
                 if not self.predict_diff:    
                     loss_sup = self.loss_sup(keypoints_3d_gt_rel, keypoints_3d_pred)
+                    if self.reg:
+                        init_poses_rel = (init_poses - com3d) / vsize
+                        loss_reg = self.reg_weight * self.loss_sup(init_poses_rel, keypoints_3d_pred)
+
                     keypoints_3d_pred = keypoints_3d_pred * vsize + com3d
                     total_loss, loss_dict = self.loss.compute_loss(keypoints_3d_gt, keypoints_3d_pred, heatmaps, grid_centers, aux)
                     total_loss += loss_sup
                     loss_dict["L1Loss"] = loss_sup.clone().detach().cpu().item()
+
+                    if self.reg:
+                        total_loss += loss_reg
+                        loss_dict["RegLoss"] = loss_reg.clone().detach().cpu().item()
                 else:
                     diff_gt_rel = (keypoints_3d_gt - init_poses) / vsize
                     diff_loss = self.loss_sup(diff_gt_rel, keypoints_3d_pred)
@@ -208,10 +221,16 @@ class GCNTrainer(DannceTrainer):
                     keypoints_3d_gt_rel = (keypoints_3d_gt - com3d) / vsize
 
                     if not self.predict_diff:
+                        if self.reg:
+                            init_poses_rel = (init_poses - com3d) / vsize
+                            loss_reg = self.reg_weight * self.loss_sup(init_poses_rel, keypoints_3d_pred)
                         loss_sup = self.loss_sup(keypoints_3d_gt_rel, keypoints_3d_pred)
                         keypoints_3d_pred = keypoints_3d_pred * vsize + com3d
                         _, loss_dict = self.loss.compute_loss(keypoints_3d_gt, keypoints_3d_pred, heatmaps, grid_centers, aux)
                         loss_dict["L1Loss"] = loss_sup.clone().detach().cpu().item()
+                        if self.reg:
+                            # total_loss += loss_reg
+                            loss_dict["RegLoss"] = loss_reg.clone().detach().cpu().item()
                     else:
                         diff_gt_rel = (keypoints_3d_gt - init_poses) / vsize
                         diff_loss = self.loss_sup(diff_gt_rel, keypoints_3d_pred)

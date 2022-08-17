@@ -60,15 +60,22 @@ class PoseGCN(nn.Module):
 
         # construct GCN layers
         self.use_features = use_features = model_params.get("use_features", False)
+        self.fusion_mlp = fusion_mlp = model_params.get("fusion_mlp", False)
         self.mlp_out = mlp_out = model_params.get("mlp_out", False)
 
         # self.gconv_input = _GraphConv(adj, input_dim, hid_dim, dropout, base_block=base_block, norm_type=norm_type)
         self.gconv_input = []
-        self.compressed = self.pose_generator.compressed
+        try:
+            self.compressed = self.pose_generator.compressed
+        except: 
+            self.compressed = self.pose_generator.posenet.compressed
         # use multi-scale features extracted from decoder layers
         if use_features:
             self.multi_scale_fdim = 128+64+32 if self.compressed else 256+128+64
-            self.fusion_layer = nn.Conv1d(self.multi_scale_fdim, fuse_dim, kernel_size=1)
+            if fusion_mlp:
+                self.fusion_layer = MLP(self.multi_scale_fdim, [256, 512], fuse_dim, 3)
+            else:
+                self.fusion_layer = nn.Conv1d(self.multi_scale_fdim, fuse_dim, kernel_size=1)
             self.gconv_input.append(_GraphConv(adj, input_dim+fuse_dim, hid_dim, dropout, base_block, norm_type))
         else:
             self.gconv_input.append(_GraphConv(adj, input_dim, hid_dim, dropout, base_block, norm_type))
@@ -154,8 +161,12 @@ class PoseGCN(nn.Module):
                 f2 = f2.reshape(*f2.shape[:2], -1)
                 f1 = f1.reshape(-1, self.n_instances, *f1.shape[1:]).permute(0, 2, 1, 3)
                 f1 = f1.reshape(*f1.shape[:2], -1)
-
-            f = self.fusion_layer(torch.cat((f3, f2, f1), dim=1))
+            
+            if self.fusion_mlp:
+                f = self.fusion_layer(torch.cat((f3, f2, f1), dim=1).permute(0, 2, 1))
+                f = f.permute(0, 2, 1)
+            else:
+                f = self.fusion_layer(torch.cat((f3, f2, f1), dim=1))
 
             x = torch.cat((f.permute(0, 2, 1), x), dim=-1)
         
