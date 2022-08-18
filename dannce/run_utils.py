@@ -11,7 +11,7 @@ import torch
 
 from dannce.engine.data import serve_data_DANNCE, dataset, generator, processing
 from dannce.engine.models.segmentation import get_instance_segmentation_model
-from dannce.engine.data.processing import _DEFAULT_SEG_MODEL
+from dannce.engine.data.processing import _DEFAULT_SEG_MODEL, mask_coords_outside_volume
 
 import imageio
 from tqdm import tqdm
@@ -136,6 +136,9 @@ def make_dataset(
         # params["social_training"] = False
         params["n_channels_out"] *= 2
         base_params["n_channels_out"] *= 2
+
+        pairs = None
+        params["social_training"] = False
 
     # Dump the params into file for reproducibility
     processing.save_params_pickle(params)
