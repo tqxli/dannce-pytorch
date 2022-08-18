@@ -126,17 +126,22 @@ class GCNTrainer(DannceTrainer):
                         loss_dict["RegLoss"] = loss_reg.clone().detach().cpu().item()
                 else:
                     diff_gt_rel = (keypoints_3d_gt - init_poses) / vsize
-                    diff_loss = self.loss_sup(diff_gt_rel, keypoints_3d_pred)
+                    diff_gt_rel_valid = diff_gt_rel[..., :keypoints_3d_pred.shape[-1]]
+                    diff_loss = self.loss_sup(diff_gt_rel_valid, keypoints_3d_pred)
 
                     # scale back to original, so that bone length loss can be correctly computed
                     keypoints_3d_pred = keypoints_3d_pred * vsize #+ com3d
-                    total_loss, loss_dict = self.loss.compute_loss(keypoints_3d_gt, init_poses + keypoints_3d_pred, heatmaps, grid_centers, aux)
+                    keypoints_3d_gt_valid = keypoints_3d_gt[..., :keypoints_3d_pred.shape[-1]]
+                    init_poses_valid = init_poses[..., :keypoints_3d_pred.shape[-1]]
+                    # breakpoint()
+                    total_loss, loss_dict = self.loss.compute_loss(
+                        keypoints_3d_gt_valid, 
+                        init_poses_valid + keypoints_3d_pred, 
+                        heatmaps, grid_centers, aux)
                     total_loss += diff_loss
                     loss_dict["L1DiffLoss"] = diff_loss.clone().detach().cpu().item()
                     
                     if self.dual_sup:
-                        init_poses_rel = (init_poses - com3d) / vsize
-                        diff_gt_rel = keypoints_3d_gt_rel - init_poses_rel
                         pose_loss = 0.1 * self.loss_sup(keypoints_3d_gt, init_poses)
                         total_loss += pose_loss
                         loss_dict["L1Loss"] = pose_loss.clone().detach().cpu().item()
@@ -154,8 +159,8 @@ class GCNTrainer(DannceTrainer):
             if len(self.metrics.names) != 0: 
                 if self.predict_diff and (not self.multi_stage):
                     metric_dict = self.metrics.evaluate(
-                        (init_poses+keypoints_3d_pred).detach().cpu().numpy(), 
-                        keypoints_3d_gt.clone().cpu().numpy()
+                        (init_poses_valid+keypoints_3d_pred).detach().cpu().numpy(), 
+                        keypoints_3d_gt_valid.clone().cpu().numpy()
                     )
                 elif self.predict_diff and self.multi_stage:
                     metric_dict = self.metrics.evaluate(
@@ -233,15 +238,17 @@ class GCNTrainer(DannceTrainer):
                             loss_dict["RegLoss"] = loss_reg.clone().detach().cpu().item()
                     else:
                         diff_gt_rel = (keypoints_3d_gt - init_poses) / vsize
-                        diff_loss = self.loss_sup(diff_gt_rel, keypoints_3d_pred)
+                        diff_gt_rel_valid = diff_gt_rel[..., :keypoints_3d_pred.shape[-1]]
+                        diff_loss = self.loss_sup(diff_gt_rel_valid, keypoints_3d_pred)
 
                         # scale back to original, so that bone length loss can be correctly computed
                         keypoints_3d_pred = keypoints_3d_pred * vsize #+ com3d
-                        _, loss_dict = self.loss.compute_loss(keypoints_3d_gt, init_poses + keypoints_3d_pred, heatmaps, grid_centers, aux)
+                        keypoints_3d_gt_valid = keypoints_3d_gt[..., :keypoints_3d_pred.shape[-1]]
+                        init_poses_valid = init_poses[..., :keypoints_3d_pred.shape[-1]]
+
+                        _, loss_dict = self.loss.compute_loss(keypoints_3d_gt_valid, init_poses_valid + keypoints_3d_pred, heatmaps, grid_centers, aux)
                         loss_dict["L1DiffLoss"] = diff_loss.clone().detach().cpu().item()
                         if self.dual_sup:
-                            init_poses_rel = (init_poses - com3d) / vsize
-                            diff_gt_rel = keypoints_3d_gt_rel - init_poses_rel
                             pose_loss = 0.1 * self.loss_sup(keypoints_3d_gt, init_poses)
                             loss_dict["L1Loss"] = pose_loss.clone().detach().cpu().item()
                 else:
@@ -252,8 +259,8 @@ class GCNTrainer(DannceTrainer):
                 if len(self.metrics.names) != 0: 
                     if self.predict_diff and (not self.multi_stage):
                         metric_dict = self.metrics.evaluate(
-                            (init_poses+keypoints_3d_pred).detach().cpu().numpy(), 
-                            keypoints_3d_gt.clone().cpu().numpy()
+                            (init_poses_valid+keypoints_3d_pred).detach().cpu().numpy(), 
+                            keypoints_3d_gt_valid.clone().cpu().numpy()
                         )
                     elif self.predict_diff and self.multi_stage:
                         metric_dict = self.metrics.evaluate(

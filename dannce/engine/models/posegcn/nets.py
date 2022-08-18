@@ -230,6 +230,20 @@ class PoseGCN_MultiStage(PoseGCN):
 
         return init_poses, poses, heatmaps        
 
+class PoseGCNEx(PoseGCN):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+    
+    def forward(self, volumes, grid_centers):
+        # initial pose generation from encoder-decoder
+        init_poses, heatmaps, inter_features = self.pose_generator(volumes, grid_centers)
+        init_poses_cut, heatmaps_cut = init_poses[:, :, :23], heatmaps[:, :23]
+        
+        final_poses = self.inference(init_poses_cut, grid_centers, heatmaps_cut, inter_features)
+
+        # print("Mean Euclidean correction:", torch.norm(final_poses, dim=1).mean())
+        return init_poses, final_poses, heatmaps
+
 class PoseGraphUNet(nn.Module):
     def __init__(self, 
             model_params,
