@@ -84,6 +84,49 @@ def make_dataset(
     if params["social_training"]:
         partition, pairs = processing.resplit_social(partition)
 
+    if params.get("social_big_volume", False):  
+        vmin, vmax = params["vmin"], params["vmax"]
+        threshold = (vmax-vmin) / 2
+
+        new_datadict3d, new_comdict3d = {}, {}
+        new_partition = {}
+        samples = []
+        partition_names = ["train_sampleIDs", "valid_sampleIDs"]
+        for i, (k, v) in enumerate(pairs.items()):
+            samps = []
+            for (vol1, vol2) in v:
+                anchor1, anchor2 = com3d_dict[vol1], com3d_dict[vol2]
+                pose3d1, pose3d2 = datadict_3d[vol1], datadict_3d[vol2]
+                anchor1, anchor2 = anchor1[:, np.newaxis], anchor2[:, np.newaxis]
+                dist = np.sqrt(np.sum((anchor1 - anchor2) **2))
+                # if two COMs are close enough
+                if dist <= threshold:
+                    # replace w/ their averaged position
+                    new_com = (anchor1+anchor2) / 2
+                    primary = pose3d1 if anchor1[0] < anchor2[0] else pose3d2
+                    secondary = pose3d2 if anchor1[0] < anchor2[0] else pose3d1
+                    # discard unneeded sampleIDs and get correct pose 3d
+                    new_pose3d = np.concatenate((primary, secondary), axis=-1) #[3, 46]
+                    new_datadict3d[vol1] = processing.mask_coords_outside_volume(vmin-threshold/2, vmax+threshold/2, new_pose3d, new_com)
+                    new_comdict3d[vol1] = np.squeeze(new_com)
+                    samps.append(vol1)
+            new_partition[partition_names[i]] = samps
+            samples += samps
+
+        datadict_3d = new_datadict3d
+        com3d_dict = new_comdict3d
+        samples = np.array(sorted(samples))
+        partition = new_partition
+        pairs = None
+
+        params["n_channels_out"] *= 2
+        base_params["n_channels_out"] *= 2
+        params["vmin"] = vmin - threshold/2
+        params["vmax"] = vmax + threshold/2
+        base_params["vmin"] = params["vmin"]
+        base_params["vmax"] = params["vmax"]
+        params["social_training"] = False
+
     if params.get("social_joint_training", False):
         # OPTION1: only choose volumes with both animals present
         # partition, com3d_dict, datadict_3d, samples = processing.filter_com3ds(pairs, com3d_dict, datadict_3d)

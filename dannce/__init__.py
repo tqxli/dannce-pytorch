@@ -115,6 +115,7 @@ _param_defaults_dannce = {
     "social_training": False,
     "downscale_occluded_view": False,
     "social_joint_training": False,
+    "social_big_volume": False,
     ## test time training
     "inference_ttt": None,
     ## augmentation
