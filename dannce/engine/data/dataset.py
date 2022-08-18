@@ -1,4 +1,5 @@
 import os
+import random
 import cv2
 import numpy as np
 from dannce.engine.data import processing
@@ -7,6 +8,7 @@ import scipy.io as sio
 
 import torch
 import torchvision.transforms.functional as TF
+import torchvision.transforms as transforms
 
 MISSING_KEYPOINTS_MSG = (
     "If mirror augmentation is used, the right_keypoints indices and left_keypoints "
@@ -969,9 +971,11 @@ class ImageDataset(torch.utils.data.Dataset):
     def __init__(self, 
         num_joints, 
         imdir=None, labeldir=None, images=None, labels=None, 
-        return_Gaussian=True, sigma=2,
+        return_Gaussian=True, 
+        sigma=2,
         image_size=[256, 256],
         heatmap_size=[64, 64],
+        train=True
     ):
         super(ImageDataset, self).__init__()
         self.images = images
@@ -993,6 +997,9 @@ class ImageDataset(torch.utils.data.Dataset):
 
         self.image_size = np.array(image_size)
         self.heatmap_size = np.array(heatmap_size)
+
+        self.train = train
+        self._transforms()
 
     def __len__(self):
         if self.read_frommem:
@@ -1058,10 +1065,18 @@ class ImageDataset(torch.utils.data.Dataset):
         
         return target, target_weight
 
+    def _transforms(self):
+        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                        std=[0.229, 0.224, 0.225])
+        self.transforms = transforms.Compose([
+            # transforms.ToTensor(),
+            normalize,
+        ])
+
     def __getitem__(self, idx):
         if self.read_frommem:
             # im_ori = self.images[idx]
-            im = processing.preprocess_3d(self.images[idx].clone())
+            im = self.images[idx].clone() #processing.preprocess_3d(self.images[idx].clone())
             kpts2d = self.labels[idx]
         else:
             im = cv2.imread(
@@ -1092,14 +1107,59 @@ class ImageDataset(torch.utils.data.Dataset):
             kpts2d[0, :] *= (im.shape[1] / ori_size[1])
             kpts2d[1, :] *= (im.shape[0] / ori_size[0])
 
-        im, kpts2d = torch.from_numpy(im).permute(2, 0, 1).float(), torch.from_numpy(kpts2d)
+        im = im # self.transforms(im).float()
+        # kpts2d = torch.from_numpy(kpts2d)
 
         if self.return_Gaussian:
-            target, target_weight = self._generate_Gaussian_target(kpts2d)
-            # breakpoint()
-            # self._vis_heatmap(im, target, kpts2d)
+            # generate gaussian targets
+            labels = kpts2d.numpy()
+            (x_coord, y_coord) = np.meshgrid(
+                np.arange(self.heatmap_size[1]), np.arange(self.heatmap_size[0])
+            )
             
-            return im, target
+            targets = []
+            for joint in range(labels.shape[-1]):
+                # target = np.zeros((self.dim_out[0], self.dim_out[1]))
+                if np.isnan(labels[:, joint]).sum() == 0:
+                    target = np.exp(
+                            -(
+                                (y_coord - labels[1, joint] // 4) ** 2
+                                + (x_coord - labels[0, joint] // 4) ** 2
+                            )
+                            / (2 * self.sigma ** 2)
+                        )
+                else:
+                    target = np.zeros((self.heatmap_size[1], self.heatmap_size[0]))
+                # tmp_size = 3*self.out_scale
+
+                #target[-tmp_size+int(labels[1, joint]):tmp_size+int(labels[1, joint]), -tmp_size+int(labels[0, joint]):tmp_size+int(labels[0, joint])] *= 10
+                # = g[]
+                targets.append(target)
+            # crop out and keep the max to be 1 might still work...
+            targets = np.stack(targets, axis=0)
+            targets = torch.from_numpy(targets).float()
+            # target, target_weight = self._generate_Gaussian_target(kpts2d)
+            # breakpoint()
+            
+            if self.train:
+                if random.random() > 0.5:
+                    im = TF.hflip(im)
+                    targets = TF.hflip(targets)
+
+                # Random vertical flipping
+                if random.random() > 0.5:
+                    im = TF.vflip(im)
+                    targets = TF.vflip(targets)
+
+                # Random rotation
+                if random.random() > 0.5:
+                    rot = random.randint(0, 3) * 90
+                    if rot != 0:
+                        im = TF.rotate(im, rot)
+                        targets = TF.rotate(targets, rot)
+            
+            # self._vis_heatmap(im, targets, kpts2d)
+            return im, targets
 
         return im, kpts2d
 
@@ -1237,9 +1297,9 @@ class RAT7MImageDataset(torch.utils.data.Dataset):
 
         # select subjects
         if train:
-            filter = np.where(annot_dict["table"]["subject_idx"] == 5)[0][::downsample]
-        else:
             filter = np.where(annot_dict["table"]["subject_idx"] != 5)[0][::downsample]
+        else:
+            filter = np.where(annot_dict["table"]["subject_idx"] == 5)[0][::downsample]
 
         labels, coms, impaths = [], [], []
         for camname in annot_dict["camera_names"]:
@@ -1252,10 +1312,14 @@ class RAT7MImageDataset(torch.utils.data.Dataset):
         self.n_samples = len(self.labels)
         
         self._prepare_cameras()
+        self._transforms()
 
+        self.dim_crop = [512, 512]
         self.dim_out = [256, 256]
-        self.out_scale = 5
+
+        self.out_scale = 2
         self.rotation_val = 15
+        self.ds_fac = self.dim_crop[0] / self.dim_out[0]
         
     def __len__(self):
         return self.n_samples
@@ -1281,11 +1345,19 @@ class RAT7MImageDataset(torch.utils.data.Dataset):
         self.cameras = cameras
 
     def _crop_im(self, im, com, labels):
-        im, cropdim = processing.cropcom(im, com, size=self.dim_out[0]) 
+        im, cropdim = processing.cropcom(im, com, size=self.dim_crop[0]) 
         labels[0, :] -= cropdim[2]
         labels[1, :] -= cropdim[0]
     
         return im, labels
+    
+    def _transforms(self):
+        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                        std=[0.229, 0.224, 0.225])
+        self.transforms = transforms.Compose([
+            transforms.ToTensor(),
+            normalize,
+        ])
 
     def _vis_heatmap(self, im, target, kpts2d):
         import matplotlib
@@ -1313,26 +1385,56 @@ class RAT7MImageDataset(torch.utils.data.Dataset):
         com = self.coms[idx]
         im, labels = self._crop_im(im, com, labels)
 
+        im = processing.downsample_batch(im[np.newaxis, ...], fac=self.ds_fac)
+        im = np.squeeze(im)
+        labels /= self.ds_fac
+
         # generate gaussian targets
         (x_coord, y_coord) = np.meshgrid(
-            np.arange(self.dim_out[1]), np.arange(self.dim_out[0])
+            np.arange(self.dim_out[1] // 4), np.arange(self.dim_out[0] // 4)
         )
         
         targets = []
         for joint in range(labels.shape[-1]):
+            # target = np.zeros((self.dim_out[0], self.dim_out[1]))
             target = np.exp(
                     -(
-                        (y_coord - labels[1, joint]) ** 2
-                        + (x_coord - labels[0, joint]) ** 2
+                        (y_coord - labels[1, joint] // 4) ** 2
+                        + (x_coord - labels[0, joint] // 4) ** 2
                     )
                     / (2 * self.out_scale ** 2)
                 )
+            # tmp_size = 3*self.out_scale
+
+            #target[-tmp_size+int(labels[1, joint]):tmp_size+int(labels[1, joint]), -tmp_size+int(labels[0, joint]):tmp_size+int(labels[0, joint])] *= 10
+            # = g[]
             targets.append(target)
-
+        # crop out and keep the max to be 1 might still work...
         targets = np.stack(targets, axis=0)
-        im = processing._preprocess_numpy_input(im)
 
-        im, targets = torch.from_numpy(im).permute(2, 0, 1).float(), torch.from_numpy(targets).float()
+        # im = np.transpose(im, (2, 0, 1))
+        im = self.transforms(im).float()
+        targets = torch.from_numpy(targets).float()
+
+        # Random horizontal flipping
+        if self.train:
+            if random.random() > 0.5:
+                im = TF.hflip(im)
+                targets = TF.hflip(targets)
+
+            # Random vertical flipping
+            if random.random() > 0.5:
+                im = TF.vflip(im)
+                targets = TF.vflip(targets)
+
+            # Random rotation
+            if random.random() > 0.5:
+                rot = random.randint(0, 3) * 90
+                if rot != 0:
+                    im = TF.rotate(im, rot)
+                    targets = TF.rotate(targets, rot)
+        # im = processing._preprocess_numpy_input(im)
+        #im, targets = torch.from_numpy(im).permute(2, 0, 1).float(), 
 
         # apply transformations
         #rot = self.rotation_val * (np.random.rand() * 2 - 1) if self.train else 0
@@ -1362,7 +1464,7 @@ if __name__ == "__main__":
     # RAT7MSeqDataset.vis_seq(seq, '/media/mynewdrive/datasets/rat7m/vis', idx)
 
     start = time.time()
-    rat7m_dataset = RAT7MImageDataset()
+    rat7m_dataset = RAT7MImageDataset(train=False)
     print("initialization: ", time.time()-start)
 
     n_samples = len(rat7m_dataset)
@@ -1373,3 +1475,17 @@ if __name__ == "__main__":
     X, y = rat7m_dataset.__getitem__(idx)
     print(X.shape)
     print(y.shape)
+
+    # import matplotlib
+    # import matplotlib.pyplot as plt
+    # matplotlib.use('TkAgg')
+
+    # fig = plt.figure(figsize=(10, 10))
+    # ax = fig.add_subplot(121)
+    # ax.imshow(X.permute(1, 2, 0).numpy().astype(np.uint8))
+
+    # ax = fig.add_subplot(122)
+    # ax.imshow(y.sum(0).numpy())
+
+    # plt.show(block=True)
+    # input("Press Enter to continue...")

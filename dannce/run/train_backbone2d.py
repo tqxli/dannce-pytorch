@@ -15,12 +15,12 @@ from dannce.engine.logging.logger import setup_logging, get_logger
 process = psutil.Process(os.getpid())
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "1"
 
-def load_data2d_into_mem(params, logger, partition, n_cams, generator, train=True):
+def load_data2d_into_mem(params, logger, partition, n_cams, generator, image_size=512, train=True):
     n_samples = len(partition["train_sampleIDs"]) if train else len(partition["valid_sampleIDs"]) 
     message = "Loading training data into memory" if train else "Loading validation data into memory"
 
     # initialize
-    X = torch.empty((n_samples, n_cams, params["chan_num"], 512, 512), dtype=torch.float32)
+    X = torch.empty((n_samples, n_cams, params["chan_num"], image_size, image_size), dtype=torch.float32)
     y = torch.empty((n_samples, n_cams, 2, params["n_channels_out"]), dtype=torch.float32)
     
     # load data from generator

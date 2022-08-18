@@ -52,7 +52,7 @@ class DecoderBlock(nn.Module):
 
 class SLEAPUNet(nn.Module):
     def __init__(self, input_channels, output_channels, 
-            stem_stride=None, max_stride=16, output_stride=1, filters=24, filters_rate=2, 
+            stem_stride=None, max_stride=16, output_stride=2, filters=24, filters_rate=2, 
             middle_block=True,
     ):
         super().__init__()

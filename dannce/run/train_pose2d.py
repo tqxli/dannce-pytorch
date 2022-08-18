@@ -6,6 +6,7 @@ from dannce.run_utils import *
 from dannce.engine.logging.logger import setup_logging, get_logger
 from dannce.engine.trainer.com_trainer import COMTrainer
 from dannce.engine.data.dataset import RAT7MImageDataset
+from dannce.run.train_backbone2d import load_data2d_into_mem
 
 import scipy.io as sio
 
@@ -16,7 +17,7 @@ def collate_fn(batch):
     return X, y
 
 def train(params):
-    params = config.setup_train(params)[0]
+    params, base_params, shared_args, shared_args_train, shared_args_valid = config.setup_train(params)
 
     # make the train directory if does not exist
     make_folder("dannce_train_dir", params)
@@ -36,6 +37,15 @@ def train(params):
         logger.info("***Fix random seed as {}***".format(params["random_seed"]))
 
     model = SLEAPUNet(params["n_channels_in"], params["n_channels_out"])
+    if params["train_mode"] == "finetune" and params["dannce_finetune_weights"] is not None:
+        print("Loading checkpoint from {}".format(params["dannce_finetune_weights"]))
+        state_dict = torch.load(params["dannce_finetune_weights"])["state_dict"]
+        ckpt_channel_num = state_dict["output_layer.weight"].shape[0]
+        if ckpt_channel_num != params["n_channels_out"]:
+            state_dict.pop("output_layer.weight", None)
+            state_dict.pop("output_layer.bias", None)
+        model.load_state_dict(state_dict, strict=False)
+
     model_params = [p for p in model.parameters() if p.requires_grad]
     optimizer = torch.optim.Adam(model_params, lr=params["lr"], eps=1e-7)
     lr_scheduler = None
@@ -48,11 +58,99 @@ def train(params):
     logger.info(model)
     logger.info("COMPLETE\n")
 
-    dataset_train = RAT7MImageDataset(train=True, downsample=1)
-    dataset_valid = RAT7MImageDataset(train=False, downsample=800)
-    logger.info("Train: {} samples".format(len(dataset_train)))
-    logger.info("Validation: {} samples".format(len(dataset_valid)))
+    if params["dataset"] == "rat7m":
+        dataset_train = RAT7MImageDataset(train=True, downsample=1)
+        dataset_valid = RAT7MImageDataset(train=False, downsample=800)
+        logger.info("Train: {} samples".format(len(dataset_train)))
+        logger.info("Validation: {} samples".format(len(dataset_valid)))
 
+    elif params["dataset"] == "label3d":
+        exps = params["exp"]
+        num_experiments = len(exps)
+        params["experiment"] = {}
+        params["return_full2d"] = True
+        (
+            samples, 
+            datadict, datadict_3d, com3d_dict, 
+            cameras, camnames,
+            total_chunks,
+            temporal_chunks
+        ) = processing.load_all_exps(params, logger)
+
+        cameras, datadict, params = serve_data_DANNCE.prepend_experiment(
+            params, datadict, num_experiments, camnames, cameras
+        )
+
+        # Setup additional variables for later use
+        n_cams = len(camnames[0])
+        dannce_train_dir = params["dannce_train_dir"]
+        outmode = "coordinates" if params["expval"] else "3dprob"
+        tifdirs = []  # Training from single images not yet supported in this demo
+
+        vid_exps = np.arange(num_experiments)
+        # initialize needed videos
+        vids = processing.initialize_all_vids(params, datadict, vid_exps, pathonly=True)
+
+        # make train/valid splits
+        partition = processing.make_data_splits(
+            samples, params, dannce_train_dir, num_experiments, 
+            temporal_chunks=temporal_chunks)
+
+        genfunc = generator.MultiviewImageGenerator
+
+        base_params = {
+            **base_params,
+            "camnames": camnames,
+            "vidreaders": vids,
+            "chunks": total_chunks,
+        }
+        spec_params = {
+            "channel_combo":  params["channel_combo"],
+            "expval": params["expval"],
+        }
+
+        valid_params = {**base_params, **spec_params}
+
+        train_gen_params = {
+            "list_IDs": partition["train_sampleIDs"],
+            "labels": datadict,
+            "labels_3d": datadict_3d,
+            "camera_params": cameras,
+            "clusterIDs": partition["train_sampleIDs"],
+            "com3d": com3d_dict,
+            "tifdirs": tifdirs
+        }
+        valid_gen_params = {
+            "list_IDs": partition["valid_sampleIDs"],
+            "labels": datadict,
+            "labels_3d": datadict_3d,
+            "camera_params": cameras,
+            "clusterIDs": partition["valid_sampleIDs"],
+            "com3d": com3d_dict,
+            "tifdirs": tifdirs
+        }
+        train_generator = genfunc(**train_gen_params, **valid_params)
+        valid_generator = genfunc(**valid_gen_params, **valid_params)
+        
+        # load everything into memory
+        X_train, y_train = load_data2d_into_mem(params, logger, partition, n_cams, train_generator, train=True, image_size=256)
+        X_valid, y_valid = load_data2d_into_mem(params, logger, partition, n_cams, valid_generator, train=False, image_size=256)
+    
+        dataset_train = dataset.ImageDataset(
+            images=X_train,
+            labels=y_train,
+            num_joints=params["n_channels_out"],
+            return_Gaussian=True,
+            train=True
+        )
+        dataset_valid = dataset.ImageDataset(
+            images=X_valid,
+            labels=y_valid,
+            num_joints=params["n_channels_out"],
+            return_Gaussian=True,
+            train=False
+        )
+    
     train_dataloader = torch.utils.data.DataLoader(
         dataset_train, batch_size=params["batch_size"], shuffle=True, collate_fn=collate_fn,
         num_workers=8,
@@ -135,8 +233,8 @@ def predict(params):
                     np.array(processing.get_peak_inds(np.squeeze(pred[n_cam, n_joint])))
                 )
                 # breakpoint()
-                ind[0] -= 128
-                ind[1] -= 128
+                ind[0] = (ind[0] - 32) * 8 #4
+                ind[1] = (ind[1] - 32) * 8 #4
                 ind[0] += coms[n_cam][1]
                 ind[1] += coms[n_cam][0]
                 ind = ind[::-1]
@@ -166,21 +264,23 @@ def predict(params):
 
             com = np.array(coms[0])
             kpts2d = save_data[sample_id][params["camnames"][0]]["COM"] - com[np.newaxis, :]
-            ax.scatter(kpts2d[:, 1], kpts2d[:, 0])
+            kpts2d = kpts2d + 128
+            ax.scatter(kpts2d[:, 0], kpts2d[:, 1])
 
             ax = fig.add_subplot(122)
             ax.imshow(batch[1].permute(1, 2, 0).numpy().astype(np.uint8))
 
             com = np.array(coms[1])
             kpts2d = save_data[sample_id][params["camnames"][1]]["COM"] - com[np.newaxis, :]
-            ax.scatter(kpts2d[:, 1], kpts2d[:, 0])
+            kpts2d += 128
+            ax.scatter(kpts2d[:, 0], kpts2d[:, 1])
 
             plt.show(block=True)
             input("Press Enter to continue...")
         
-        # if i == 5:
-        # vis()
-        # breakpoint()
+ #       if i == 5:
+ #           vis()
+ #           breakpoint()
 
         # triangulation
         save_data[sample_id]["joints"] = np.zeros((20, 3))
@@ -214,8 +314,9 @@ def predict(params):
             save_data[sample_id]["joints"][joint] = final
     
     pose3d = np.stack([v["joints"] for k, v in save_data.items()], axis=0) #[N, 3, 20]
+    # pose2d = np.
     sio.savemat(
-        os.path.join(params["dannce_predict_dir"], "pose2d_pred{}.mat".format(params["start_sample"])),
+        os.path.join(params["dannce_predict_dir"], "pred{}.mat".format(params["start_sample"])),
         {"pose3d": pose3d},
     )
     return

@@ -1155,7 +1155,7 @@ class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
         return inputs, targets
 
 class MultiviewImageGenerator(DataGenerator_3Dconv):
-    def __init__(self, resize=False, image_size=512, crop=False, crop_size=768, **kwargs):
+    def __init__(self, resize=True, image_size=256, crop=True, crop_size=384, **kwargs):
         
         super(MultiviewImageGenerator, self).__init__(**kwargs)
         self.image_size = image_size
@@ -1163,6 +1163,8 @@ class MultiviewImageGenerator(DataGenerator_3Dconv):
         self.crop = crop
         self.crop_size = crop_size
         self._get_camera_objs()
+
+        self.ds_fac = self.crop_size / self.image_size
 
     def _get_camera_objs(self):
         self.camera_objs = {}
@@ -1256,19 +1258,22 @@ class MultiviewImageGenerator(DataGenerator_3Dconv):
         
         if self.crop:
             # crop images due to memory constraints
-            im, cropdim = processing.cropcom(im, com_precrop, size=self.cropsize) 
-            bbox = self._get_bbox(com_precrop)
-            cam.update_after_crop(bbox)
+            im, cropdim = processing.cropcom(im, com_precrop, size=self.crop_size) 
+            # bbox = self._get_bbox(com_precrop)
+            # cam.update_after_crop(bbox)
             new_y[0, :] -= cropdim[2]
             new_y[1, :] -= cropdim[0]
         
         # resize
         if self.resize:
-            old_height, old_width = im.shape[:2]
-            im = cv2.resize(im, (self.image_size, self.image_size))
-            cam.update_after_resize((old_height, old_width), (self.image_size, self.image_size))
-            new_y[1, :] *= (im.shape[0] / old_height) # y
-            new_y[0, :] *= (im.shape[1] / old_width)  # x
+            # old_height, old_width = im.shape[:2]
+            # # im = cv2.resize(im, (self.image_size, self.image_size))
+            # # cam.update_after_resize((old_height, old_width), (self.image_size, self.image_size))
+            # new_y[1, :] *= (im.shape[0] / old_height) # y
+            # new_y[0, :] *= (im.shape[1] / old_width)  # x
+            im = processing.downsample_batch(im[np.newaxis, ...], fac=self.ds_fac)
+            im = np.squeeze(im)
+            new_y /= self.ds_fac
         
         return im, cam, new_y
     

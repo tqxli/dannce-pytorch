@@ -1410,8 +1410,8 @@ def downsample_batch(imstack, fac=2, method="PIL"):
         out = np.zeros(
             (
                 imstack.shape[0],
-                imstack.shape[1] // fac,
-                imstack.shape[2] // fac,
+                int(imstack.shape[1] / fac),
+                int(imstack.shape[2] / fac),
                 imstack.shape[3],
             ),
             "float32",
