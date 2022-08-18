@@ -22,7 +22,7 @@ class DannceTrainer(BaseTrainer):
 
         self.visualize_batch = visualize_batch
 
-        self.split = self.params.get("social_joint_training", False)
+        self.split = False #self.params.get("social_joint_training", False)
 
         # whether each batch only contains transformed versions of one single instance
         self.form_batch = self.params.get("form_batch", False)        
