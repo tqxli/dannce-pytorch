@@ -1349,7 +1349,7 @@ class MultiviewImageGenerator(DataGenerator_3Dconv):
         y_2d = torch.stack(y_2d, dim=0) #[BS, 6, 2, n_joints]
         
         # self._visualize_multiview(list_IDs_temp[0], X[0], y_2d[0])
-        self._save_image_bbox(list_IDs_temp, X, y_2d)
+        # self._save_image_bbox(list_IDs_temp, X, y_2d)
 
         return (X.cpu(), X_grid.cpu(), cameras), (y_3d.cpu(), y_2d.cpu())
 
