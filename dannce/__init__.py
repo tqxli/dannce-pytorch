@@ -55,6 +55,7 @@ _param_defaults_shared = {
     "label3d_index": 0
 }
 _param_defaults_dannce = {
+    "dataset": "label3d",
     "metric": ["euclidean_distance_3D"],
     "sigma": 10,
     "lr": 1e-3,
@@ -113,13 +114,20 @@ _param_defaults_dannce = {
     ## social
     "social_training": False,
     "downscale_occluded_view": False,
-    "social_joint_training": False
+    "social_joint_training": False,
+    "social_big_volume": False,
+    ## test time training
+    "inference_ttt": None,
+    ## augmentation
+    "form_batch": False,
+    "form_bs": None
 }
 _param_defaults_com = {
     "dsmode": "nn",
     "sigma": 30,
     "debug": False,
     "lr": 5e-5,
+    "lr_scheduler": None,
     "net": "unet2d_fullbn",
     "n_channels_out": 1,
     "com_train_dir": None,

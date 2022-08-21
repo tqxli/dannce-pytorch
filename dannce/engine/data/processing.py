@@ -92,14 +92,18 @@ def generate_readers(
 ):
     """Open all mp4 objects with imageio, and return them in a dictionary."""
     out = {}
-    mp4files = [
-        os.path.join(camname, f)
-        for f in os.listdir(os.path.join(viddir, camname))
-        if extension in f
-        and int(f.rsplit(extension)[0]) <= maxopt
-        and int(f.rsplit(extension)[0]) >= minopt
-    ]
-
+    try:
+        mp4files = [
+            os.path.join(camname, f)
+            for f in os.listdir(os.path.join(viddir, camname))
+            if extension in f
+            and (f[0] != '_')
+            and (f[0] != '.')
+            and int(f.rsplit(extension)[0]) <= maxopt
+            and int(f.rsplit(extension)[0]) >= minopt
+        ]
+    except:
+        breakpoint()
     # This is a trick (that should work) for getting rid of
     # awkward sub-directory folder names when they are being used
     mp4files_scrub = [
@@ -155,7 +159,7 @@ def load_expdict(params, e, expdict, _DEFAULT_VIDDIR, _DEFAULT_VIDDIR_SIL, logge
     if logger is not None:
         logger.info("Experiment {} using videos in {}".format(e, exp["viddir"]))
 
-    if params["use_silhouette"]:
+    if params.get("use_silhouette", False):
         exp["viddir_sil"] = os.path.join(exp["base_exp_folder"], _DEFAULT_VIDDIR_SIL) if "viddir_sil" not in expdict else expdict["viddir_sil"]
         if logger is not None:
             logger.info("Experiment {} also using masked videos in {}".format(e, exp["viddir_sil"]))
@@ -179,7 +183,7 @@ def load_expdict(params, e, expdict, _DEFAULT_VIDDIR, _DEFAULT_VIDDIR_SIL, logge
             intermediate_folder = os.listdir(camdir)
             camdir = os.path.join(camdir, intermediate_folder[0])
         video_files = os.listdir(camdir)
-        video_files = [f for f in video_files if ".mp4" in f]
+        video_files = [f for f in video_files if (".mp4" in f) and (f[0] != '_') and f[0] != '.']
         video_files = sorted(video_files, key=lambda x: int(x.split(".")[0]))
         chunks[str(e) + "_" + name] = np.sort(
             [int(x.split(".")[0]) for x in video_files]
@@ -249,6 +253,48 @@ def load_all_exps(params, logger):
     samples = np.array(samples)
 
     return samples, datadict, datadict_3d, com3d_dict, cameras, camnames, total_chunks, temporal_chunks
+
+def load_all_com_exps(params, exps):
+    params["experiment"] = {}
+    total_chunks = {}
+    cameras = {}
+    camnames = {}
+    datadict = {}
+    datadict_3d = {}
+    samples = []
+    for e, expdict in enumerate(exps):
+
+        exp = load_expdict(params, e, expdict, _DEFAULT_VIDDIR, _DEFAULT_VIDDIR_SIL)
+
+        params["experiment"][e] = exp
+        (samples_, datadict_, datadict_3d_, cameras_, _) = serve_data_DANNCE.prepare_data(
+            params["experiment"][e],
+            com_flag=not params["multi_mode"],
+        )
+
+        # No need to prepare any COM file (they don't exist yet).
+        # We call this because we want to support multiple experiments,
+        # which requires appending the experiment ID to each data object and key
+        samples, datadict, datadict_3d, _, _ = serve_data_DANNCE.add_experiment(
+            e,
+            samples,
+            datadict,
+            datadict_3d,
+            {},
+            samples_,
+            datadict_,
+            datadict_3d_,
+            {},
+        )
+
+        cameras[e] = cameras_
+        camnames[e] = params["experiment"][e]["camnames"]
+        for name, chunk in exp["chunks"].items():
+            total_chunks[name] = chunk
+    
+    samples = np.array(samples)
+
+    return samples, datadict, datadict_3d, cameras, camnames, total_chunks
 
 def do_COM_load(exp: Dict, expdict: Dict, e, params: Dict, training=True):
     """Load and process COMs.
@@ -396,7 +442,7 @@ def make_data_splits(samples, params, results_dir, num_experiments, temporal_chu
     # and change.
 
     partition = {}
-    if params["use_temporal"]:
+    if params.get("use_temporal", False):
         if params["load_valid"] is None:
             assert temporal_chunks != None, "If use temporal, do partitioning over chunks."
             v = params["num_validation_per_exp"]
@@ -740,7 +786,7 @@ def write_debug(
     ims_train: np.ndarray,
     ims_valid: np.ndarray,
     y_train: np.ndarray,
-    model,
+    # model,
     trainData: bool = True,
 ):
     """Factoring re-used debug output code.
@@ -768,10 +814,10 @@ def write_debug(
             outdir = "debug_im_out"
             ims_out = ims_train
             label_out = y_train
-        else:
-            outdir = "debug_im_out_valid"
-            ims_out = ims_valid
-            label_out = model.predict(ims_valid, batch_size=1)
+        # else:
+        #     outdir = "debug_im_out_valid"
+        #     ims_out = ims_valid
+        #     label_out = model.predict(ims_valid, batch_size=1)
 
         # Plot all training images and save
         # create new directory for images if necessary
@@ -1041,13 +1087,13 @@ def prepare_save_metadata(params):
     # Need to convert None to string but still want to conserve the metadat structure
     # format, so we don't want to convert the whole dict to a string
     meta = params.copy()
-    # if "experiment" in meta:
-    #     del meta["experiment"]
-    # if "loss" in meta:
-    #     try: 
-    #         meta["loss"] = [loss.__name__ for loss in meta["loss"]]
-    #     except:
-    #         meta["loss"] = meta["loss"].__name__
+    if "experiment" in meta:
+        del meta["experiment"]
+    if "loss" in meta:
+        try: 
+            meta["loss"] = [loss.__name__ for loss in meta["loss"]]
+        except:
+            meta["loss"] = list(meta["loss"].keys())
     # if "net" in meta:
     #     meta["net"] = meta["net"].__name__
     # if "metric" in meta:
@@ -1364,8 +1410,8 @@ def downsample_batch(imstack, fac=2, method="PIL"):
         out = np.zeros(
             (
                 imstack.shape[0],
-                imstack.shape[1] // fac,
-                imstack.shape[2] // fac,
+                int(imstack.shape[1] / fac),
+                int(imstack.shape[2] / fac),
                 imstack.shape[3],
             ),
             "float32",
@@ -1798,4 +1844,73 @@ def prepare_joint_volumes(params, pairs, com3d_dict, datadict_3d):
             datadict_3d[vol2] = new_pose3d2
 
     return datadict_3d
-            
+
+def _preprocess_numpy_input(x, data_format="channels_last", mode="torch"):
+    """Preprocesses a Numpy array encoding a batch of images.
+    Args:
+        x: Input array, 3D or 4D.
+        data_format: Data format of the image array.
+        mode: One of "caffe", "tf" or "torch".
+        - caffe: will convert the images from RGB to BGR,
+            then will zero-center each color channel with
+            respect to the ImageNet dataset,
+            without scaling.
+        - tf: will scale pixels between -1 and 1,
+            sample-wise.
+        - torch: will scale pixels between 0 and 1 and then
+            will normalize each channel with respect to the
+            ImageNet dataset.
+    Returns:
+        Preprocessed Numpy array.
+    """
+    if not issubclass(x.dtype.type, np.floating):
+        x = x.astype("float32", copy=False)
+
+    if mode == 'tf':
+        x /= 127.5
+        x -= 1.
+        return x
+    elif mode == 'torch':
+        x /= 255.
+        mean = [0.485, 0.456, 0.406]
+        std = [0.229, 0.224, 0.225]
+    else:
+        if data_format == 'channels_first':
+        # 'RGB'->'BGR'
+            if x.ndim == 3:
+                x = x[::-1, ...]
+            else:
+                x = x[:, ::-1, ...]
+        else:
+            # 'RGB'->'BGR'
+            x = x[..., ::-1]
+            mean = [103.939, 116.779, 123.68]
+            std = None
+
+    # Zero-center by mean pixel
+    if data_format == 'channels_first':
+        if x.ndim == 3:
+            x[0, :, :] -= mean[0]
+            x[1, :, :] -= mean[1]
+            x[2, :, :] -= mean[2]
+            if std is not None:
+                x[0, :, :] /= std[0]
+                x[1, :, :] /= std[1]
+                x[2, :, :] /= std[2]
+            else:
+                x[:, 0, :, :] -= mean[0]
+                x[:, 1, :, :] -= mean[1]
+                x[:, 2, :, :] -= mean[2]
+        if std is not None:
+            x[:, 0, :, :] /= std[0]
+            x[:, 1, :, :] /= std[1]
+            x[:, 2, :, :] /= std[2]
+    else:
+        x[..., 0] -= mean[0]
+        x[..., 1] -= mean[1]
+        x[..., 2] -= mean[2]
+        if std is not None:
+            x[..., 0] /= std[0]
+            x[..., 1] /= std[1]
+            x[..., 2] /= std[2]
+    return x 

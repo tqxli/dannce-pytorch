@@ -2,13 +2,14 @@
 import dannce.run.train_voxelpose as voxelpose
 import dannce.run.train_motiondannce as motiondannce
 import dannce.run.train_backbone2d as backbone2d
+import dannce.run.train_pose2d as pose2d
 import dannce.run.train_dannce_dbbox as dbbox
 import dannce.run.train_posegcn as posegcn
 import dannce.run.train_transformer as trans
 import dannce.run.train_crossattn as socialattn
 from dannce.interface import (
-    # com_predict,
-    # com_train,
+    com_predict,
+    com_train,
     dannce_predict,
     dannce_train,
 )
@@ -104,28 +105,28 @@ def sbatch_dannce_train_cli():
 #     os.system(cmd)
 
 
-# def com_predict_cli():
-#     """Entrypoint for com prediction."""
-#     parser = argparse.ArgumentParser(
-#         description="Com predict CLI",
-#         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-#     )
-#     parser.set_defaults(**{**_param_defaults_shared, **_param_defaults_com})
-#     args = parse_clargs(parser, model_type="com", prediction=True)
-#     params = build_clarg_params(args, dannce_net=False, prediction=True)
-#     com_predict(params)
+def com_predict_cli():
+    """Entrypoint for com prediction."""
+    parser = argparse.ArgumentParser(
+        description="Com predict CLI",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.set_defaults(**{**_param_defaults_shared, **_param_defaults_com})
+    args = parse_clargs(parser, model_type="com", prediction=True)
+    params = build_clarg_params(args, dannce_net=False, prediction=True)
+    com_predict(params)
 
 
-# def com_train_cli():
-#     """Entrypoint for com training."""
-#     parser = argparse.ArgumentParser(
-#         description="Com train CLI",
-#         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-#     )
-#     parser.set_defaults(**{**_param_defaults_shared, **_param_defaults_com})
-#     args = parse_clargs(parser, model_type="com", prediction=False)
-#     params = build_clarg_params(args, dannce_net=False, prediction=False)
-#     com_train(params)
+def com_train_cli():
+    """Entrypoint for com training."""
+    parser = argparse.ArgumentParser(
+        description="Com train CLI",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.set_defaults(**{**_param_defaults_shared, **_param_defaults_com})
+    args = parse_clargs(parser, model_type="com", prediction=False)
+    params = build_clarg_params(args, dannce_net=False, prediction=False)
+    com_train(params)
 
 
 def dannce_predict_cli():
@@ -160,6 +161,7 @@ def custom_model_train_cli():
         'posegcn': posegcn.train,
         'transformer': trans.train,
         'socialattn': socialattn.train,
+        'pose2d': pose2d.train,
     }
 
     parser = argparse.ArgumentParser(
@@ -177,6 +179,7 @@ def custom_model_predict_cli():
         'posegcn': posegcn.predict,
         'posegcn-multi': posegcn.predict_multi_animal,
         'socialattn': socialattn.predict,
+        'pose2d': pose2d.predict,
     }
 
     parser = argparse.ArgumentParser(
@@ -382,7 +385,7 @@ def add_shared_train_args(
         help="List of additional metrics to report. See losses.py",
     )
 
-    parser.add_argument("--lr", dest="lr", help="Learning rate.")
+    parser.add_argument("--lr", dest="lr", type=float, help="Learning rate.")
 
     parser.add_argument(
         "--augment-hue",
@@ -610,7 +613,11 @@ def add_dannce_shared_args(
         type=ast.literal_eval,
         dest="soft_silhouette",
     )
-
+    parser.add_argument(
+        "--dataset",
+        default="label3d",
+        dest="dataset"
+    )
     return parser
 
 

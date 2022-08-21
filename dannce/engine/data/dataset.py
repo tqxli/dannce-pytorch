@@ -1,6 +1,5 @@
-import enum
 import os
-from pathlib import PurePosixPath
+import random
 import cv2
 import numpy as np
 from dannce.engine.data import processing
@@ -9,8 +8,7 @@ import scipy.io as sio
 
 import torch
 import torchvision.transforms.functional as TF
-
-from dannce.engine.data.generator import MultiviewImageGenerator
+import torchvision.transforms as transforms
 
 MISSING_KEYPOINTS_MSG = (
     "If mirror augmentation is used, the right_keypoints indices and left_keypoints "
@@ -76,7 +74,8 @@ class PoseDatasetFromMem(torch.utils.data.Dataset):
         aux_labels=None,
         temporal_chunk_list=None,
         occlusion=False,
-        pairs=None
+        pairs=None,
+        transformed_batch=False,
     ):
         """Initialize data generator.
         """
@@ -787,6 +786,162 @@ class PoseDatasetNPY(PoseDatasetFromMem):
 
         return self._convert_numpy_to_tensor(X, X_grid, y_3d, aux)
 
+class COMDatasetFromMem(torch.utils.data.Dataset):
+    def __init__(
+        self,
+        list_IDs,
+        data,
+        labels,
+        batch_size,
+        chan_num=3,
+        shuffle=True,
+        augment_brightness=False,
+        augment_hue=False,
+        augment_rotation=False,
+        augment_zoom=False,
+        augment_shear=False,
+        augment_shift=False,
+        bright_val=0.05,
+        hue_val=0.05,
+        shift_val=0.05,
+        rotation_val=5,
+        shear_val=5,
+        zoom_val=0.05,
+    ):
+        """Initialize data generator."""
+        self.list_IDs = list_IDs
+        self.data = data
+        self.labels = labels
+        self.batch_size = batch_size
+        self.chan_num = chan_num
+        self.shuffle = shuffle
+
+        self.augment_brightness = augment_brightness
+        self.augment_hue = augment_hue
+        self.augment_rotation = augment_rotation
+        self.augment_zoom = augment_zoom
+        self.augment_shear = augment_shear
+        self.augment_shift = augment_shift
+        self.bright_val = bright_val
+        self.hue_val = hue_val
+        self.shift_val = shift_val
+        self.rotation_val = rotation_val
+        self.shear_val = shear_val
+        self.zoom_val = zoom_val   
+
+    def __len__(self):
+        return len(self.list_IDs)
+
+    def shift_im(self, im, lim, dim=2):
+        ulim = im.shape[dim] - np.abs(lim)
+
+        if dim == 2:
+            if lim < 0:
+                im[:, :, :ulim] = im[:, :, np.abs(lim) :]
+                im[:, :, ulim:] = im[:, :, ulim : ulim + 1]
+            else:
+                im[:, :, lim:] = im[:, :, :ulim]
+                im[:, :, :lim] = im[:, :, lim : lim + 1]
+        elif dim == 1:
+            if lim < 0:
+                im[:, :ulim] = im[:, np.abs(lim) :]
+                im[:, ulim:] = im[:, ulim : ulim + 1]
+            else:
+                im[:, lim:] = im[:, :ulim]
+                im[:, :lim] = im[:, lim : lim + 1]
+        else:
+            raise Exception("Not a valid dimension for shift indexing")
+
+        return im
+
+    def random_shift(self, X, y_2d, im_h, im_w, scale):
+        """
+        Randomly shifts all images in batch, in the range [-im_w*scale, im_w*scale]
+            and [im_h*scale, im_h*scale]
+        """
+        wrng = np.random.randint(-int(im_w * scale), int(im_w * scale))
+        hrng = np.random.randint(-int(im_h * scale), int(im_h * scale))
+
+        X = self.shift_im(X, wrng)
+        X = self.shift_im(X, hrng, dim=1)
+
+        y_2d = self.shift_im(y_2d, wrng)
+        y_2d = self.shift_im(y_2d, hrng, dim=1)
+
+        return X, y_2d
+
+    def __getitem__(self, index):
+        list_IDs_temp = [self.list_IDs[index]]
+        X, y = self.__data_generation(list_IDs_temp)
+
+        return X, y
+    def __data_generation(self, list_IDs_temp):
+        """Generate data containing batch_size samples."""
+        # Initialization
+
+        X = np.zeros((self.batch_size, *self.data.shape[1:]))
+        y_2d = np.zeros((self.batch_size, *self.labels.shape[1:]))
+
+        for i, ID in enumerate(list_IDs_temp):
+            X[i] = self.data[ID].copy()
+            y_2d[i] = self.labels[ID]
+
+        if self.augment_rotation or self.augment_shear or self.augment_zoom:
+
+            affine = {}
+            affine["zoom"] = 1
+            affine["rotation"] = 0
+            affine["shear"] = 0
+
+            # Because we use views down below,
+            # don't change the targets in memory.
+            # But also, don't deep copy y_2d unless necessary (that's
+            # why it's here and not above)
+            y_2d = y_2d.copy()
+
+            # TODO: replace with torchvision.transforms
+            if self.augment_rotation:
+                affine["rotation"] = self.rotation_val * (np.random.rand() * 2 - 1)
+            # if self.augment_zoom:
+            #     affine["zoom"] = self.zoom_val * (np.random.rand() * 2 - 1) + 1
+            if self.augment_shear:
+                affine["shear"] = self.shear_val * (np.random.rand() * 2 - 1)
+
+            X = TF.affine(
+                torch.from_numpy(X).permute(0, 3, 1, 2),
+                angle=affine["rotation"],
+                shear=affine["shear"],
+            )
+            y_2d = TF.affine(
+                torch.from_numpy(y_2d).permute(0, 3, 1, 2),
+                angle=affine["rotation"],
+                shear=affine["shear"],
+            )
+
+        if self.augment_shift:
+            X, y_2d = self.random_shift(
+                X, y_2d.copy(), X.shape[1], X.shape[2], self.shift_val
+            )
+
+        if self.augment_brightness:
+            X_temp = torch.as_tensor(X).permute(0, 3, 1, 2) #[bs, 3, H, W]
+            random_bright_val = float(torch.empty(1).uniform_(1-self.bright_val, 1+self.bright_val))
+            X_temp = TF.adjust_brightness(X_temp, random_bright_val)
+            X = X_temp.permute(0, 2, 3, 1).numpy() 
+        
+        if self.augment_hue:
+            if self.chan_num == 3:
+                X_temp = torch.as_tensor(X).permute(0, 3, 1, 2) #[bs, 3, H, W]
+                random_hue_val = float(torch.empty(1).uniform_(-self.hue_val, self.hue_val))
+                X_temp = TF.adjust_hue(X_temp, random_hue_val)
+                X = X_temp.permute(0, 2, 3, 1).numpy() 
+            else:
+                warnings.warn("Hue augmention set to True for mono. Ignoring.")
+
+        X = torch.from_numpy(X).permute(0, 3, 1, 2).float()
+        y_2d = torch.from_numpy(y_2d).permute(0, 3, 1, 2).float()
+        return X, y_2d
+
 class MultiViewImageDataset(torch.utils.data.Dataset):
     def __init__(
         self,
@@ -816,9 +971,11 @@ class ImageDataset(torch.utils.data.Dataset):
     def __init__(self, 
         num_joints, 
         imdir=None, labeldir=None, images=None, labels=None, 
-        return_Gaussian=True, sigma=2,
+        return_Gaussian=True, 
+        sigma=2,
         image_size=[256, 256],
         heatmap_size=[64, 64],
+        train=True
     ):
         super(ImageDataset, self).__init__()
         self.images = images
@@ -840,6 +997,9 @@ class ImageDataset(torch.utils.data.Dataset):
 
         self.image_size = np.array(image_size)
         self.heatmap_size = np.array(heatmap_size)
+
+        self.train = train
+        self._transforms()
 
     def __len__(self):
         if self.read_frommem:
@@ -905,10 +1065,18 @@ class ImageDataset(torch.utils.data.Dataset):
         
         return target, target_weight
 
+    def _transforms(self):
+        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                        std=[0.229, 0.224, 0.225])
+        self.transforms = transforms.Compose([
+            # transforms.ToTensor(),
+            normalize,
+        ])
+
     def __getitem__(self, idx):
         if self.read_frommem:
             # im_ori = self.images[idx]
-            im = processing.preprocess_3d(self.images[idx].clone())
+            im = self.images[idx].clone() #processing.preprocess_3d(self.images[idx].clone())
             kpts2d = self.labels[idx]
         else:
             im = cv2.imread(
@@ -939,17 +1107,61 @@ class ImageDataset(torch.utils.data.Dataset):
             kpts2d[0, :] *= (im.shape[1] / ori_size[1])
             kpts2d[1, :] *= (im.shape[0] / ori_size[0])
 
-        im, kpts2d = torch.from_numpy(im).permute(2, 0, 1).float(), torch.from_numpy(kpts2d)
+        im = im # self.transforms(im).float()
+        # kpts2d = torch.from_numpy(kpts2d)
 
         if self.return_Gaussian:
-            target, target_weight = self._generate_Gaussian_target(kpts2d)
-            # breakpoint()
-            # self._vis_heatmap(im, target, kpts2d)
+            # generate gaussian targets
+            labels = kpts2d.numpy()
+            (x_coord, y_coord) = np.meshgrid(
+                np.arange(self.heatmap_size[1]), np.arange(self.heatmap_size[0])
+            )
             
-            return im, target
+            targets = []
+            for joint in range(labels.shape[-1]):
+                # target = np.zeros((self.dim_out[0], self.dim_out[1]))
+                if np.isnan(labels[:, joint]).sum() == 0:
+                    target = np.exp(
+                            -(
+                                (y_coord - labels[1, joint] // 4) ** 2
+                                + (x_coord - labels[0, joint] // 4) ** 2
+                            )
+                            / (2 * self.sigma ** 2)
+                        )
+                else:
+                    target = np.zeros((self.heatmap_size[1], self.heatmap_size[0]))
+                # tmp_size = 3*self.out_scale
+
+                #target[-tmp_size+int(labels[1, joint]):tmp_size+int(labels[1, joint]), -tmp_size+int(labels[0, joint]):tmp_size+int(labels[0, joint])] *= 10
+                # = g[]
+                targets.append(target)
+            # crop out and keep the max to be 1 might still work...
+            targets = np.stack(targets, axis=0)
+            targets = torch.from_numpy(targets).float()
+            # target, target_weight = self._generate_Gaussian_target(kpts2d)
+            # breakpoint()
+            
+            if self.train:
+                if random.random() > 0.5:
+                    im = TF.hflip(im)
+                    targets = TF.hflip(targets)
+
+                # Random vertical flipping
+                if random.random() > 0.5:
+                    im = TF.vflip(im)
+                    targets = TF.vflip(targets)
+
+                # Random rotation
+                if random.random() > 0.5:
+                    rot = random.randint(0, 3) * 90
+                    if rot != 0:
+                        im = TF.rotate(im, rot)
+                        targets = TF.rotate(targets, rot)
+            
+            # self._vis_heatmap(im, targets, kpts2d)
+            return im, targets
 
         return im, kpts2d
-
 
 class RAT7MSeqDataset(torch.utils.data.Dataset):
     def __init__(
@@ -1063,11 +1275,196 @@ class RAT7MSeqDataset(torch.utils.data.Dataset):
                 ax.clear()
         plt.close()
 
+class RAT7MImageDataset(torch.utils.data.Dataset):
+    def __init__(
+        self,
+        root="/media/mynewdrive/datasets/rat7m",
+        annot="final_annotations_w_correct_clusterIDs.pkl",
+        imgdir='images_unpacked',
+        train=True,
+        downsample=1,
+    ):
+        super().__init__()
+
+        self.root = root
+        self.train = train
+        experiments_train = ['s1-d1', 's2-d1', 's2-d2', 's3-d1', 's4-d1']
+        experiments_test = ['s5-d1', 's5-d2']
+        self.experiments = experiments_train + experiments_test
+
+        # load annotations from disk
+        self.annot_dict = annot_dict = np.load(os.path.join(root, annot), allow_pickle=True)
+
+        # select subjects
+        if train:
+            filter = np.where(annot_dict["table"]["subject_idx"] != 5)[0][::downsample]
+        else:
+            filter = np.where(annot_dict["table"]["subject_idx"] == 5)[0][::downsample]
+
+        labels, coms, impaths = [], [], []
+        for camname in annot_dict["camera_names"]:
+            labels.append(annot_dict["table"]["2D_keypoints"][camname][filter])
+            coms.append(annot_dict["table"]["2D_com"][camname][filter])
+            impaths.append(annot_dict["table"]["image_paths"][camname][filter])
+        self.labels = np.concatenate(labels)
+        self.coms = np.concatenate(coms)
+        self.impaths = np.concatenate(impaths)
+        self.n_samples = len(self.labels)
+        
+        self._prepare_cameras()
+        self._transforms()
+
+        self.dim_crop = [512, 512]
+        self.dim_out = [256, 256]
+
+        self.out_scale = 2
+        self.rotation_val = 15
+        self.ds_fac = self.dim_crop[0] / self.dim_out[0]
+        
+    def __len__(self):
+        return self.n_samples
+    
+    def _prepare_cameras(self):
+        cameras = {}
+        camnames = self.annot_dict["camera_names"]
+        for i, expname in enumerate(self.experiments):
+            subject_idx, day_idx = expname.split('-')
+            subject_idx, day_idx = int(subject_idx[-1]), int(day_idx[-1])
+        
+            cameras[i] = {}
+            for camname in camnames:  
+                new_params = {}
+                old_params = self.annot_dict["cameras"][subject_idx][day_idx][camname]
+                new_params["K"] = old_params["IntrinsicMatrix"]
+                new_params["R"] = old_params["rotationMatrix"]
+                new_params["t"] = old_params["translationVector"]
+                new_params["RDistort"] = old_params["RadialDistortion"]
+                new_params["TDistort"] = old_params["TangentialDistortion"]
+                cameras[i][str(i)+"_"+camname] = new_params
+
+        self.cameras = cameras
+
+    def _crop_im(self, im, com, labels):
+        im, cropdim = processing.cropcom(im, com, size=self.dim_crop[0]) 
+        labels[0, :] -= cropdim[2]
+        labels[1, :] -= cropdim[0]
+    
+        return im, labels
+    
+    def _transforms(self):
+        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                        std=[0.229, 0.224, 0.225])
+        self.transforms = transforms.Compose([
+            transforms.ToTensor(),
+            normalize,
+        ])
+
+    def _vis_heatmap(self, im, target, kpts2d):
+        import matplotlib
+        import matplotlib.pyplot as plt
+        matplotlib.use('TkAgg')
+
+        fig = plt.figure(figsize=(10, 10))
+        ax = fig.add_subplot(121)
+        ax.imshow(im.permute(1, 2, 0).numpy().astype(np.uint8))
+
+        ax.scatter(kpts2d[0], kpts2d[1])
+
+        ax = fig.add_subplot(122)
+        ax.imshow(target.sum(0).numpy())
+
+        plt.show(block=True)
+        input("Press Enter to continue...")
+
+    def __getitem__(self, idx):
+        impath = os.path.join(self.root, self.impaths[idx])
+        im = cv2.imread(impath)
+        im = cv2.cvtColor(im, cv2.COLOR_BGR2RGB)
+
+        labels = np.transpose(self.labels[idx], (1, 0))
+        com = self.coms[idx]
+        im, labels = self._crop_im(im, com, labels)
+
+        im = processing.downsample_batch(im[np.newaxis, ...], fac=self.ds_fac)
+        im = np.squeeze(im)
+        labels /= self.ds_fac
+
+        # generate gaussian targets
+        (x_coord, y_coord) = np.meshgrid(
+            np.arange(self.dim_out[1] // 4), np.arange(self.dim_out[0] // 4)
+        )
+        
+        targets = []
+        for joint in range(labels.shape[-1]):
+            # target = np.zeros((self.dim_out[0], self.dim_out[1]))
+            target = np.exp(
+                    -(
+                        (y_coord - labels[1, joint] // 4) ** 2
+                        + (x_coord - labels[0, joint] // 4) ** 2
+                    )
+                    / (2 * self.out_scale ** 2)
+                )
+            # tmp_size = 3*self.out_scale
+
+            #target[-tmp_size+int(labels[1, joint]):tmp_size+int(labels[1, joint]), -tmp_size+int(labels[0, joint]):tmp_size+int(labels[0, joint])] *= 10
+            # = g[]
+            targets.append(target)
+        # crop out and keep the max to be 1 might still work...
+        targets = np.stack(targets, axis=0)
+
+        # im = np.transpose(im, (2, 0, 1))
+        im = self.transforms(im).float()
+        targets = torch.from_numpy(targets).float()
+
+        # Random horizontal flipping
+        if self.train:
+            if random.random() > 0.5:
+                im = TF.hflip(im)
+                targets = TF.hflip(targets)
+
+            # Random vertical flipping
+            if random.random() > 0.5:
+                im = TF.vflip(im)
+                targets = TF.vflip(targets)
+
+            # Random rotation
+            if random.random() > 0.5:
+                rot = random.randint(0, 3) * 90
+                if rot != 0:
+                    im = TF.rotate(im, rot)
+                    targets = TF.rotate(targets, rot)
+        # im = processing._preprocess_numpy_input(im)
+        #im, targets = torch.from_numpy(im).permute(2, 0, 1).float(), 
+
+        # apply transformations
+        #rot = self.rotation_val * (np.random.rand() * 2 - 1) if self.train else 0
+        #im = TF.affine(im, angle=rot, translate=[0, 0], scale=1.0, shear=0)
+        #target = TF.affine(im, angle=rot, translate=[0, 0], scale=1.0, shear=0)
+
+        # self._vis_heatmap(im, targets, labels)
+
+        return im, targets
+
+
 if __name__ == "__main__":
     import time
 
+    # start = time.time()
+    # rat7m_dataset = RAT7MSeqDataset(downsample=1)
+    # print("initialization: ", time.time()-start)
+
+    # n_samples = len(rat7m_dataset)
+    # print(n_samples)
+
+    # idx = np.random.choice(n_samples)
+
+    # seq = rat7m_dataset.__getitem__(idx)
+    # print(seq.shape)
+
+    # RAT7MSeqDataset.vis_seq(seq, '/media/mynewdrive/datasets/rat7m/vis', idx)
+
     start = time.time()
-    rat7m_dataset = RAT7MSeqDataset(downsample=1)
+    rat7m_dataset = RAT7MImageDataset(train=False)
     print("initialization: ", time.time()-start)
 
     n_samples = len(rat7m_dataset)
@@ -1075,7 +1472,20 @@ if __name__ == "__main__":
 
     idx = np.random.choice(n_samples)
 
-    seq = rat7m_dataset.__getitem__(idx)
-    print(seq.shape)
+    X, y = rat7m_dataset.__getitem__(idx)
+    print(X.shape)
+    print(y.shape)
 
-    RAT7MSeqDataset.vis_seq(seq, '/media/mynewdrive/datasets/rat7m/vis', idx)
+    # import matplotlib
+    # import matplotlib.pyplot as plt
+    # matplotlib.use('TkAgg')
+
+    # fig = plt.figure(figsize=(10, 10))
+    # ax = fig.add_subplot(121)
+    # ax.imshow(X.permute(1, 2, 0).numpy().astype(np.uint8))
+
+    # ax = fig.add_subplot(122)
+    # ax.imshow(y.sum(0).numpy())
+
+    # plt.show(block=True)
+    # input("Press Enter to continue...")

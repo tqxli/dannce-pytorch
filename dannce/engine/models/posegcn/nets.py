@@ -2,9 +2,10 @@ from functools import reduce
 import torch
 import torch.nn as nn
 
-from dannce.engine.models.posegcn.gcn_blocks import _ResGraphConv, SemGraphConv, ModulatedGraphConv, _GraphConv
+from dannce.engine.models.posegcn.gcn_blocks import _ResGraphConv, SemGraphConv, ModulatedGraphConv, _GraphConv, GraphUNet
 from dannce.engine.models.posegcn.non_local import _GraphNonLocal
 from dannce.engine.models.posegcn.utils import *
+from dannce.engine.models.transformer.layer import MLP
 
 import dannce.engine.data.ops as ops
 
@@ -59,14 +60,22 @@ class PoseGCN(nn.Module):
 
         # construct GCN layers
         self.use_features = use_features = model_params.get("use_features", False)
+        self.fusion_mlp = fusion_mlp = model_params.get("fusion_mlp", False)
+        self.mlp_out = mlp_out = model_params.get("mlp_out", False)
 
         # self.gconv_input = _GraphConv(adj, input_dim, hid_dim, dropout, base_block=base_block, norm_type=norm_type)
         self.gconv_input = []
-        self.compressed = self.pose_generator.compressed
+        try:
+            self.compressed = self.pose_generator.compressed
+        except: 
+            self.compressed = self.pose_generator.posenet.compressed
         # use multi-scale features extracted from decoder layers
         if use_features:
             self.multi_scale_fdim = 128+64+32 if self.compressed else 256+128+64
-            self.fusion_layer = nn.Conv1d(self.multi_scale_fdim, fuse_dim, kernel_size=1)
+            if fusion_mlp:
+                self.fusion_layer = MLP(self.multi_scale_fdim, [256, 512], fuse_dim, 3)
+            else:
+                self.fusion_layer = nn.Conv1d(self.multi_scale_fdim, fuse_dim, kernel_size=1)
             self.gconv_input.append(_GraphConv(adj, input_dim+fuse_dim, hid_dim, dropout, base_block, norm_type))
         else:
             self.gconv_input.append(_GraphConv(adj, input_dim, hid_dim, dropout, base_block, norm_type))
@@ -94,8 +103,11 @@ class PoseGCN(nn.Module):
         
         self.gconv_input = nn.Sequential(*self.gconv_input)
         self.gconv_layers = nn.Sequential(*gconv_layers)
-        self.gconv_output = gconv_block(hid_dim, input_dim, adj)
-
+        if mlp_out:
+            self.gconv_output = MLP(n_joints*hid_dim, hidden_dim=[512, 256], output_dim=n_joints*3, num_layers=3, is_activation_last=False)
+        else:
+            self.gconv_output = gconv_block(hid_dim, input_dim, adj)
+        
         # self.aggre = model_params.get("aggre", None)
         #if self.aggre == "mlp":
         #    self.aggre_layer = MLP(2*n_joints*input_dim, n_joints*input_dim)
@@ -149,20 +161,23 @@ class PoseGCN(nn.Module):
                 f2 = f2.reshape(*f2.shape[:2], -1)
                 f1 = f1.reshape(-1, self.n_instances, *f1.shape[1:]).permute(0, 2, 1, 3)
                 f1 = f1.reshape(*f1.shape[:2], -1)
-
-            f = self.fusion_layer(torch.cat((f3, f2, f1), dim=1))
+            
+            if self.fusion_mlp:
+                f = self.fusion_layer(torch.cat((f3, f2, f1), dim=1).permute(0, 2, 1))
+                f = f.permute(0, 2, 1)
+            else:
+                f = self.fusion_layer(torch.cat((f3, f2, f1), dim=1))
 
             x = torch.cat((f.permute(0, 2, 1), x), dim=-1)
         
         x = self.gconv_input(x)
         x = self.gconv_layers(x)
+        if self.mlp_out:
+            x = x.reshape(x.shape[0], -1)
+
         x = self.gconv_output(x)
         
         x = x.reshape(init_poses.shape[0], -1, 3).transpose(2, 1).contiguous() #[n, 3, 23]
-
-        # if self.aggre is not None:
-        #     x = self.aggre_layer(torch.cat((x, init_poses.transpose(2, 1)), dim=-1).reshape(init_poses.shape[0], -1).contiguous())
-        #     x = x.reshape(init_poses.shape[0], -1, 3).contiguous().transpose(2, 1).contiguous()
 
         final_poses = x
         return final_poses
@@ -214,6 +229,45 @@ class PoseGCN_MultiStage(PoseGCN):
             poses.append(pose)
 
         return init_poses, poses, heatmaps        
+
+class PoseGCNEx(PoseGCN):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+    
+    def forward(self, volumes, grid_centers):
+        # initial pose generation from encoder-decoder
+        init_poses, heatmaps, inter_features = self.pose_generator(volumes, grid_centers)
+        init_poses_cut, heatmaps_cut = init_poses[:, :, :23], heatmaps[:, :23]
+        
+        final_poses = self.inference(init_poses_cut, grid_centers, heatmaps_cut, inter_features)
+
+        # print("Mean Euclidean correction:", torch.norm(final_poses, dim=1).mean())
+        return init_poses, final_poses, heatmaps
+
+class PoseGraphUNet(nn.Module):
+    def __init__(self, 
+            model_params,
+            pose_generator, 
+            n_instances=1,
+            n_joints=23,
+            t_dim=1,
+        ):
+        super(PoseGraphUNet, self).__init__()
+
+        self.pose_generator = pose_generator
+        self.graph_unet = GraphUNet(in_features=3, out_features=3)
+
+    def forward(self, volumes, grid_centers):
+        init_poses, heatmaps, inter_features = self.pose_generator(volumes, grid_centers)
+
+        com3d = torch.mean(grid_centers, dim=1).unsqueeze(-1) #[N, 3, 1]
+        nvox = round(grid_centers.shape[1]**(1/3))
+        vsize = (grid_centers[0, :, 0].max() - grid_centers[0, :, 0].min()) / nvox
+        init_poses = (init_poses - com3d) / vsize
+
+        final_poses = self.graph_unet(init_poses.permute(0, 2, 1)).permute(0, 2, 1)
+
+        return init_poses, final_poses, heatmaps
 
 if __name__ == "__main__":
     model = PoseGCN()

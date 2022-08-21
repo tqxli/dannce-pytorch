@@ -72,6 +72,9 @@ def train(params: Dict):
     logger.info("Initializing Network...")
     
     posenet = initialize_train(params, n_cams, 'cpu', logger)[0]
+    for name, param in posenet.named_parameters():
+        param.requires_grad = False
+
     model = build_model(
         posenet,
         custom_model_params

@@ -1,4 +1,5 @@
 from abc import abstractmethod
+from lib2to3.pytree import Base
 import imageio, os
 
 import numpy as np
@@ -64,6 +65,19 @@ class MSELoss(BaseLoss):
 
         return self.loss_weight * loss
 
+class BCELoss(BaseLoss):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def forward(self, heatmap_gt, heatmap_pred):
+        if len(heatmap_gt.shape) == 5:
+            heatmap_gt = heatmap_gt.permute(0, 4, 1, 2, 3)
+        
+        heatmap_pred = torch.sigmoid(heatmap_pred)
+        loss = F.binary_cross_entropy(heatmap_pred, heatmap_gt)
+
+        return self.loss_weight * loss
+
 class ReconstructionLoss(BaseLoss):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -102,6 +116,20 @@ class WeightedL1Loss(BaseLoss):
 
         return self.loss_weight * loss_mean
 
+class ConsistencyLoss(BaseLoss):
+    def __init__(self, method="l1", **kwargs):
+        super().__init__(**kwargs)
+        assert method in ["l1", "l2"]
+        self.method = method
+
+    def forward(self, kpts_gt, kpts_pred):
+        diff = torch.diff(kpts_pred, dim=0)
+        if self.method == 'l1':
+            loss_temp = torch.abs(diff).mean()
+        else:
+            loss_temp = (diff**2).sum(1).sqrt().mean()
+        return self.loss_weight * loss_temp
+
 class TemporalLoss(BaseLoss):
     def __init__(self, temporal_chunk_size, method="l1", downsample=1, **kwargs):
         super().__init__(**kwargs)
@@ -120,13 +148,39 @@ class TemporalLoss(BaseLoss):
             loss_temp = (diff**2).sum(1).sqrt().mean()
         return self.loss_weight * loss_temp
 
+class BoneVectorLoss(BaseLoss):
+    def __init__(self, body_profile="rat23", mask=None, **kwargs):
+        super().__init__(**kwargs)
+
+        self.animal = body_profile
+        self.limbs = torch.LongTensor(load_body_profile(body_profile)["limbs"]) #[n_limbs, 2]
+
+        if mask is not None:
+            x = torch.arange(len(self.limbs))
+            self.limbs = [self.limbs[l] for l in x if l not in mask]
+
+    def get_bone_vectors(self, kpts):
+        device = kpts.device
+        kpts_from = kpts[:, :, self.limbs[:, 0].to(device)] #[bs, 3, n_limbs]
+        kpts_to = kpts[:, :, self.limbs[:, 1].to(device)] #[bs, 3, n_limbs]   
+
+        return kpts_from - kpts_to     
+
+    def forward(self, kpts_gt, kpts_pred):
+        bvec_gt = self.get_bone_vectors(kpts_gt)
+        bvec_pred = self.get_bone_vectors(kpts_pred)
+
+        loss = torch.norm(bvec_gt-bvec_pred, dim=1).mean()
+        return loss * self.loss_weight
+
 class BoneLengthLoss(BaseLoss):
-    def __init__(self, priors, body_profile="rat23", mask=None, **kwargs):
+    def __init__(self, priors, body_profile="rat23", mask=None, std_multiplier=1, **kwargs):
         super().__init__(**kwargs)
 
         self.animal = body_profile
         self.limbs = torch.LongTensor(load_body_profile(body_profile)["limbs"]) #[n_limbs, 2]
         self.priors = np.load(priors, allow_pickle=True) #[n_limbs, 2]
+        self.std_multiplier = std_multiplier
 
         # consider mask out some of the constraints (e.g. Snout-SpineF, 2)
         self.mask = mask
@@ -140,7 +194,7 @@ class BoneLengthLoss(BaseLoss):
             if (do_masking) and (idx in self.mask):
                 self.intervals.append([-10000, 10000])
             else:
-                self.intervals.append([mean-std, mean+std])
+                self.intervals.append([mean-self.std_multiplier*std, mean+self.std_multiplier*std])
         
         self.intervals = torch.tensor(np.stack(self.intervals, axis=0), dtype=torch.float32).unsqueeze(0) #[1, n_limbs, 2]
         self.lbound, self.ubound = self.intervals[..., 0], self.intervals[..., 1] #[1, n_limbs]
@@ -157,6 +211,59 @@ class BoneLengthLoss(BaseLoss):
         loss = torch.maximum(lens - self.ubound.to(device), torch.zeros(())) + torch.maximum(self.lbound.to(device) - lens, torch.zeros(()))
 
         return self.loss_weight * loss.mean()
+
+class KCSLoss(BaseLoss):
+    def __init__(self, body_profile="rat23", **kwargs):
+        super().__init__(**kwargs)
+
+        self.animal = load_body_profile(body_profile)
+        self.n_joints = 23 #len(self.animal["joints_name"])
+        self.limbs = torch.LongTensor(self.animal["limbs"]) #[n_limbs, 2]
+        self._construct_c()
+        self.l1_loss = L1Loss()
+
+    def _construct_c(self):
+        C = torch.zeros(self.n_joints, self.n_joints)
+        for col, (r, t) in enumerate(self.limbs):
+            C[r, col] = 1
+            C[t, col] = -1
+        self.C = C
+
+    def forward(self, kpts_gt, kpts_pred):
+        # represent the keypoint predictions in the kinematic chain space
+        device = kpts_pred.device
+        C = self.C.to(device)
+        B_pred = torch.mm(kpts_pred, C)
+        B_gt = torch.mm(kpts_gt, C)
+        kcs_pred = torch.bmm(B_pred.permute(0, 2, 1), B_pred)
+        kcs_gt = torch.bmm(B_gt.permute(0, 2, 1), B_gt)
+
+        return self.loss_weight * self.l1_loss(kcs_gt, kcs_pred)
+
+class JointAngleLoss(KCSLoss):
+    def __init__(self, angle_prior, std_multiplier=1.0, **kwargs):
+        self.priors = np.load(angle_prior, allow_pickle=True)
+        super().__init__(**kwargs)
+
+        self.std_multiplier = std_multiplier
+        self._construct_intervals()
+    
+    def _construct_intervals(self):
+        mean, std = self.priors
+        self.lbound, self.ubound = mean-self.std_multiplier*std, mean+self.std_multiplier #[23, 23]
+        self.lbound, self.ubound = torch.from_numpy(self.lbound).unsqueeze(0), torch.from_numpy(self.ubound).unsqueeze(0)
+
+    def forward(self, kpts_gt, kpts_pred):
+        device = kpts_pred.device
+        C = self.C.to(device)
+        B = kpts_pred @ C
+        KCS = B.permute(0, 2, 1) @ B
+        angles = KCS / torch.norm(B.permute(0, 2, 1), dim=-1, keepdim=True) / torch.norm(B, dim=1, keepdim=True)
+
+        diff = torch.maximum(angles - self.ubound.to(device), torch.zeros(())) \
+            + torch.maximum(self.lbound.to(device) - angles, torch.zeros(())) #[B, 23, 23]
+
+        return self.loss_weight * torch.norm(diff, p=1)
 
 
 class BodySymmetryLoss(BaseLoss):
@@ -271,6 +378,36 @@ class GaussianRegLoss(BaseLoss):
             loss = F.binary_cross_entropy(heatmaps, gaussian_gt)
 
         return self.loss_weight * loss
+
+class PairConsistencyLoss(BaseLoss):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+    
+    def forward(self, kpts_gt, kpts_pred):
+        """
+        Assume each batch contains social volumes
+        kpts_gt, kpts_pred: [B*2, 3, n_joints]
+        """
+        kpts_gt = kpts_gt.reshape(-1, 2, *kpts_gt.shape[1:])
+        kpts_pred = kpts_pred.reshape(-1, 2, *kpts_pred.shape[1:]) #[B, 2, 3, n_joints]
+
+        kpts_gt = kpts_gt.reshape(-1, 2, *kpts_gt.shape[2:]) #[b, 2, 2, 3, n_joints]
+        kpts_pred = kpts_pred.reshape(-1, 2, *kpts_pred.shape[2:]) 
+        
+        gt_notnan = ~torch.isnan(kpts_gt[:, 0])
+        gt_counter_notnan = ~torch.isnan(kpts_gt[:, 1].flip(1))
+        notnan = gt_notnan & gt_counter_notnan 
+
+        if notnan.sum() == 0:
+            return kpts_pred.new_zeros((), requires_grad=True)
+        
+        animal1_pred = kpts_pred[:, 0] # [B//2, 2, 3, n_joints]
+        animal2_pred = kpts_pred[:, 1].flip(1) # also in order of [animal1, animal2]
+
+        loss = F.l1_loss(animal1_pred[notnan], animal2_pred[notnan], reduction='sum') / notnan.sum()
+
+        return loss * self.loss_weight
+
 
 class PairRepulsionLoss(BaseLoss):
     def __init__(self, delta=5, pairwise=False, **kwargs):

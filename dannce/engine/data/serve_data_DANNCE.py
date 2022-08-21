@@ -74,7 +74,7 @@ def prepare_data(
         )
 
     # enable temporal training
-    TEMPORAL_FLAG = (not prediction) and (params["use_temporal"]) #and (not valid)
+    TEMPORAL_FLAG = (not prediction) and (params.get("use_temporal", False)) #and (not valid)
     chunk_list = None
     if TEMPORAL_FLAG:
         samples, labels, chunk_list = prepare_temporal_seqs(params, samples, labels, downsample, valid, support)
@@ -689,8 +689,8 @@ def setup_dataloaders(train_dataset, valid_dataset, params):
     # current implementation returns chunked data
     if params["use_temporal"]:
         valid_batch_size = params["batch_size"] // params["temporal_chunk_size"]
-    elif params["social_training"]:
-        valid_batch_size = params["batch_size"] // 2
+    # elif params["social_training"]:
+    #     valid_batch_size = params["batch_size"] // 2
     else:
         valid_batch_size = params["batch_size"]
 
@@ -700,11 +700,11 @@ def setup_dataloaders(train_dataset, valid_dataset, params):
 
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset, batch_size=valid_batch_size, shuffle=True, collate_fn=collate_fn,
-        num_workers=valid_batch_size,
+        num_workers=1,
     )
     valid_dataloader = torch.utils.data.DataLoader(
         valid_dataset, valid_batch_size, shuffle=False, collate_fn=collate_fn,
-        num_workers=valid_batch_size
+        num_workers=1
     )
     return train_dataloader, valid_dataloader
 

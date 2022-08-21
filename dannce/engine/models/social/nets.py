@@ -29,9 +29,10 @@ class XIA(nn.Module):
         return k1.permute(1,2,0)
 
 class SocialXAttn(nn.Module):
-    def __init__(self, posenet, n_kpts=23, in_features=227, d_model=256):
+    def __init__(self, posenet, n_kpts=23, in_features=227, d_model=256, gcn=False):
         super().__init__()
         self.posenet = posenet
+        self.gcn = gcn
 
         self.n_kpts = n_kpts
         self.in_features = in_features
@@ -47,7 +48,8 @@ class SocialXAttn(nn.Module):
 
     def _freeze_stages(self):
         for name, param in self.posenet.named_parameters():
-            param.requires_grad = False
+            if 'output' not in name:
+                param.requires_grad = False
 
     def forward(self, volumes, grid_centers):
         # initial pose generation from encoder-decoder
@@ -78,7 +80,12 @@ class SocialXAttn(nn.Module):
         final_poses = self.linear_pose(cross_feats.permute(0, 2, 1)) #[B, 23, 3]
         final_poses = final_poses.permute(0, 2, 1)
 
-        return init_poses, final_poses, heatmaps
+        if not self.gcn:
+            return init_poses, final_poses, heatmaps
+        
+        final_poses *= vsize
+        final_poses += com3d
+        return final_poses, heatmaps, feature_pyramid
 
 
 

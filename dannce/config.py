@@ -445,6 +445,10 @@ def setup_train(params):
     # n_views, relevant lists will be duplicated in order to match n_views, if
     # possible.
     params["n_views"] = int(params["n_views"])
+    if params["dataset"] == "rat7m":
+        params["n_channels_out"] = 20  
+    elif params["dataset"] == "pair":
+        params["n_channels_out"] = 12
 
     params = adjust_loss_params(params)
 
@@ -646,3 +650,93 @@ def setup_predict(params):
         params["n_markers"] *= 2
 
     return params, valid_params
+
+def setup_com_train(params):
+    #os.environ["CUDA_VISIBLE_DEVICES"] = params["gpu_id"]
+
+    # MULTI_MODE is where the full set of markers is trained on, rather than
+    # the COM only. In some cases, this can help improve COMfinder performance.
+    params["chan_num"] = 1 if params["mono"] else params["n_channels_in"]
+    params["multi_mode"] = (params["n_channels_out"] > 1) & (params["n_instances"] == 1)
+    params["n_channels_out"] = params["n_channels_out"] + int(params["multi_mode"])
+
+    params["lr"] = float(params["lr"])
+
+    train_params = {
+        "dim_in": (
+            params["crop_height"][1] - params["crop_height"][0],
+            params["crop_width"][1] - params["crop_width"][0],
+        ),
+        "n_channels_in": params["n_channels_in"],
+        "batch_size": 1,
+        "n_channels_out": params["n_channels_out"],
+        "out_scale": params["sigma"],
+        # "camnames": camnames,
+        "crop_width": params["crop_width"],
+        "crop_height": params["crop_height"],
+        "downsample": params["downfac"],
+        "shuffle": False,
+        # "chunks": total_chunks,
+        "dsmode": params["dsmode"],
+        "mono": params["mono"],
+        "mirror": params["mirror"],
+    }
+
+    valid_params = deepcopy(train_params)
+    valid_params["shuffle"] = False
+    
+    return params, train_params, valid_params
+
+def setup_com_predict(params):
+    params["multi_mode"] = MULTI_MODE = params["n_channels_out"] > 1 & params["n_instances"] == 1
+    params["n_channels_out"] = params["n_channels_out"] + int(MULTI_MODE)
+    
+    # Grab the input file for prediction
+    params["label3d_file"] = grab_predict_label3d_file(index=params["label3d_index"])
+
+    print("Using camnames: {}".format(params["camnames"]))
+
+    params["experiment"] = {}
+    params["experiment"][0] = params
+
+    # For real mono training
+    params["chan_num"] = 1 if params["mono"] else params["n_channels_in"]
+    dh = (params["crop_height"][1] - params["crop_height"][0]) // params["downfac"]
+    dw = (params["crop_width"][1] - params["crop_width"][0]) // params["downfac"]
+    params["input_shape"] = (dh, dw)
+
+    if params["com_predict_weights"] is None:
+        wdir = params["com_train_dir"]
+        weights = os.listdir(wdir)
+        weights = [f for f in weights if (".pth" in f) and ('epoch' in f)]
+        weights = sorted(
+            weights, key=lambda x: int(x.split(".")[0].split("epoch")[-1])
+        )
+        weights = weights[-1]
+        params["com_predict_weights"] = os.path.join(wdir, weights)
+    
+    params["lr"] = float(params["lr"])
+    
+    predict_params = {
+        "dim_in": (
+            params["crop_height"][1] - params["crop_height"][0],
+            params["crop_width"][1] - params["crop_width"][0],
+        ),
+        "n_channels_in": params["n_channels_in"],
+        "batch_size": 1,
+        "n_channels_out": params["n_channels_out"],
+        "out_scale": params["sigma"],
+        "camnames": {0: params["camnames"]},
+        "crop_width": params["crop_width"],
+        "crop_height": params["crop_height"],
+        "downsample": params["downfac"],
+        "labelmode": "coord",
+        "chunks": params["chunks"],
+        "shuffle": False,
+        "dsmode": params["dsmode"],
+        "mono": params["mono"],
+        "mirror": params["mirror"],
+        "predict_flag": True,
+    }
+
+    return params, predict_params

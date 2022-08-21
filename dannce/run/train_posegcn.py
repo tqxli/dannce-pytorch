@@ -9,11 +9,13 @@ from dannce.engine.data import processing
 from dannce.engine.data.processing import savedata_tomat, savedata_expval
 import dannce.config as config
 import dannce.engine.models.posegcn.nets as gcn_nets
+from dannce.engine.models.social.nets import SocialXAttn
 from dannce.engine.models.nets import initialize_model, initialize_train
 from dannce.engine.trainer.posegcn_trainer import GCNTrainer
 from dannce.config import print_and_set
 from dannce.engine.logging.logger import setup_logging, get_logger
 from dannce.interface import make_folder
+from dannce.engine import inference
 from dannce.run_utils import *
 
 process = psutil.Process(os.getpid())
@@ -82,8 +84,25 @@ def train(params: Dict):
     logger.info("Initializing Network...")
 
     # first stage: pose generator    
-    params["use_features"] = custom_model_params.get("use_features", False)    
-    pose_generator = initialize_train(params, n_cams, 'cpu', logger)[0]
+    if custom_model_params.get("social_attn", False):
+        params_attn = deepcopy(params)
+        params_attn["use_features"] = True
+        params_attn["train_mode"] = "new"
+        pose_generator = initialize_train(params_attn, n_cams, 'cpu', logger)[0]
+        pose_generator = SocialXAttn(pose_generator, gcn=True)
+        
+        ckpt = torch.load(params["dannce_finetune_weights"])["state_dict"]
+        try:
+            pose_generator.load_state_dict(ckpt)
+        except:
+            logger.info("Cannot load checkpoints for the social attention model")
+            
+        # for name, param in pose_generator.named_parameters():
+        #     if 'linear_pose' not in name:
+        #         param.requires_grad = False
+    else:
+        params["use_features"] = custom_model_params.get("use_features", False)    
+        pose_generator = initialize_train(params, n_cams, 'cpu', logger)[0]
 
     # second stage: pose refiner
     model_class = getattr(gcn_nets, custom_model_params.get("model", "PoseGCN"))
@@ -91,7 +110,7 @@ def train(params: Dict):
         custom_model_params,
         pose_generator,
         n_instances=n_instances,
-        n_joints=params["n_channels_out"],
+        n_joints=params["n_channels_out"] // 2 if custom_model_params.get("social_attn", False) else params["n_channels_out"],
         t_dim=params.get("temporal_chunk_size", 1),
     )
     if 'checkpoint' in custom_model_params.keys():
@@ -126,6 +145,8 @@ def train(params: Dict):
         multi_stage=(custom_model_params.get("model") == "PoseGCN_MultiStage"),
         relpose=custom_model_params.get("relpose", True),
         dual_sup=custom_model_params.get("dual_sup", False),
+        reg=custom_model_params.get("reg", False),
+        reg_weight=custom_model_params.get("reg_weight", 0.1)
     )
 
     trainer.train()
@@ -170,6 +191,26 @@ def predict(params):
         n_joints=params["n_channels_out"],
         t_dim=params.get("temporal_chunk_size", 1),
     ).to(device)
+
+    if params.get("inference_ttt", None) is not None:
+        ttt_params = params["inference_ttt"]
+        model_params = [p for p in model.parameters() if p.requires_grad]
+        optimizer = torch.optim.Adam(model_params, lr=params["lr"], eps=1e-7)
+        save_data = inference.inference_ttt(
+            predict_generator,
+            params,
+            model,
+            optimizer,
+            device,
+            partition,
+            online=ttt_params.get("online", False),
+            niter=ttt_params.get("niter", 20),
+            transform=ttt_params.get("transform", False),
+            downsample=ttt_params.get("downsample", 1),
+            gcn=True,
+        )
+        inference.save_results(params, save_data)
+        return 
 
     # load predict model
     model.load_state_dict(torch.load(params["dannce_predict_model"])['state_dict'])
@@ -222,7 +263,7 @@ def predict(params):
                 write=True,
                 data=save_data,
                 tcoord=False,
-                num_markers=params["n_markers"],
+                num_markers=final_poses.shape[-1],
                 pmax=True,
             )
             p_n = savedata_expval(
@@ -231,7 +272,7 @@ def predict(params):
                 write=True,
                 data=save_data_init,
                 tcoord=False,
-                num_markers=params["n_markers"],
+                num_markers=init_poses.shape[-1],
                 pmax=True,
             )
 
@@ -274,7 +315,7 @@ def predict(params):
                 final_poses += com3d
 
         if custom_model_params.get("predict_diff", True):
-            final_poses += init_poses
+            final_poses += init_poses[..., :final_poses.shape[-1]]
 
         probmap = torch.amax(heatmaps, dim=(2, 3, 4)).squeeze(0).detach().cpu().numpy()
         heatmaps = heatmaps.squeeze().detach().cpu().numpy()
@@ -308,7 +349,7 @@ def predict(params):
         write=True,
         data=save_data,
         tcoord=False,
-        num_markers=params["n_markers"],
+        num_markers=final_poses.shape[-1],
         pmax=True,
     )
     
@@ -319,7 +360,7 @@ def predict(params):
         write=True,
         data=save_data_init,
         tcoord=False,
-        num_markers=params["n_markers"],
+        num_markers=init_poses.shape[-1],
         pmax=True,
     ) 
 

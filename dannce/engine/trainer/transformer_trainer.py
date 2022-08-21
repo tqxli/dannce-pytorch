@@ -1,3 +1,4 @@
+from matplotlib import scale
 import torch
 import os, csv
 from tqdm import tqdm
@@ -9,6 +10,9 @@ import dannce.engine.models.loss as custom_losses
 class TransformerTrainer(DannceTrainer):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        
+        self.loss_sup = custom_losses.L1Loss()
+        self.loss.loss_fcns.pop("L1Loss")
     
     def _rewrite_csv(self):
         stats_file = open(os.path.join(self.params["dannce_train_dir"], "training.csv"), 'w', newline='')
@@ -49,19 +53,27 @@ class TransformerTrainer(DannceTrainer):
             if not isinstance(keypoints_3d_pred, list):
                 keypoints_3d_gt, keypoints_3d_pred, heatmaps = self._split_data(keypoints_3d_gt, keypoints_3d_pred, heatmaps)
             
+            # normalize absolute 3D poses to voxel coordinates
             com3d = torch.mean(grid_centers, dim=1).unsqueeze(-1) #[N, 3, 1]
             nvox = round(grid_centers.shape[1]**(1/3))
             vsize = (grid_centers[0, :, 0].max() - grid_centers[0, :, 0].min()) / nvox
             
             keypoints_3d_gt = (keypoints_3d_gt - com3d) / vsize #[N, 3, J]
 
-            keypoints_3d_gt = keypoints_3d_gt.repeat(6, 1, 1, 1) #[1, N, 3, J]
+            keypoints_3d_gt = keypoints_3d_gt.repeat(keypoints_3d_pred.shape[0], 1, 1, 1) #[6, N, 3, J]
             keypoints_3d_pred = keypoints_3d_pred.transpose(3, 2) #[6, N, 3, J]
 
-            keypoints_3d_pred = keypoints_3d_pred.reshape(-1, *keypoints_3d_pred.shape[2:])
+            keypoints_3d_pred = keypoints_3d_pred.reshape(-1, *keypoints_3d_pred.shape[2:]) #[6*N, 3, J]
             keypoints_3d_gt = keypoints_3d_gt.reshape(-1, *keypoints_3d_gt.shape[2:])
 
+            pose_loss = self.loss_sup(keypoints_3d_gt, keypoints_3d_pred)
+
+            # scale back for skeleton loss
+            keypoints_3d_pred, keypoints_3d_gt = keypoints_3d_pred * vsize, keypoints_3d_gt * vsize
+
             total_loss, loss_dict = self.loss.compute_loss(keypoints_3d_gt, keypoints_3d_pred, heatmaps, grid_centers, aux)
+            total_loss += pose_loss
+            loss_dict["L1Loss"] = pose_loss.clone().detach().cpu().item()
             
             result = f"Epoch[{epoch}/{self.epochs}] " + "".join(f"train_{loss}: {val:.4f} " for loss, val in loss_dict.items())
             pbar.set_description(result)
@@ -72,8 +84,6 @@ class TransformerTrainer(DannceTrainer):
             epoch_loss_dict = self._update_step(epoch_loss_dict, loss_dict)
             
             if len(self.metrics.names) != 0: 
-                keypoints_3d_gt *=  vsize
-                keypoints_3d_pred *= vsize 
                 metric_dict = self.metrics.evaluate(keypoints_3d_pred.detach().cpu().numpy(), keypoints_3d_gt.clone().cpu().numpy())
                 
                 epoch_metric_dict = self._update_step(epoch_metric_dict, metric_dict)
@@ -100,20 +110,24 @@ class TransformerTrainer(DannceTrainer):
 
                 keypoints_3d_gt, keypoints_3d_pred, heatmaps = self._split_data(keypoints_3d_gt, keypoints_3d_pred, heatmaps)
 
+                # normalize absolute 3D poses to voxel coordinates
                 com3d = torch.mean(grid_centers, dim=1).unsqueeze(-1) #[N, 3, 1]
                 nvox = round(grid_centers.shape[1]**(1/3))
                 vsize = (grid_centers[0, :, 0].max() - grid_centers[0, :, 0].min()) / nvox
-                keypoints_3d_gt = (keypoints_3d_gt - com3d) / vsize #[N, J, 3]
-
-                keypoints_3d_pred = keypoints_3d_pred[-1].transpose(2, 1)
                 
-                _, loss_dict = self.loss.compute_loss(keypoints_3d_gt, keypoints_3d_pred, heatmaps, grid_centers, aux)
+                keypoints_3d_gt = (keypoints_3d_gt - com3d) / vsize #[N, 3, J]
+                keypoints_3d_pred = keypoints_3d_pred[-1].transpose(2, 1)
 
+                pose_loss = self.loss_sup(keypoints_3d_gt, keypoints_3d_pred)
+
+                # scale back for skeleton loss
+                keypoints_3d_pred, keypoints_3d_gt = keypoints_3d_pred * vsize, keypoints_3d_gt * vsize                
+                _, loss_dict = self.loss.compute_loss(keypoints_3d_gt, keypoints_3d_pred, heatmaps, grid_centers, aux)
+                loss_dict["L1Loss"] = pose_loss.clone().detach().cpu().item()
+                
                 epoch_loss_dict = self._update_step(epoch_loss_dict, loss_dict)
                 
                 if len(self.metrics.names) != 0: 
-                    keypoints_3d_gt *=  vsize
-                    keypoints_3d_pred *= vsize 
                     metric_dict = self.metrics.evaluate(keypoints_3d_pred.detach().cpu().numpy(), keypoints_3d_gt.clone().cpu().numpy())
                     
                     epoch_metric_dict = self._update_step(epoch_metric_dict, metric_dict)
