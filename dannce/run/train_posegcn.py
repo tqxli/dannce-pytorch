@@ -263,7 +263,7 @@ def predict(params):
                 write=True,
                 data=save_data,
                 tcoord=False,
-                num_markers=params["n_markers"],
+                num_markers=final_poses.shape[-1],
                 pmax=True,
             )
             p_n = savedata_expval(
@@ -272,7 +272,7 @@ def predict(params):
                 write=True,
                 data=save_data_init,
                 tcoord=False,
-                num_markers=params["n_markers"],
+                num_markers=init_poses.shape[-1],
                 pmax=True,
             )
 
@@ -315,7 +315,7 @@ def predict(params):
                 final_poses += com3d
 
         if custom_model_params.get("predict_diff", True):
-            final_poses += init_poses
+            final_poses += init_poses[..., :final_poses.shape[-1]]
 
         probmap = torch.amax(heatmaps, dim=(2, 3, 4)).squeeze(0).detach().cpu().numpy()
         heatmaps = heatmaps.squeeze().detach().cpu().numpy()
@@ -349,7 +349,7 @@ def predict(params):
         write=True,
         data=save_data,
         tcoord=False,
-        num_markers=params["n_markers"],
+        num_markers=final_poses.shape[-1],
         pmax=True,
     )
     
@@ -360,7 +360,7 @@ def predict(params):
         write=True,
         data=save_data_init,
         tcoord=False,
-        num_markers=params["n_markers"],
+        num_markers=init_poses.shape[-1],
         pmax=True,
     ) 
 
