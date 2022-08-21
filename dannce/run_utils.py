@@ -238,7 +238,8 @@ def make_rat7m(
     logger,
     root="/media/mynewdrive/datasets/rat7m",
     annot="final_annotations_w_correct_clusterIDs.pkl",
-    viddir="videos_concat"
+    viddir="videos_concat",
+    merge_pair=False,
 ):
     # load annotations from disk
     annot_dict = np.load(os.path.join(root, annot), allow_pickle=True)
@@ -338,6 +339,18 @@ def make_rat7m(
         logger,
         rat7m=True, rat7m_npy=[npydir, missing_npydir, missing_samples]
     )
+
+    if merge_pair:
+        train_generator_pair, valid_generator_pair, _ = make_pair(params,  
+            base_params,
+            shared_args,
+            shared_args_train,
+            shared_args_valid,
+            logger,
+            merge_pair=True
+        )
+        train_generator = torch.utils.data.ConcatDataset([train_generator, train_generator_pair.dataset])
+        valid_generator = torch.utils.data.ConcatDataset([valid_generator, valid_generator_pair.dataset])
 
     train_dataloader, valid_dataloader = serve_data_DANNCE.setup_dataloaders(train_generator, valid_generator, params)
      
@@ -948,7 +961,8 @@ def make_dataset_com_inference(params, predict_params):
 def _convert_pair_to_label3d(
     root, metadata, camnames, 
     experiments, total_n, count,
-    samples, datadict, datadict_3d, com3d_dict, cameras
+    samples, datadict, datadict_3d, com3d_dict, cameras,
+    merge_pair=False
 ):
     exps = []
     for exp in tqdm(experiments):
@@ -972,6 +986,14 @@ def _convert_pair_to_label3d(
             pose3d2 = data.loc[:, data.columns.str.contains("absolutePosition_an2")].to_numpy() 
             pose3d1 = np.transpose(np.reshape(pose3d1, (pose3d1.shape[0], -1, 3)), (0, 2, 1))
             pose3d2 = np.transpose(np.reshape(pose3d2, (pose3d2.shape[0], -1, 3)), (0, 2, 1))
+            if merge_pair:
+                pair_index = np.array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 12, 13])
+                pose3d1_r7m = np.ones((*pose3d1.shape[:2], 20)) * np.nan
+                pose3d1_r7m[:, :, pair_index] = pose3d1
+                pose3d1 = pose3d1_r7m
+                pose3d2_r7m = np.ones((*pose3d2.shape[:2], 20)) * np.nan
+                pose3d2_r7m[:, :, pair_index] = pose3d2
+                pose3d2 = pose3d2_r7m
             com3d1 = data.loc[:, data.columns.str.contains("centerOfmass_an1")].to_numpy() 
             com3d2 = data.loc[:, data.columns.str.contains("centerOfmass_an2")].to_numpy() 
 
@@ -1034,6 +1056,7 @@ def make_pair(
     root="/media/mynewdrive/datasets/PAIR/PAIR-R24M-Dataset",
     viddir='videos_merged',
     train=True,
+    merge_pair=False,
 ):
     # fix random seed
     np.random.seed(10241024)
@@ -1057,12 +1080,14 @@ def make_pair(
     samples, datadict, datadict_3d, com3d_dict, cameras, exps_train = _convert_pair_to_label3d(
         root, metadata, camnames, experiments_train, 1000, 0, 
         samples, datadict, datadict_3d, com3d_dict, cameras,
+        merge_pair
     )
 
     partition["train_sampleIDs"] = sorted(samples)
     samples, datadict, datadict_3d, com3d_dict, cameras, exps_valid = _convert_pair_to_label3d(
         root, metadata, camnames, experiments_test, 100, len(exps_train)*2, 
-        samples, datadict, datadict_3d, com3d_dict, cameras
+        samples, datadict, datadict_3d, com3d_dict, cameras,
+        merge_pair
     )
     partition["valid_sampleIDs"] = sorted(list(set(samples) - set(partition["train_sampleIDs"])))
     samples = np.array(samples)

@@ -56,6 +56,7 @@ _param_defaults_shared = {
 }
 _param_defaults_dannce = {
     "dataset": "label3d",
+    "dataset_args": None,
     "metric": ["euclidean_distance_3D"],
     "sigma": 10,
     "lr": 1e-3,

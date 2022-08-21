@@ -60,8 +60,14 @@ def dannce_train(params: Dict):
         set_random_seed(params["random_seed"])
         logger.info("***Fix random seed as {}***".format(params["random_seed"]))
 
+    spec_args = params["dataset_args"]
+    spec_args = {} if spec_args is None else spec_args
+
     if params["dataset"] == "rat7m":
-        dataset_preparer = make_rat7m  
+        dataset_preparer = make_rat7m
+    elif params["dataset"] == "rat7m+pair":
+        dataset_preparer = make_rat7m
+        spec_args = {**spec_args, "merge_pair": True}
     elif params["dataset"] == "pair":
         dataset_preparer = make_pair
     else:
@@ -73,7 +79,8 @@ def dannce_train(params: Dict):
         shared_args,
         shared_args_train,
         shared_args_valid,
-        logger
+        logger,
+        **spec_args
     )
 
     # Build network
