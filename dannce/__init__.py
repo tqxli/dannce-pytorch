@@ -85,7 +85,6 @@ _param_defaults_dannce = {
     "com_thresh": None,
     "start_sample": None,
     "max_num_samples": None,
-    "new_n_channels_out": None,
     "cam3_train": None,
     "debug_volume_tifdir": None,
     "debug_train_volume_tifdir": None,

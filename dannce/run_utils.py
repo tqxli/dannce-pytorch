@@ -40,12 +40,6 @@ def make_folder(key: Text, params: Dict):
             os.makedirs(params[key])
     else:
         raise ValueError(key + " must be defined.")
-    
-    # if key == "dannce_train_dir":
-    #     curr_time = datetime.now().strftime('%Y-%m-%d-%H-%M')
-    #     new_dir = os.path.join(params[key], curr_time)
-    #     os.makedirs(new_dir)
-    #     params[key] = new_dir
 
 def make_dataset(
         params,  
@@ -343,7 +337,6 @@ def make_rat7m(
      
     return train_dataloader, valid_dataloader, len(camnames[0])
 
-
 def _make_data_npy(
         params, base_params, shared_args, shared_args_train, shared_args_valid,
         datadict, datadict_3d, com3d_dict, 
@@ -607,7 +600,6 @@ def _make_data_mem(
     valid_generator = genfunc(**args_valid)
 
     return train_generator, valid_generator
-
 
 def get_segmentation_model(params, valid_params, vids):
     valid_params_sil = deepcopy(valid_params)

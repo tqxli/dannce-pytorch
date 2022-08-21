@@ -42,9 +42,6 @@ def prepare_data(
             nFrames *= 10
         
         nKeypoints = params["n_channels_out"]
-        if "new_n_channels_out" in params.keys():
-            if params["new_n_channels_out"] is not None:
-                nKeypoints = params["new_n_channels_out"]
 
         for i in range(len(labels)):
             labels[i]["data_3d"] = np.zeros((nFrames, 3 * nKeypoints))

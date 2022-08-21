@@ -117,25 +117,6 @@ def dannce_predict(params: Dict):
     model = initialize_model(params, len(camnames[0]), device)
 
     # load predict model
-    if params.get("inference_ttt", None) is not None:
-        ttt_params = params["inference_ttt"]
-        model_params = [p for p in model.parameters() if p.requires_grad]
-        optimizer = torch.optim.Adam(model_params, lr=params["lr"], eps=1e-7)
-        save_data = inference.inference_ttt(
-            predict_generator,
-            params,
-            model,
-            optimizer,
-            device,
-            partition,
-            online=ttt_params.get("online", False),
-            niter=ttt_params.get("niter", 20),
-            transform=ttt_params.get("transform", False),
-            downsample=ttt_params.get("downsample", 1),
-        )
-        inference.save_results(params, save_data)
-        return
-
     model.load_state_dict(torch.load(params["dannce_predict_model"])['state_dict'])
     model.eval()
 

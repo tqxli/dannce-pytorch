@@ -1,12 +1,4 @@
 """Entrypoints for dannce training and prediction."""
-import dannce.run.train_voxelpose as voxelpose
-import dannce.run.train_motiondannce as motiondannce
-import dannce.run.train_backbone2d as backbone2d
-import dannce.run.train_pose2d as pose2d
-import dannce.run.train_dannce_dbbox as dbbox
-import dannce.run.train_posegcn as posegcn
-import dannce.run.train_transformer as trans
-import dannce.run.train_crossattn as socialattn
 from dannce.interface import (
     com_predict,
     com_train,
@@ -81,28 +73,28 @@ def sbatch_dannce_train_cli():
     os.system(cmd)
 
 
-# def sbatch_com_predict_cli():
-#     """CLI to submit com predition through sbatch using the slurm config specified in the base config."""
-#     base_config = parse_sbatch()
-#     slurm_config = load_params(load_params(base_config)["slurm_config"])
-#     cmd = 'sbatch %s --wrap="%s com-predict %s"' % (
-#         slurm_config["com_predict"],
-#         slurm_config["setup"],
-#         base_config,
-#     )
-#     os.system(cmd)
+def sbatch_com_predict_cli():
+    """CLI to submit com predition through sbatch using the slurm config specified in the base config."""
+    base_config = parse_sbatch()
+    slurm_config = load_params(load_params(base_config)["slurm_config"])
+    cmd = 'sbatch %s --wrap="%s com-predict %s"' % (
+        slurm_config["com_predict"],
+        slurm_config["setup"],
+        base_config,
+    )
+    os.system(cmd)
 
 
-# def sbatch_com_train_cli():
-#     """CLI to submit com training through sbatch using the slurm config specified in the base config."""
-#     base_config = parse_sbatch()
-#     slurm_config = load_params(load_params(base_config)["slurm_config"])
-#     cmd = 'sbatch %s --wrap="%s com-train %s"' % (
-#         slurm_config["com_train"],
-#         slurm_config["setup"],
-#         base_config,
-#     )
-#     os.system(cmd)
+def sbatch_com_train_cli():
+    """CLI to submit com training through sbatch using the slurm config specified in the base config."""
+    base_config = parse_sbatch()
+    slurm_config = load_params(load_params(base_config)["slurm_config"])
+    cmd = 'sbatch %s --wrap="%s com-train %s"' % (
+        slurm_config["com_train"],
+        slurm_config["setup"],
+        base_config,
+    )
+    os.system(cmd)
 
 
 def com_predict_cli():
@@ -151,47 +143,6 @@ def dannce_train_cli():
     args = parse_clargs(parser, model_type="dannce", prediction=False)
     params = build_clarg_params(args, dannce_net=True, prediction=False)
     dannce_train(params)
-
-def custom_model_train_cli():
-    _TYPES = {
-        'motiondannce': motiondannce.train,
-        'voxelpose3d': voxelpose.train,
-        'backbone2d': backbone2d.train,
-        'dbbox': dbbox.train,
-        'posegcn': posegcn.train,
-        'transformer': trans.train,
-        'socialattn': socialattn.train,
-        'pose2d': pose2d.train,
-    }
-
-    parser = argparse.ArgumentParser(
-        description="Custom model train CLI",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    parser.set_defaults(**{**_param_defaults_shared, **_param_defaults_dannce})
-    args = parse_clargs(parser, model_type="dannce", prediction=False)
-    params = build_clarg_params(args, dannce_net=True, prediction=False)
-    _TYPES[params["custom_model"]["name"]](params)
-
-def custom_model_predict_cli():
-    _TYPES = {
-        'motiondannce': motiondannce.inference,
-        'posegcn': posegcn.predict,
-        'posegcn-multi': posegcn.predict_multi_animal,
-        'socialattn': socialattn.predict,
-        'pose2d': pose2d.predict,
-    }
-
-    parser = argparse.ArgumentParser(
-        description="Custom model prediction CLI",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-
-    parser.set_defaults(**{**_param_defaults_shared, **_param_defaults_dannce})
-    args = parse_clargs(parser, model_type="dannce", prediction=True)
-    params = build_clarg_params(args, dannce_net=True, prediction=True)
-
-    _TYPES[params["custom_model"]["name"]](params)
 
 def build_clarg_params(
     args: argparse.Namespace, dannce_net: bool, prediction: bool
@@ -356,13 +307,6 @@ def add_shared_train_args(
         dest="loss",
         help="Loss function to use during training. See losses.py.",
     )
-    # Taken from changes by robb
-    parser.add_argument(
-        "--huber-delta",
-        dest="huber-delta",
-        type=float,
-        help="Delta Value if using huber loss",
-    )
     parser.add_argument(
         "--epochs", dest="epochs", type=int, help="Number of epochs to train."
     )
@@ -505,12 +449,7 @@ def add_dannce_shared_args(
         type=ast.literal_eval,
         help="List denoting last 3d kernel size. Ex: --new-last-kernel-size=[3,3,3]",
     )
-    parser.add_argument(
-        "--new-n-channels_out",
-        dest="new_n_channels_out",
-        type=int,
-        help="When finetuning, this refers to the new number of predicted keypoints.",
-    )
+
     parser.add_argument(
         "--n-layers-locked",
         dest="n_layers_locked",
@@ -738,30 +677,6 @@ def add_dannce_train_args(
         "--n-support-chunks",
         type=int,
         dest="n_support_chunks",
-    )
-
-    parser.add_argument(
-        "--separation-loss-weight",
-        type=float,
-        dest="separation_loss_weight",
-    )
-
-    parser.add_argument(
-        "--separation-delta",
-        type=float,
-        dest="separation_delta",
-    )
-
-    # parser.add_argument(
-    #     "--lr-scheduler",
-    #     type=str,
-    #     dest="lr_scheduler",
-    # )
-
-    parser.add_argument(
-        "--symmetry-loss-weight",
-        type=float,
-        dest="symmetry_loss_weight",
     )
     
     return parser

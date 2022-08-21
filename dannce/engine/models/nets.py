@@ -1,4 +1,3 @@
-from pyexpat import features
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -79,26 +78,6 @@ class EncoderDecoder(EncoderDecorder_DANNCE):
         self.decoder_upsample2 = deconv_block(128, 64, 2, 2, normalization, [input_shape//2]*3)
         self.decoder_res1 = conv_block(64, 32, normalization, [input_shape]*3)
         self.decoder_upsample1 = deconv_block(64, 32, 2, 2, normalization, [input_shape]*3)
-
-        # hidden_dims = [int(bottleneck_dim / 2*i) for i in range(n_layers)]
-
-        # encoder = [
-        #     conv_block(in_channels, hidden_dims[-1]), 
-        #     Pool3DBlock(2)
-        # ]
-        # for i in range(n_layers-1):
-        #     encoder.append(conv_block(hidden_dims[-(i+2)], hidden_dims[-(i+3)], [input_shape // 2**i]*3))
-        #     if i != n_layers-2:
-        #         encoder.append(Pool3DBlock(2))
-        
-        # self.encoder = nn.Sequential(*encoder)
-
-        # decoder = []
-        # for i in range(n_layers-1):
-        #     decoder.append(conv_block(hidden_dims[i], hidden_dims[i+1], [input_shape // 2**(n_layers-i-2)]*3))
-        #     decoder.append(deconv_block(hidden_dims[i], hidden_dims[i+1], 2, 2, [input_shape // 2**(n_layers-1)]*3))
-        
-        # self.decoder = nn.Sequential(*decoder)
 
 class DANNCE(nn.Module):
     def __init__(
@@ -295,10 +274,6 @@ def initialize_train(params, n_cams, device, logger):
             state_dict.pop("output_layer.bias", None)
 
         model.load_state_dict(state_dict, strict=False)
-
-        # for name, param in model.named_parameters():
-        #     if 'encoder_decoder.encoder' in name:
-        #         param.requires_grad = False
  
         model_params = [p for p in model.parameters() if p.requires_grad]
         optimizer = torch.optim.Adam(model_params, lr=params["lr"], eps=1e-7)

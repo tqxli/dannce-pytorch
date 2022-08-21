@@ -1343,7 +1343,7 @@ def initAvgMax(y_train, y_valid, Xtg, Xvg, params):
         (
             y_train.shape[0],
             *gridsize,
-            params["new_n_channels_out"],
+            params["n_channels_out"],
         ),
         dtype="float32",
     )
@@ -1352,7 +1352,7 @@ def initAvgMax(y_train, y_valid, Xtg, Xvg, params):
         (
             y_valid.shape[0],
             *gridsize,
-            params["new_n_channels_out"],
+            params["n_channels_out"],
         ),
         dtype="float32",
     )

@@ -488,7 +488,7 @@ def setup_train(params):
         ),
         "n_channels_in": params["n_channels_in"],
         "batch_size": 1,
-        "n_channels_out": params["new_n_channels_out"],
+        "n_channels_out": params["n_channels_out"],
         "out_scale": params["sigma"],
         "crop_width": params["crop_width"],
         "crop_height": params["crop_height"],
@@ -602,10 +602,7 @@ def setup_predict(params):
     else:
         params["save_tag"] = params["start_batch"]
 
-    if params["new_n_channels_out"] is not None:
-        params["n_markers"] = params["new_n_channels_out"]
-    else:
-        params["n_markers"] = params["n_channels_out"]
+    params["n_markers"] = params["n_channels_out"]
 
     # For real mono prediction
     params["chan_num"] = 1 if params["mono"] else params["n_channels_in"]
