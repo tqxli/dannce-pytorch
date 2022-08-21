@@ -1,6 +1,7 @@
 ![Image](./common/dannce_logo.png)
 
 ## News
+- 2022/08: Major codebase refactoring, full features converted to PyTorch. 
 - 2022/06: Check out our latest paper presented at CVPR 2022 CV4Animals Workshop
  
    [**Improved Markerless 3D Animal Pose Estimation Using Temporal Semi-Supervision**](https://drive.google.com/file/d/1lZcrXlazErthSkPJtR6g1DLhFo1HmwXU/view?usp=sharing) Tianqing Li, Kyle S. Severson, Fan Wang and Timothy W. Dunn, 2022.
