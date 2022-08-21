@@ -18,12 +18,9 @@ setup(
         "multiprocess",
         "opencv-python",
         'tensorboard',
-        # "tensorflow==2.4",
-        # "pandas"
         "mat73",
         "psutil",
         "tqdm",
-        "easydict"
     ],
     # scripts=[],
     entry_points={
@@ -33,7 +30,8 @@ setup(
             "com-predict-sbatch = dannce.cli:sbatch_com_predict_cli",
             "com-train-sbatch = dannce.cli:sbatch_com_train_cli",
             "dannce-train = dannce.cli:dannce_train_cli",
-            "social-dannce-train = dannce.cli:social_dannce_train_cli",
+            "custom-train = dannce.cli:custom_model_train_cli",
+            "custom-predict = dannce.cli:custom_model_predict_cli",
             "dannce-train-grid = cluster.grid:dannce_train_grid",
             "dannce-predict = dannce.cli:dannce_predict_cli",
             "com-train = dannce.cli:com_train_cli",

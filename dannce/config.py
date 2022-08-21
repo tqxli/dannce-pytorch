@@ -1,8 +1,10 @@
+from copy import deepcopy
 import numpy as np
 import imageio
 import os, shutil
 import yaml
 from typing import Dict, Text
+import warnings
 
 from dannce.engine.data import io
 from dannce import (
@@ -10,9 +12,15 @@ from dannce import (
     _param_defaults_shared,
     _param_defaults_com,
 )
-import warnings
+_DEFAULT_VIDDIR = "videos"
+_DEFAULT_VIDDIR_SIL = "videos_sil"
+_DEFAULT_COMSTRING = "COM"
+_DEFAULT_COMFILENAME = "com3d.mat"
+_DEFAULT_SEG_MODEL = 'weights/maskrcnn.pth'
 
-def grab_predict_label3d_file(defaultdir=""):
+# from dannce.engine.data.processing import _DEFAULT_VIDDIR, _DEFAULT_VIDDIR_SIL, _DEFAULT_COMSTRING, _DEFAULT_COMFILENAME
+
+def grab_predict_label3d_file(defaultdir="", index=0):
     """
     Finds the paths to the training experiment yaml files.
     """
@@ -21,12 +29,13 @@ def grab_predict_label3d_file(defaultdir=""):
     label3d_files = [
         os.path.join(def_ep, f) for f in label3d_files if "dannce.mat" in f
     ]
-    label3d_files.sort()
-
+    #label3d_files.sort()
+    label3d_files = sorted(label3d_files)
+    # breakpoint()
     if len(label3d_files) == 0:
         raise Exception("Did not find any *dannce.mat file in {}".format(def_ep))
-    print("Using the following *dannce.mat files: {}".format(label3d_files[0]))
-    return label3d_files[0]
+    print("Using the following *dannce.mat files: {}".format(label3d_files[index]))
+    return label3d_files[index]
 
 def infer_params(params, dannce_net, prediction):
     """
@@ -111,7 +120,7 @@ def infer_params(params, dannce_net, prediction):
         if not prediction and params["train_mode"] is None:
             raise Exception("Need to specific train_mode for DANNCE training")
 
-    print_and_set(params, "expval", True)
+    # print_and_set(params, "expval", True)
     if dannce_net:
         # infer crop_height and crop_width if None. Just use max dims of video, as
         # DANNCE does not need to crop.
@@ -389,3 +398,342 @@ def build_params(base_config: Text, dannce_net: bool):
     params = inherit_config(params, base_params, list(base_params.keys()))
     check_unrecognized_params(params)
     return params
+
+def adjust_loss_params(params):
+    """
+    Adjust corresponding params for certain losses.
+    """
+
+    # turn on flags for losses that require changes in inputs
+    if params["use_silhouette_in_volume"]:
+        params["use_silhouette"] = True
+        params["n_rand_views"] = None
+    
+    if "SilhouetteLoss" in params["loss"].keys():
+        params["use_silhouette"] = True
+
+    if "TemporalLoss" in params["loss"].keys():
+        params["use_temporal"] = True
+        params["temporal_chunk_size"] = temp_n = params["loss"]["TemporalLoss"]["temporal_chunk_size"]
+
+        # by default, the maximum batch size should be >= temporal seq len
+        if params["batch_size"] < temp_n:
+            print("Batch size < temporal seq size; reducing temporal chunk size.")
+            params["temporal_chunk_size"] = params["batch_size"]
+            params["loss"]["TemporalLoss"]["temporal_chunk_size"] = params["batch_size"]
+        
+    # option for using downsampled temporal sequences
+    try:
+        downsample = params["loss"]["TemporalLoss"]["downsample"]
+    except:
+        downsample = 1
+        
+    params["downsample"] = downsample
+    
+    if "PairRepulsionLoss" in params["loss"].keys():
+        params["social_training"] = True
+
+    return params
+
+def setup_train(params):
+    # turn off currently unavailable features
+    params["multi_mode"] = False
+    params["depth"] = False
+
+    # Default to 6 views but a smaller number of views can be specified in the
+    # DANNCE config. If the legnth of the camera files list is smaller than
+    # n_views, relevant lists will be duplicated in order to match n_views, if
+    # possible.
+    params["n_views"] = int(params["n_views"])
+    if params["dataset"] == "rat7m":
+        params["n_channels_out"] = 20  
+    elif params["dataset"] == "pair":
+        params["n_channels_out"] = 12
+
+    params = adjust_loss_params(params)
+
+    # generator params
+    cam3_train = True if params["cam3_train"] else False
+    # We apply data augmentation with another data generator class
+    randflag = params["channel_combo"] == "random"
+    outmode = "coordinates" if params["expval"] else "3dprob"
+
+    if params["use_npy"]:
+        # mono conversion will happen from RGB npy files, and the generator
+        # needs to b aware that the npy files contain RGB content
+        params["chan_num"] = params["n_channels_in"]
+    else:
+        # Used to initialize arrays for mono, and also in *frommem (the final generator)
+        params["chan_num"] = 1 if params["mono"] else params["n_channels_in"]
+
+    if cam3_train:
+        params["n_rand_views"] = 3
+        params["rand_view_replace"] = False
+        randflag = True
+
+    if params["n_rand_views"] == 0:
+        print(
+            "Using default n_rand_views augmentation with {} views and with replacement".format(
+                params["n_views"]
+            )
+        )
+        print("To disable n_rand_views augmentation, set it to None in the config.")
+        params["n_rand_views"] = params["n_views"]
+        params["rand_view_replace"] = True
+
+    base_params = {
+        "dim_in": (
+            params["crop_height"][1] - params["crop_height"][0],
+            params["crop_width"][1] - params["crop_width"][0],
+        ),
+        "n_channels_in": params["n_channels_in"],
+        "batch_size": 1,
+        "n_channels_out": params["n_channels_out"],
+        "out_scale": params["sigma"],
+        "crop_width": params["crop_width"],
+        "crop_height": params["crop_height"],
+        "vmin": params["vmin"],
+        "vmax": params["vmax"],
+        "nvox": params["nvox"],
+        "interp": params["interp"],
+        "depth": params["depth"],
+        "mode": outmode,
+        # "camnames": camnames,
+        "immode": params["immode"],
+        "shuffle": False,  # will shuffle later
+        "rotation": False,  # will rotate later if desired
+        # "vidreaders": vids,
+        "distort": True,
+        "crop_im": False,
+        # "chunks": total_chunks,
+        "mono": params["mono"],
+        "mirror": params["mirror"],
+    }    
+
+    # dataset params
+    shared_args = {
+        "chan_num": params["chan_num"],
+        "expval": params["expval"],
+        "nvox": params["nvox"],
+        "heatmap_reg": params["heatmap_reg"],
+        "heatmap_reg_coeff": params["heatmap_reg_coeff"],
+        "occlusion": params["downscale_occluded_view"]
+    }
+
+    shared_args_train = {
+        "rotation": params["rotate"],
+        "augment_hue": params["augment_hue"],
+        "augment_brightness": params["augment_brightness"],
+        "augment_continuous_rotation": params["augment_continuous_rotation"],
+        "mirror_augmentation": params["mirror_augmentation"],
+        "right_keypoints": params["right_keypoints"],
+        "left_keypoints": params["left_keypoints"],
+        "bright_val": params["augment_bright_val"],
+        "hue_val": params["augment_hue_val"],
+        "rotation_val": params["augment_rotation_val"],
+        "replace": params["rand_view_replace"],
+        "random": randflag,
+        "n_rand_views": params["n_rand_views"],
+    }
+
+    shared_args_valid = {
+        "rotation": False,
+        "augment_hue": False,
+        "augment_brightness": False,
+        "augment_continuous_rotation": False,
+        "mirror_augmentation": False,
+        "shuffle": False,
+        "replace": False,
+        "n_rand_views": params["n_rand_views"] if cam3_train else None,
+        "random": True if cam3_train else False,
+    }
+
+    return params, base_params, shared_args, shared_args_train, shared_args_valid
+
+def setup_predict(params):
+    # Depth disabled until next release.
+    params["depth"] = False
+    # Make the prediction directory if it does not exist.
+    
+    params["net_name"] = params["net"]
+    params["n_views"] = int(params["n_views"])
+
+    params["downsample"] = 1
+
+    # While we can use experiment files for DANNCE training,
+    # for prediction we use the base data files present in the main config
+    # Grab the input file for prediction
+    params["label3d_file"] = grab_predict_label3d_file(index=params["label3d_index"])
+    params["base_exp_folder"] = os.path.dirname(params["label3d_file"])
+    params["multi_mode"] = False
+
+    print("Using camnames: {}".format(params["camnames"]))
+    # Also add parent params under the 'experiment' key for compatibility
+    # with DANNCE's video loading function
+    if (params["use_silhouette_in_volume"]) or (params["write_visual_hull"] is not None):
+        params["viddir_sil"] = os.path.join(params["base_exp_folder"], _DEFAULT_VIDDIR_SIL)
+        
+    params["experiment"] = {}
+    params["experiment"][0] = params
+
+    if params["social_training"]:
+        # load in parameters from the other animal
+        comfile = params["com_file"]
+        if 'rat1' in comfile:
+            new_comfile = comfile.replace('rat1', 'rat2')
+        elif 'instance0' in comfile:
+            new_comfile = comfile.replace('instance0', 'instance1')
+        else:
+            print("Cannot find corresponding COM file. Please check.")
+            return
+        
+        paired_expdict = {
+            "label3d_file": params["label3d_file"].replace('RAT1', 'RAT2'),
+            "com_file": new_comfile,
+        }
+        paired_exp = deepcopy(params)
+        for k, v in paired_expdict.items():
+            paired_exp[k] = v
+        params["experiment"][1] = paired_exp
+
+    if params["start_batch"] is None:
+        params["start_batch"] = 0
+        params["save_tag"] = None
+    else:
+        params["save_tag"] = params["start_batch"]
+
+    params["n_markers"] = params["n_channels_out"]
+
+    # For real mono prediction
+    params["chan_num"] = 1 if params["mono"] else params["n_channels_in"]
+
+    # generator params
+    valid_params = {
+        "dim_in": (
+            params["crop_height"][1] - params["crop_height"][0],
+            params["crop_width"][1] - params["crop_width"][0],
+        ),
+        "n_channels_in": params["n_channels_in"],
+        "batch_size": params["batch_size"],
+        "n_channels_out": params["n_channels_out"],
+        "out_scale": params["sigma"],
+        "crop_width": params["crop_width"],
+        "crop_height": params["crop_height"],
+        "vmin": params["vmin"],
+        "vmax": params["vmax"],
+        "nvox": params["nvox"],
+        "interp": params["interp"],
+        "depth": params["depth"],
+        "channel_combo": params["channel_combo"],
+        "mode": "coordinates",
+        # "camnames": camnames,
+        "immode": params["immode"],
+        "shuffle": False,
+        "rotation": False,
+        # "vidreaders": vids,
+        "distort": True,
+        "expval": params["expval"],
+        "crop_im": False,
+        # "chunks": params["chunks"],
+        "mono": params["mono"],
+        "mirror": params["mirror"],
+        "predict_flag": True,
+    }
+
+    if params.get("social_joint_training", False):
+        params["social_training"] = False
+        params["n_channels_out"] *= 2
+        valid_params["n_channels_out"] *= 2
+        params["n_markers"] *= 2
+
+    return params, valid_params
+
+def setup_com_train(params):
+    #os.environ["CUDA_VISIBLE_DEVICES"] = params["gpu_id"]
+
+    # MULTI_MODE is where the full set of markers is trained on, rather than
+    # the COM only. In some cases, this can help improve COMfinder performance.
+    params["chan_num"] = 1 if params["mono"] else params["n_channels_in"]
+    params["multi_mode"] = (params["n_channels_out"] > 1) & (params["n_instances"] == 1)
+    params["n_channels_out"] = params["n_channels_out"] + int(params["multi_mode"])
+
+    params["lr"] = float(params["lr"])
+
+    train_params = {
+        "dim_in": (
+            params["crop_height"][1] - params["crop_height"][0],
+            params["crop_width"][1] - params["crop_width"][0],
+        ),
+        "n_channels_in": params["n_channels_in"],
+        "batch_size": 1,
+        "n_channels_out": params["n_channels_out"],
+        "out_scale": params["sigma"],
+        # "camnames": camnames,
+        "crop_width": params["crop_width"],
+        "crop_height": params["crop_height"],
+        "downsample": params["downfac"],
+        "shuffle": False,
+        # "chunks": total_chunks,
+        "dsmode": params["dsmode"],
+        "mono": params["mono"],
+        "mirror": params["mirror"],
+    }
+
+    valid_params = deepcopy(train_params)
+    valid_params["shuffle"] = False
+    
+    return params, train_params, valid_params
+
+def setup_com_predict(params):
+    params["multi_mode"] = MULTI_MODE = params["n_channels_out"] > 1 & params["n_instances"] == 1
+    params["n_channels_out"] = params["n_channels_out"] + int(MULTI_MODE)
+    
+    # Grab the input file for prediction
+    params["label3d_file"] = grab_predict_label3d_file(index=params["label3d_index"])
+
+    print("Using camnames: {}".format(params["camnames"]))
+
+    params["experiment"] = {}
+    params["experiment"][0] = params
+
+    # For real mono training
+    params["chan_num"] = 1 if params["mono"] else params["n_channels_in"]
+    dh = (params["crop_height"][1] - params["crop_height"][0]) // params["downfac"]
+    dw = (params["crop_width"][1] - params["crop_width"][0]) // params["downfac"]
+    params["input_shape"] = (dh, dw)
+
+    if params["com_predict_weights"] is None:
+        wdir = params["com_train_dir"]
+        weights = os.listdir(wdir)
+        weights = [f for f in weights if (".pth" in f) and ('epoch' in f)]
+        weights = sorted(
+            weights, key=lambda x: int(x.split(".")[0].split("epoch")[-1])
+        )
+        weights = weights[-1]
+        params["com_predict_weights"] = os.path.join(wdir, weights)
+    
+    params["lr"] = float(params["lr"])
+    
+    predict_params = {
+        "dim_in": (
+            params["crop_height"][1] - params["crop_height"][0],
+            params["crop_width"][1] - params["crop_width"][0],
+        ),
+        "n_channels_in": params["n_channels_in"],
+        "batch_size": 1,
+        "n_channels_out": params["n_channels_out"],
+        "out_scale": params["sigma"],
+        "camnames": {0: params["camnames"]},
+        "crop_width": params["crop_width"],
+        "crop_height": params["crop_height"],
+        "downsample": params["downfac"],
+        "labelmode": "coord",
+        "chunks": params["chunks"],
+        "shuffle": False,
+        "dsmode": params["dsmode"],
+        "mono": params["mono"],
+        "mirror": params["mirror"],
+        "predict_flag": True,
+    }
+
+    return params, predict_params

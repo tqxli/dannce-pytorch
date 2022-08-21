@@ -21,7 +21,7 @@ class LossHelper:
         for name, args in self.loss_params["loss"].items():
             self.loss_fcns[name] = getattr(custom_losses, name)(**args)
         
-    def compute_loss(self, kpts_gt, kpts_pred, heatmaps, grid_centers, aux):
+    def compute_loss(self, kpts_gt, kpts_pred, heatmaps, grid_centers=None, aux=None):
         """
         Compute each loss and return their weighted sum for backprop.
         """
@@ -29,7 +29,9 @@ class LossHelper:
         total_loss = []
         for k, lossfcn in self.loss_fcns.items():
             if k == "GaussianRegLoss":
-                loss_val = lossfcn(kpts_gt, kpts_pred, heatmaps, grid_centers)
+                loss_val = lossfcn(kpts_gt, kpts_pred.clone().detach(), heatmaps, grid_centers.clone().detach())
+            elif k == "MSELoss" or k == "BCELoss":
+                loss_val = lossfcn(kpts_gt, heatmaps)
             elif k == 'SilhouetteLoss' or k == 'ReconstructionLoss':
                 loss_val = lossfcn(aux, heatmaps)
             elif k == 'VarianceLoss':
@@ -57,8 +59,11 @@ class MetricHelper:
         
     def evaluate(self, kpts_gt, kpts_pred):
         # perform NaN masking ONCE before metric computation
-        kpts_pred, kpts_gt = self.mask_nan(kpts_pred, kpts_gt)
         metric_dict = {}
+        if len(self.metric_names) == 0:
+            return metric_dict
+            
+        kpts_pred, kpts_gt = self.mask_nan(kpts_pred, kpts_gt)
         for met in self.metric_names:
             metric_dict[met] = self.metrics[met](kpts_pred, kpts_gt)
 
@@ -75,8 +80,8 @@ class MetricHelper:
         """
         pred = np.transpose(pred.copy(), (1, 0, 2))
         gt = np.transpose(gt.copy(), (1, 0, 2)) #[3, bs, n_joints]
-        pred = np.reshape(pred, (3, -1))
-        gt = np.reshape(gt, (3, -1)) #[3, bs*n_joints]
+        pred = np.reshape(pred, (pred.shape[0], -1))
+        gt = np.reshape(gt, (gt.shape[0], -1)) #[3, bs*n_joints]
 
         gi = np.where(~np.isnan(np.sum(gt, axis=0)))[0] #[bs*n_joints]
 

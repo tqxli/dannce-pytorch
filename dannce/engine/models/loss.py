@@ -1,21 +1,18 @@
 from abc import abstractmethod
+from lib2to3.pytree import Base
+import imageio, os
+
+import numpy as np
 import torch 
 import torch.nn as nn
 import torch.nn.functional as F
-from dannce.engine.models.body_limb import SYMMETRY
+from dannce.engine.data.skeletons.utils import SYMMETRY, load_body_profile
 from dannce.engine.models.vis import draw_voxels
-from dannce.engine.data import ops
+from dannce.engine.data import ops, processing
 
 ##################################################################################################
 # UTIL_FUNCTIONS
 ##################################################################################################
-
-# def mask_nan(kpts_gt, kpts_pred):
-#     nan_gt = torch.isnan(kpts_gt)
-#     not_nan = (~nan_gt).sum()
-#     kpts_gt[nan_gt] = 0 
-#     kpts_pred[nan_gt] = 0
-#     return kpts_gt, kpts_pred, not_nan
 
 def compute_mask_nan_loss(loss_fcn, kpts_gt, kpts_pred):
     # kpts_gt, kpts_pred, notnan = mask_nan(kpts_gt, kpts_pred)
@@ -48,13 +45,30 @@ class L2Loss(BaseLoss):
     def forward(self, kpts_gt, kpts_pred):
         loss = compute_mask_nan_loss(nn.MSELoss(reduction="sum"), kpts_gt, kpts_pred)
         return self.loss_weight * loss
-
-class ReconstructionLoss(BaseLoss):
+    
+class MSELoss(BaseLoss):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
-    def forward(self, gt, pred):
-        loss = F.mse_loss(gt, pred)
+    def forward(self, heatmap_gt, heatmap_pred):
+        bs, n_joints = heatmap_pred.shape[:2]
+        if len(heatmap_gt.shape) == 5:
+            heatmap_gt = heatmap_gt.permute(0, 4, 1, 2, 3)
+        loss = F.mse_loss(heatmap_gt, heatmap_pred)
+
+        return self.loss_weight * loss
+
+class BCELoss(BaseLoss):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def forward(self, heatmap_gt, heatmap_pred):
+        if len(heatmap_gt.shape) == 5:
+            heatmap_gt = heatmap_gt.permute(0, 4, 1, 2, 3)
+        
+        heatmap_pred = torch.sigmoid(heatmap_pred)
+        loss = F.binary_cross_entropy(heatmap_pred, heatmap_gt)
+
         return self.loss_weight * loss
 
 class L1Loss(BaseLoss):
@@ -65,8 +79,44 @@ class L1Loss(BaseLoss):
         loss = compute_mask_nan_loss(nn.L1Loss(reduction="sum"), kpts_gt, kpts_pred)
         return self.loss_weight * loss
 
+class WeightedL1Loss(BaseLoss):
+    def __init__(self, joint_weights=None, num_joints=23, **kwargs):
+        super().__init__(**kwargs)
+
+        self.weighting = np.ones((num_joints, ))
+        if isinstance(joint_weights, list): 
+            for joint, weight in joint_weights:
+                self.weighting[joint] = weight
+    
+    def forward(self, kpts_gt, kpts_pred):
+        loss = []
+        for joint_idx in range(kpts_gt.shape[-1]):
+            gt, pred = kpts_gt[:, :, joint_idx], kpts_pred[:, :, joint_idx]
+
+            joint_loss = compute_mask_nan_loss(nn.L1Loss(reduction="sum"), gt, pred)
+            joint_loss = joint_loss * self.weighting[joint_idx]
+            loss.append(joint_loss)
+        
+        loss_mean = sum(loss) / len(loss)
+
+        return self.loss_weight * loss_mean
+
+class ConsistencyLoss(BaseLoss):
+    def __init__(self, method="l1", **kwargs):
+        super().__init__(**kwargs)
+        assert method in ["l1", "l2"]
+        self.method = method
+
+    def forward(self, kpts_gt, kpts_pred):
+        diff = torch.diff(kpts_pred, dim=0)
+        if self.method == 'l1':
+            loss_temp = torch.abs(diff).mean()
+        else:
+            loss_temp = (diff**2).sum(1).sqrt().mean()
+        return self.loss_weight * loss_temp
+
 class TemporalLoss(BaseLoss):
-    def __init__(self, temporal_chunk_size, method="l1", **kwargs):
+    def __init__(self, temporal_chunk_size, method="l1", downsample=1, **kwargs):
         super().__init__(**kwargs)
 
         self.temporal_chunk_size = temporal_chunk_size
@@ -82,6 +132,45 @@ class TemporalLoss(BaseLoss):
         else:
             loss_temp = (diff**2).sum(1).sqrt().mean()
         return self.loss_weight * loss_temp
+
+class BoneLengthLoss(BaseLoss):
+    def __init__(self, priors, body_profile="rat23", mask=None, std_multiplier=1, **kwargs):
+        super().__init__(**kwargs)
+
+        self.animal = body_profile
+        self.limbs = torch.LongTensor(load_body_profile(body_profile)["limbs"]) #[n_limbs, 2]
+        self.priors = np.load(priors, allow_pickle=True) #[n_limbs, 2]
+        self.std_multiplier = std_multiplier
+
+        # consider mask out some of the constraints (e.g. Snout-SpineF, 2)
+        self.mask = mask
+
+        self._construct_intervals(do_masking=(self.mask is not None))
+    
+    def _construct_intervals(self, do_masking=False):
+        self.intervals = []
+
+        for idx, (mean, std) in enumerate(self.priors):
+            if (do_masking) and (idx in self.mask):
+                self.intervals.append([-10000, 10000])
+            else:
+                self.intervals.append([mean-self.std_multiplier*std, mean+self.std_multiplier*std])
+        
+        self.intervals = torch.tensor(np.stack(self.intervals, axis=0), dtype=torch.float32).unsqueeze(0) #[1, n_limbs, 2]
+        self.lbound, self.ubound = self.intervals[..., 0], self.intervals[..., 1] #[1, n_limbs]
+
+    def forward(self, kpts_gt, kpts_pred):
+        """
+        kpts_pred: [bs, 3, n_joints]
+        """
+        device = kpts_pred.device
+        kpts_from = kpts_pred[:, :, self.limbs[:, 0].to(device)] #[bs, 3, n_limbs]
+        kpts_to = kpts_pred[:, :, self.limbs[:, 1].to(device)] #[bs, 3, n_limbs]
+        lens = torch.norm(kpts_from-kpts_to, dim=1, p=2) #[bs, n_limbs]
+        
+        loss = torch.maximum(lens - self.ubound.to(device), torch.zeros(())) + torch.maximum(self.lbound.to(device) - lens, torch.zeros(()))
+
+        return self.loss_weight * loss.mean()
 
 class BodySymmetryLoss(BaseLoss):
     def __init__(self, animal="mouse22", **kwargs):
@@ -131,6 +220,27 @@ class GaussianRegLoss(BaseLoss):
         draw_voxels(target.clone().detach().cpu(), ax)
         plt.show(block=True)
         input("Press Enter to continue...")
+    
+    def save(self, heatmaps, heatmap_target, savedir="./debug_gaussian_unsupervised"):
+        if not os.path.exists(savedir):
+            os.makedirs(savedir)
+        
+        heatmaps = heatmaps.clone().detach().cpu().numpy()
+        heatmap_target = heatmap_target.clone().detach().cpu().numpy()
+
+        for i in range(heatmaps.shape[0]):
+            for j in range(heatmaps.shape[1]):
+                im = processing.norm_im(heatmaps[i, j]) * 255
+                im = im.astype("uint8")
+                of = os.path.join(savedir, f"{i}_{j}.tif")
+                imageio.mimwrite(of, np.transpose(im, [2, 0, 1]))
+        
+        for i in range(heatmap_target.shape[0]):
+            for j in range(heatmap_target.shape[1]):
+                im = processing.norm_im(heatmap_target[i, j]) * 255
+                im = im.astype("uint8")
+                of = os.path.join(savedir, f"{i}_{j}_target.tif")
+                imageio.mimwrite(of, np.transpose(im, [2, 0, 1]))
 
     def _generate_gaussian_target(self, centers, grids):
         """
@@ -156,42 +266,23 @@ class GaussianRegLoss(BaseLoss):
         # reshape grids
         grids = grids.permute(0, 2, 1).reshape(grids.shape[0], grids.shape[2], *heatmaps.shape[2:]) # [bs, 3, n_vox, n_vox, n_vox]
 
-        # generate gaussian shaped targets based on current predictions
-        gaussian_gt = self._generate_gaussian_target(kpts_pred.clone().detach(), grids) #[bs, n_joints, n_vox**3]
+        if grids.shape[0] != kpts_pred.shape[0]:
+            grids = torch.stack((grids, grids), dim=1) #[bs, 2, n_vox, n_vox, n_vox]
+            grids = grids.reshape(-1, *grids.shape[2:])
 
-        # apply sigmoid to the exposed heatmap
-        heatmaps = torch.sigmoid(heatmaps)
+        # generate gaussian shaped targets based on current predictions
+        gaussian_gt = self._generate_gaussian_target(kpts_pred, grids) #[bs, n_joints, n_vox**3]
+        heatmaps = heatmaps.sigmoid()
+
+        # self.save(heatmaps, gaussian_gt)
 
         # compute loss
         if self.method == "mse":
-            loss = F.mse_loss(gaussian_gt, heatmaps)
+            loss = 0.5 * F.mse_loss(gaussian_gt, heatmaps)
         elif self.method == "cross_entropy":
-            loss = - (gaussian_gt * heatmaps.log()).mean()
+            loss = F.binary_cross_entropy(heatmaps, gaussian_gt)
 
         return self.loss_weight * loss
-
-class PairRepulsionLoss(BaseLoss):
-    def __init__(self, delta=5, **kwargs):
-        super().__init__(**kwargs)
-        self.delta = delta
-    
-    def forward(self, kpts_gt, kpts_pred):
-        """
-        [bs, 3, n_joints]
-        """
-        bs, n_joints = kpts_pred.shape[0], kpts_pred.shape[-1]
-        
-        kpts_pred = kpts_pred.reshape(2, -1, *kpts_pred.shape[1:]) # [n_pairs, 2, 3, n_joints]
-
-        # compute the distance between each joint of animal 1 and all joints of animal 2
-        a1 = kpts_pred[0].repeat(1, 1, n_joints) # [n, 3, n_joints^2]
-        a2 = kpts_pred[1].repeat(1, n_joints, 1).reshape(a1.shape)
-
-        diffsqr = (a1 - a2)**2
-        dist = diffsqr.sum(1).sqrt() # [bs, n_joints^2] 
-        dist = torch.maximum(self.delta - dist, torch.zeros_like(dist))
-        
-        return self.loss_weight * (dist.sum() / bs)
 
 
 class SilhouetteLoss(BaseLoss):

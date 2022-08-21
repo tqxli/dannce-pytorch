@@ -8,7 +8,7 @@ class BaseTrainer:
     """
     Base class for all trainers
     """
-    def __init__(self, params, model, optimizer, logger):
+    def __init__(self, params, model, optimizer, logger, dannce=True):
         # self.config = config
         self.params = params
         self.logger = logger
@@ -19,12 +19,12 @@ class BaseTrainer:
         self.epochs = params['epochs']
         self.save_period = params['save_period']
 
-        self.start_epoch = 1
+        self.start_epoch = params.get("start_epoch", 1)
 
-        self.checkpoint_dir = params["dannce_train_dir"]
+        self.checkpoint_dir = params["dannce_train_dir"] if dannce else params["com_train_dir"]
 
         # setup visualization writer instance
-        logdir = os.path.join(params["dannce_train_dir"], "logs")
+        logdir = os.path.join(self.checkpoint_dir, "logs")
         if not os.path.exists(logdir):
            os.makedirs(logdir)                
         self.writer = SummaryWriter(log_dir=logdir)

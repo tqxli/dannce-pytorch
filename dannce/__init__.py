@@ -2,6 +2,7 @@
 # Default parameters, which can be superseded by CL arguments or
 # config files
 _param_defaults_shared = {
+    "random_seed": None,
     "immode": "vid",
     "verbose": 1,
     "gpu_id": "0",
@@ -50,8 +51,11 @@ _param_defaults_shared = {
     "save_period": 100,
     "predict_labeled_only": False,
     "training_fraction": None,
+    "custom_model": None,
+    "label3d_index": 0
 }
 _param_defaults_dannce = {
+    "dataset": "label3d",
     "metric": ["euclidean_distance_3D"],
     "sigma": 10,
     "lr": 1e-3,
@@ -81,7 +85,6 @@ _param_defaults_dannce = {
     "com_thresh": None,
     "start_sample": None,
     "max_num_samples": None,
-    "new_n_channels_out": None,
     "cam3_train": None,
     "debug_volume_tifdir": None,
     "debug_train_volume_tifdir": None,
@@ -110,12 +113,20 @@ _param_defaults_dannce = {
     ## social
     "social_training": False,
     "downscale_occluded_view": False,
+    "social_joint_training": False,
+    "social_big_volume": False,
+    ## test time training
+    "inference_ttt": None,
+    ## augmentation
+    "form_batch": False,
+    "form_bs": None
 }
 _param_defaults_com = {
     "dsmode": "nn",
     "sigma": 30,
     "debug": False,
     "lr": 5e-5,
+    "lr_scheduler": None,
     "net": "unet2d_fullbn",
     "n_channels_out": 1,
     "com_train_dir": None,

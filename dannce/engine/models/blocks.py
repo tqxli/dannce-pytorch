@@ -14,10 +14,10 @@ class Basic3DBlock(nn.Module):
 
         self.normalization = NORMALIZATION_MODES[norm_method]
         self.block = nn.Sequential(
-            nn.Conv3d(in_planes, out_planes, kernel_size=3, stride=1, padding=1),
+            nn.Conv3d(in_planes, out_planes, kernel_size=kernel_size, stride=1, padding=((kernel_size-1)//2)),
             self.normalization([out_planes, *input_shape]) if norm_method == 'layer' else self.normalization(out_planes),
             nn.ReLU(True),
-            nn.Conv3d(out_planes, out_planes, kernel_size=3, stride=1, padding=1),
+            nn.Conv3d(out_planes, out_planes, kernel_size=kernel_size, stride=1, padding=((kernel_size-1)//2)),
             self.normalization([out_planes, *input_shape]) if norm_method == 'layer' else self.normalization(out_planes),
             nn.ReLU(True),
         )
@@ -58,7 +58,7 @@ class Pool3DBlock(nn.Module):
         self.pool_size = pool_size
 
     def forward(self, x):
-        return F.max_pool3d(x, kernel_size=self.pool_size)
+        return F.max_pool3d(x, kernel_size=self.pool_size, stride=self.pool_size)
 
 
 class BasicUpSample3DBlock(nn.Module):
@@ -83,5 +83,40 @@ class Upsample3DBlock(nn.Module):
             nn.ReLU(True)
         )
 
+    def forward(self, x):
+        return self.block(x)
+
+class Basic2DBlock(nn.Module):
+    def __init__(self, in_planes, out_planes, norm_method, input_shape, kernel_size=3):
+        super(Basic2DBlock, self).__init__()
+
+        self.normalization = NORMALIZATION_MODES[norm_method]
+        self.block = nn.Sequential(
+            nn.Conv2d(in_planes, out_planes, kernel_size=kernel_size, stride=1, padding=((kernel_size-1)//2)),
+            self.normalization([out_planes, *input_shape]) if norm_method == 'layer' else self.normalization(out_planes),
+            nn.ReLU(True),
+            nn.Conv2d(out_planes, out_planes, kernel_size=kernel_size, stride=1, padding=((kernel_size-1)//2)),
+            self.normalization([out_planes, *input_shape]) if norm_method == 'layer' else self.normalization(out_planes),
+            nn.ReLU(True),
+        )
+
+    def forward(self, x):
+        return self.block(x)
+
+class Pool2DBlock(nn.Module):
+    def __init__(self, pool_size):
+        super(Pool2DBlock, self).__init__()
+        self.pool_size = pool_size
+
+    def forward(self, x):
+        return F.max_pool2d(x, kernel_size=self.pool_size, stride=self.pool_size)
+
+class BasicUpSample2DBlock(nn.Module):
+    def __init__(self, in_planes, out_planes, kernel_size, stride, norm_method, input_shape):
+        super(BasicUpSample2DBlock, self).__init__()
+        self.block = nn.Sequential(
+            nn.ConvTranspose2d(in_planes, out_planes, kernel_size=kernel_size, stride=stride, padding=0, output_padding=0)
+        )
+    
     def forward(self, x):
         return self.block(x)
