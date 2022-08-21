@@ -952,8 +952,9 @@ def _convert_pair_to_label3d(
 ):
     exps = []
     for exp in tqdm(experiments):
-        filter = metadata["FolderPath"].str.contains(exp) & (~metadata["FolderPath"].str.contains("m")) 
-        candidates = metadata["FolderPath"][filter]
+        sr1, sr2 = exp.split('_')
+        filter = metadata["FolderPath"].str.contains(sr1) & metadata["FolderPath"].str.contains(sr2) & (~metadata["FolderPath"].str.contains("m")) # exclude markerless animals
+        candidates = metadata["FolderPath"][filter][:2]
         n_candidates = len(candidates)
         print(candidates)
         for can in candidates:
@@ -962,6 +963,10 @@ def _convert_pair_to_label3d(
             good1 = data["goodFrame_an1"] == 1
             good2 = data["goodFrame_an2"] == 1
             good = good1 & good2
+            if sum(good) == 0:
+                print(f"No frames available for training in {can}")
+                n_candidates -= 1
+                continue
             
             pose3d1 = data.loc[:, data.columns.str.contains("absolutePosition_an1")].to_numpy()
             pose3d2 = data.loc[:, data.columns.str.contains("absolutePosition_an2")].to_numpy() 
@@ -970,8 +975,9 @@ def _convert_pair_to_label3d(
             com3d1 = data.loc[:, data.columns.str.contains("centerOfmass_an1")].to_numpy() 
             com3d2 = data.loc[:, data.columns.str.contains("centerOfmass_an2")].to_numpy() 
 
-            frames = np.arange(len(data))[good]
-            frames = np.random.choice(frames, total_n // n_candidates // 2)
+            frames = np.arange(len(good))[good] #some videos do not have complete sets of frames, remove last second for avoiding issues
+            frames = frames[frames < (len(good)-120)]
+            frames = np.random.choice(frames, total_n // n_candidates) # will choose the same frame for both animals
 
             sampleIDs_an1 = [str(count)+"_"+str(frame) for frame in frames]
             sampleIDs_an2 = [str(count+1)+"_"+str(frame) for frame in frames] 
@@ -1014,8 +1020,8 @@ def _convert_pair_to_label3d(
 
                 cameras[count][str(count)+"_"+f"Camera{i}"] = newparam
                 cameras[count+1][str(count+1)+"_"+f"Camera{i}"] = newparam 
-        
-        count += 2
+                
+            count += 2
     return samples, datadict, datadict_3d, com3d_dict, cameras, exps
 
 def make_pair(
@@ -1029,6 +1035,9 @@ def make_pair(
     viddir='videos_merged',
     train=True,
 ):
+    # fix random seed
+    np.random.seed(10241024)
+    
     experiments_train = ['SR1_SR2', 'SR1_SR3', 'SR1_SR4', 'SR2_SR3', 'SR2_SR4', 'SR3_SR4', 'SR9_SR10']
     experiments_test = ['SR1_SR5', 'SR3_SR5', 'SR4_SR5']
     
@@ -1045,17 +1054,36 @@ def make_pair(
     partition = {}
     pairs = None
 
-    samples, datadict, datadict_3d, com3d_dict, cameras, exps_train = _convert_pair_to_label3d(root, metadata, camnames, experiments_train, 50, 0, samples, datadict, datadict_3d, com3d_dict, cameras)
+    samples, datadict, datadict_3d, com3d_dict, cameras, exps_train = _convert_pair_to_label3d(
+        root, metadata, camnames, experiments_train, 1000, 0, 
+        samples, datadict, datadict_3d, com3d_dict, cameras,
+    )
+
     partition["train_sampleIDs"] = sorted(samples)
-    samples, datadict, datadict_3d, com3d_dict, cameras, exps_valid = _convert_pair_to_label3d(root, metadata, camnames, experiments_test, 10, len(experiments_train)*2, samples, datadict, datadict_3d, com3d_dict, cameras)
+    samples, datadict, datadict_3d, com3d_dict, cameras, exps_valid = _convert_pair_to_label3d(
+        root, metadata, camnames, experiments_test, 100, len(exps_train)*2, 
+        samples, datadict, datadict_3d, com3d_dict, cameras
+    )
     partition["valid_sampleIDs"] = sorted(list(set(samples) - set(partition["train_sampleIDs"])))
     samples = np.array(samples)
+    exps = exps_train + exps_valid
+
+    print("**DATASET SUMMARY**")
+    print("Train: ")
+    for i, exp in enumerate(exps_train):
+        n_an1 = len([samp for samp in samples if int(samp.split("_")[0]) == 2*i])
+        n_an2 = len([samp for samp in samples if int(samp.split("_")[0]) == 2*i+1])
+        print(f"{exp}: animal 1: {n_an1} + animal 2: {n_an2}")
+    print("Validation: ")
+    for i, exp in enumerate(exps_valid):
+        n_an1 = len([samp for samp in samples if int(samp.split("_")[0]) == 2*len(exps_train) + 2*i])
+        n_an2 = len([samp for samp in samples if int(samp.split("_")[0]) == 2*len(exps_train) + 2*i+1])
+        print(f"{exp}: animal 1: {n_an1} + animal 2: {n_an2}")    
+    print("Train: Validation: {}: {}".format(len(partition["train_sampleIDs"]), len(partition["valid_sampleIDs"])))
 
     vids = {}
     total_chunks = {}
     print("** Preparing video readers **")
-    exps = exps_train + exps_valid
-
     for e in tqdm(range(len(exps))):
         for name in camnames:
             vidroot = os.path.join(root, exps[e], viddir, name)
@@ -1069,7 +1097,7 @@ def make_pair(
                     vids[str(2*e+i) + "_" + name][str(2*e+i) + "_" + name + "/0.mp4"] = os.path.join(vidroot, file)
 
     new_camnames = {}
-    for e in range(2*num_experiments):
+    for e in range(2*len(exps)):
         new_camnames[e] = [str(e)+"_"+camname for camname in camnames]
     camnames = new_camnames
 
@@ -1077,11 +1105,6 @@ def make_pair(
     processing.save_params_pickle(params)
     # Setup additional variables for later use
     tifdirs = []  # Training from single images not yet supported in this demo
-    # vid_exps = np.arange(num_experiments)
-    
-    # initialize needed videos
-    # vids = processing.initialize_all_vids(params, datadict, vid_exps, pathonly=True)
-
     base_params = {
         **base_params,
         "camnames": camnames,
@@ -1096,22 +1119,23 @@ def make_pair(
         TO_BE_EXAMINED = NPY_DIRNAMES
         npydir, missing_npydir = {}, {}
 
-        for e, name in enumerate(all_exps):
+        for e, name in enumerate(exps):
             # for social, cannot use the same default npy volume dir for both animals
             for j in range(2):
+                expid = 2*e+j
                 npy_folder = os.path.join(root, "npy_folder", name+f"an{j+1}")
-                npydir[e+j] = npy_folder
+                npydir[expid] = npy_folder
 
                 # create missing npy directories
-                if not os.path.exists(npydir[e]):
-                    missing_npydir[e] = npydir[e]
+                if not os.path.exists(npydir[expid]):
+                    missing_npydir[expid] = npydir[expid]
                     for dir in TO_BE_EXAMINED:
-                        os.makedirs(os.path.join(npydir[e], dir)) 
+                        os.makedirs(os.path.join(npydir[expid], dir)) 
                 else:
                     for dir in TO_BE_EXAMINED:
-                        dirpath = os.path.join(npydir[e], dir)
+                        dirpath = os.path.join(npydir[expid], dir)
                         if (not os.path.exists(dirpath)) or (len(os.listdir(dirpath)) == 0):
-                            missing_npydir[e] = npydir[e]
+                            missing_npydir[expid] = npydir[expid]
                             os.makedirs(dirpath, exist_ok=True)
 
         missing_samples = [samp for samp in samples if int(samp.split("_")[0]) in list(missing_npydir.keys())]
