@@ -94,6 +94,7 @@ class _GraphConv(nn.Module):
             convblock = ModulatedGraphConv
 
         self.gconv = convblock(input_dim, output_dim, adj)
+        self.norm_type = norm_type
         self.bn = get_normalization(norm_type, output_dim)
         self.relu = nn.ReLU()
 
@@ -104,8 +105,13 @@ class _GraphConv(nn.Module):
 
     def forward(self, x):
         # breakpoint()
-        x = self.gconv(x).contiguous().transpose(1, 2).contiguous()
-        x = self.bn(x).transpose(1, 2).contiguous()
+        x = self.gconv(x).contiguous()
+
+        if self.norm_type == "batch":
+            x = x.transpose(1, 2).contiguous()
+            x = self.bn(x).transpose(1, 2).contiguous()
+        else:
+            x = self.bn(x)
         if self.dropout is not None:
             x = self.dropout(self.relu(x))
 
