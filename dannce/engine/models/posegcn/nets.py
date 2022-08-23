@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 
 from dannce.engine.models.posegcn.gcn_blocks import _ResGraphConv, SemGraphConv, ModulatedGraphConv, _GraphConv, GraphUNet
-from dannce.engine.models.posegcn.non_local import _GraphNonLocal
+from dannce.engine.models.posegcn.non_local import _GraphNonLocal, SelfAttention
 from dannce.engine.models.posegcn.utils import *
 from dannce.engine.models.transformer.layer import MLP
 
@@ -62,6 +62,7 @@ class PoseGCN(nn.Module):
         self.use_features = use_features = model_params.get("use_features", False)
         self.fusion_mlp = fusion_mlp = model_params.get("fusion_mlp", False)
         self.mlp_out = mlp_out = model_params.get("mlp_out", False)
+        self.featureattn = featureattn = model_params.get("featureattn")
 
         # self.gconv_input = _GraphConv(adj, input_dim, hid_dim, dropout, base_block=base_block, norm_type=norm_type)
         self.gconv_input = []
@@ -72,11 +73,17 @@ class PoseGCN(nn.Module):
         # use multi-scale features extracted from decoder layers
         if use_features:
             self.multi_scale_fdim = 128+64+32 if self.compressed else 256+128+64
+            gconv_inputdim = input_dim + fuse_dim
             if fusion_mlp:
                 self.fusion_layer = MLP(self.multi_scale_fdim, [256, 512], fuse_dim, 3)
+            elif featureattn:
+                self.fusion_layer = nn.Linear(self.multi_scale_fdim+input_dim, fuse_dim)
+                self.attn_layer = SelfAttention(fuse_dim)     
+                gconv_inputdim = fuse_dim       
             else:
                 self.fusion_layer = nn.Conv1d(self.multi_scale_fdim, fuse_dim, kernel_size=1)
-            self.gconv_input.append(_GraphConv(adj, input_dim+fuse_dim, hid_dim, dropout, base_block, norm_type))
+            
+            self.gconv_input.append(_GraphConv(adj, gconv_inputdim, hid_dim, dropout, base_block, norm_type))
         else:
             self.gconv_input.append(_GraphConv(adj, input_dim, hid_dim, dropout, base_block, norm_type))
         
@@ -166,10 +173,15 @@ class PoseGCN(nn.Module):
             if self.fusion_mlp:
                 f = self.fusion_layer(torch.cat((f3, f2, f1), dim=1).permute(0, 2, 1))
                 f = f.permute(0, 2, 1)
+                x = torch.cat((f.permute(0, 2, 1), x), dim=-1)
+            elif self.featureattn:
+                f = torch.cat((f3, f2, f1), dim=1).permute(0, 2, 1)
+                f = self.fusion_layer(torch.cat((f, x), dim=2)).permute(0, 2, 1)
+                x = self.attn_layer(f).permute(0, 2, 1)
             else:
                 f = self.fusion_layer(torch.cat((f3, f2, f1), dim=1))
-
-            x = torch.cat((f.permute(0, 2, 1), x), dim=-1)
+                x = torch.cat((f.permute(0, 2, 1), x), dim=-1)
+            # x = torch.cat((f.permute(0, 2, 1), x), dim=-1)
         
         x = self.gconv_input(x)
         x = self.gconv_layers(x)

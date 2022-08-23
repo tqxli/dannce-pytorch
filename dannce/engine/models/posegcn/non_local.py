@@ -123,3 +123,27 @@ class _GraphNonLocal(nn.Module):
         out = self.nl(out.transpose(1, 2)).transpose(1, 2)
         out = out[:, self.restored_order, :]
         return out
+
+class SelfAttention(nn.Module):
+    def __init__(self, embed_dim=128, nb_h=8, dropout=0.1):
+        super(SelfAttention, self).__init__()
+        self.self_attn = nn.MultiheadAttention(embed_dim, nb_h, dropout=dropout)
+
+        self.fc = nn.Sequential(
+            nn.LayerNorm(embed_dim),
+            nn.Linear(embed_dim, embed_dim),
+            nn.ReLU(),
+            nn.Linear(embed_dim, embed_dim),
+            nn.LayerNorm(embed_dim)
+    )
+
+    def forward(self, x):
+        residual = x.permute(2, 0, 1)
+        q = x.permute(2, 0, 1)
+        k = x.permute(2, 0, 1)
+        v = x.permute(2, 0, 1)
+
+        x = self.self_attn(q, k, value=v)[0]
+        x = x + residual
+        x = self.fc(x)
+        return x.permute(1, 2, 0)
