@@ -279,6 +279,10 @@ def make_rat7m(
         samples, params, params["dannce_train_dir"], num_experiments, 
         temporal_chunks=temporal_chunks)
     pairs = None
+    if merge_pair:
+        # fix random seed
+        np.random.seed(10241024)
+        partition["train_sampleIDs"] = np.random.choice(partition["train_sampleIDs"], 2000)
 
     # Dump the params into file for reproducibility
     processing.save_params_pickle(params)
@@ -350,7 +354,7 @@ def make_rat7m(
             merge_pair=True
         )
         train_generator = torch.utils.data.ConcatDataset([train_generator, train_generator_pair.dataset])
-        valid_generator = torch.utils.data.ConcatDataset([valid_generator, valid_generator_pair.dataset])
+        valid_generator = valid_generator_pair.dataset
 
     train_dataloader, valid_dataloader = serve_data_DANNCE.setup_dataloaders(train_generator, valid_generator, params)
      

@@ -2,7 +2,7 @@ from logging import RootLogger
 import os
 import scipy.io as sio
 
-_BODY_PROFILES = ['mouse22', 'rat7m', 'rat16', 'rat23']
+_BODY_PROFILES = ['mouse22', 'rat7m', 'rat16', 'rat23', 'jesse_skeleton']
 
 ROOT = os.path.abspath(os.path.dirname(__file__))
 
