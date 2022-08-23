@@ -104,7 +104,8 @@ class PoseGCN(nn.Module):
         self.gconv_input = nn.Sequential(*self.gconv_input)
         self.gconv_layers = nn.Sequential(*gconv_layers)
         if mlp_out:
-            self.gconv_output = MLP(n_joints*hid_dim, hidden_dim=[512, 256], output_dim=n_joints*3, num_layers=3, is_activation_last=False)
+            # self.gconv_output = MLP(n_joints*hid_dim, hidden_dim=[512, 256], output_dim=n_joints*3, num_layers=3, is_activation_last=False)
+            self.gconv_output = nn.Linear(hid_dim, 3)
         else:
             self.gconv_output = gconv_block(hid_dim, input_dim, adj)
         
@@ -172,8 +173,8 @@ class PoseGCN(nn.Module):
         
         x = self.gconv_input(x)
         x = self.gconv_layers(x)
-        if self.mlp_out:
-            x = x.reshape(x.shape[0], -1)
+        #if self.mlp_out:
+        #    x = x.reshape(x.shape[0], -1)
 
         x = self.gconv_output(x)
         
