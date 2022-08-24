@@ -53,7 +53,7 @@ class PoseGCN(nn.Module):
         self.social = (n_instances > 1) and inter_social
         
         # adjacency matrix
-        self.adj = adj = build_adj_mx_from_edges(social=self.social, t_dim=t_dim, t_flow=t_flow)
+        self.adj = adj = build_adj_mx_from_edges(social=self.social, t_dim=t_dim, t_flow=t_flow, num_joints=n_joints)
         
         # nonlocal joint groups
         self.nodes_group = nodes_group = model_params.get("nodes_group", NODES_GROUP)
