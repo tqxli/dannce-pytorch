@@ -37,7 +37,7 @@ cd dannce
 `pip install -e .`
 
 ## Running demo
-To test your DANNCE installation and familiarize yourself with DANNCE file and configuration formatting, run DANNCE predictions for `markerless_mouse_1`. Because the videos are too large to host on GitHub, run the following commands from the base `dannce` repository to download necessary files and place them in each associated location:
+To test your DANNCE installation and familiarize yourself with DANNCE file and configuration formatting, run DANNCE predictions for `markerless_mouse_1`. Because the videos and checkpoints are too large to host on GitHub, run the following commands from the base `dannce` repository to download necessary files and place them in each associated location:
 
 For markerless_mouse_1: 
 ```
@@ -54,6 +54,8 @@ unzip vids2.zip -d vids2;
 mv vids2/* demo/markerless_mouse_2/videos/; 
 rm -r vids2 vids2.zip 
 ``` 
+
+For the checkpoint, download from [this link](https://duke.box.com/s/u0oh7soav5ng58pagjhm329vk75wendl) and place in `demo/markerless_mouse_1/DANNCE/weights`.
 
 Once the files are downloaded and placed, run: 
 ```
