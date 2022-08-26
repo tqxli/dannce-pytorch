@@ -1,7 +1,7 @@
 ![Image](./common/dannce_logo.png)
 
 ## News
-- 2022/08: Major codebase refactoring, full features converted to PyTorch. 
+- 2022/08: Major codebase refactoring, full features converted to PyTorch. Notice this is not a stable release; please refer to the original Tensorflow version if necessary.
 - 2022/06: Check out our latest paper presented at CVPR 2022 CV4Animals Workshop
  
    [**Improved Markerless 3D Animal Pose Estimation Using Temporal Semi-Supervision**](https://drive.google.com/file/d/1lZcrXlazErthSkPJtR6g1DLhFo1HmwXU/view?usp=sharing) Tianqing Li, Kyle S. Severson, Fan Wang and Timothy W. Dunn, 2022.
@@ -37,15 +37,7 @@ cd dannce
 `pip install -e .`
 
 ## Running demo
-To test your DANNCE installation and familiarize yourself with DANNCE file and configuration formatting, run DANNCE predictions for `markerless_mouse_1`. Because the videos and network weight files are too large to host on GitHub, use the links in these files to download necessary files and place them in each associated location:
-```
-demo/markerless_mouse_1/DANNCE/train_results/link_to_weights.txt 
-demo/markerless_mouse_1/DANNCE/train_results/AVG/link_to_weights.txt
-demo/markerless_mouse_1/videos/link_to_videos.txt
-demo/markerless_mouse_2/videos/link_to_videos.txt
-```
-
-Alternatively, on Linux you can run the following commands from the base `dannce` repository.
+To test your DANNCE installation and familiarize yourself with DANNCE file and configuration formatting, run DANNCE predictions for `markerless_mouse_1`. Because the videos are too large to host on GitHub, run the following commands from the base `dannce` repository to download necessary files and place them in each associated location:
 
 For markerless_mouse_1: 
 ```
@@ -53,8 +45,6 @@ wget -O vids.zip https://tinyurl.com/DANNCEmm1vids;
 unzip vids.zip -d vids; 
 mv vids/* demo/markerless_mouse_1/videos/; 
 rm -r vids vids.zip; 
-wget -O demo/markerless_mouse_1/DANNCE/train_results/weights.12000-0.00014.hdf5 https://tinyurl.com/DANNCEmm1weightsBASE; 
-wget -O demo/markerless_mouse_1/DANNCE/train_results/AVG/weights.1200-12.77642.hdf5 https://tinyurl.com/DANNCEmm1weightsAVG 
 ```
 
 For markerless_mouse_2: 
@@ -72,4 +62,16 @@ dannce-predict ../../configs/dannce_mouse_config.yaml
 ```
 
 This demo will inference over 1000 frames of mouse data and save the results to: \
-`demo/markerless_mouse_1/DANNCE/predict_results/save_data_AVG.mat`
+```
+demo/markerless_mouse_1/DANNCE/predict_results/save_data_AVG0.mat
+```
+
+To train a new model FROM SCRATCH with the demo data, run
+```
+dannce-train ../../configs/dannce_mouse_config.yaml
+```
+
+To finetune a previous checkpoint, run
+```
+dannce-train ../../configs/dannce_mouse_config.yaml --train-mode finetune --epochs 100
+```
