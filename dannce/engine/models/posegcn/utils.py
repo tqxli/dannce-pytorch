@@ -11,6 +11,7 @@ TEMPORAL_FLOW = np.arange(NUM_JOINTS) #np.array([0, 4, 9, 13, 17, 21]) # restric
 
 # using to build edge using GCN
 def build_adj_mx_from_edges(num_joints=NUM_JOINTS, edge=EDGE, social=False, t_dim=1, t_flow=TEMPORAL_FLOW):
+    t_flow = np.arange(num_joints)
     edge = load_body_profile("rat23")["limbs"] if num_joints == 23 else load_body_profile("mouse22")["limbs"]
     if social:
         inter = np.stack((np.arange(num_joints), np.arange(num_joints)+num_joints), axis=-1)
@@ -20,7 +21,7 @@ def build_adj_mx_from_edges(num_joints=NUM_JOINTS, edge=EDGE, social=False, t_di
     if t_dim > 1:
         inter, intra = [], []
         for i in range(t_dim-1):
-            inter.append(np.stack((TEMPORAL_FLOW+i*num_joints, TEMPORAL_FLOW+(i+1)*num_joints), axis=-1))
+            inter.append(np.stack(t_flow+i*num_joints, t_flow+(i+1)*num_joints), axis=-1)
             # inter.append(np.stack((np.arange(num_joints)+i*num_joints, np.arange(num_joints)+(i+1)*num_joints), axis=-1))
         for i in range(t_dim):
             intra.append(edge+num_joints*i)
