@@ -55,7 +55,7 @@ mv vids2/* demo/markerless_mouse_2/videos/;
 rm -r vids2 vids2.zip 
 ``` 
 
-For the checkpoint, download from [this link](https://duke.box.com/s/u0oh7soav5ng58pagjhm329vk75wendl) and place in `demo/markerless_mouse_1/DANNCE/weights`.
+For the checkpoint, download from [this link](https://duke.box.com/s/tlpw8phcf09f0oqh5m2wa6vnvuwxb2gi) and place in `demo/markerless_mouse_1/DANNCE/weights`.
 
 Once the files are downloaded and placed, run: 
 ```

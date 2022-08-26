@@ -45,7 +45,7 @@ save_period: 100
 # 'finetune': loads in pre-trained weights and fine-tuned from there
 # 'continued': initializes a full model, including optimizer state, and continuous training from the last full model checkpoint
 train_mode: new
-dannce_finetune_weights: ./DANNCE/weights/dannce-c-r7m-demo.pth # needed for 'finetune' and 'continued' mode
+dannce_finetune_weights: ./DANNCE/weights/dannce-c-r7m.pth # needed for 'finetune' and 'continued' mode
 
 loss: 
   L1Loss:
