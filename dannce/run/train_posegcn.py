@@ -71,13 +71,27 @@ def train(params: Dict):
         set_random_seed(params["random_seed"])
         logger.info("***Fix random seed as {}***".format(params["random_seed"]))
 
-    train_dataloader, valid_dataloader, n_cams = make_dataset(
+    spec_args = params["dataset_args"]
+    spec_args = {} if spec_args is None else spec_args
+
+    if params["dataset"] == "rat7m":
+        dataset_preparer = make_rat7m
+    elif params["dataset"] == "rat7m+pair":
+        dataset_preparer = make_rat7m
+        spec_args = {**spec_args, "merge_pair": True}
+    elif params["dataset"] == "pair":
+        dataset_preparer = make_pair
+    else:
+        dataset_preparer = make_dataset
+
+    train_dataloader, valid_dataloader, n_cams = dataset_preparer(
         params,  
         base_params,
         shared_args,
         shared_args_train,
         shared_args_valid,
-        logger
+        logger,
+        **spec_args
     )
 
     # Build network

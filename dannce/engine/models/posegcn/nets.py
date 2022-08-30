@@ -62,7 +62,8 @@ class PoseGCN(nn.Module):
         self.use_features = use_features = model_params.get("use_features", False)
         self.fusion_mlp = fusion_mlp = model_params.get("fusion_mlp", False)
         self.mlp_out = mlp_out = model_params.get("mlp_out", False)
-        self.featureattn = featureattn = model_params.get("featureattn")
+        self.mlp_fusion_out = mlp_fusion_out = model_params.get("mlp_fusion_out", False)
+        self.featureattn = featureattn = model_params.get("featureattn", False)
 
         # self.gconv_input = _GraphConv(adj, input_dim, hid_dim, dropout, base_block=base_block, norm_type=norm_type)
         self.gconv_input = []
@@ -113,6 +114,9 @@ class PoseGCN(nn.Module):
         if mlp_out:
             # self.gconv_output = MLP(n_joints*hid_dim, hidden_dim=[512, 256], output_dim=n_joints*3, num_layers=3, is_activation_last=False)
             self.gconv_output = nn.Linear(hid_dim, 3)
+        elif mlp_fusion_out:
+            # self.gconv_output = MLP(hid_dim+2, hidden_dim=[256, 256], output_dim=3, num_layers=3, is_activation_last=False)
+            self.gconv_output = nn.Linear(hid_dim+3, 3)
         else:
             self.gconv_output = gconv_block(hid_dim, input_dim, adj)
         
@@ -188,7 +192,10 @@ class PoseGCN(nn.Module):
         #if self.mlp_out:
         #    x = x.reshape(x.shape[0], -1)
 
-        x = self.gconv_output(x)
+        if self.mlp_fusion_out:
+            x = self.gconv_output(torch.cat((init_poses.permute(0, 2, 1), x), dim=-1))
+        else:
+            x = self.gconv_output(x)
         
         x = x.reshape(init_poses.shape[0], -1, 3).transpose(2, 1).contiguous() #[n, 3, 23]
 

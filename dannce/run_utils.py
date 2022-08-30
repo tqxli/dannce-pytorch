@@ -240,6 +240,7 @@ def make_rat7m(
     annot="final_annotations_w_correct_clusterIDs.pkl",
     viddir="videos_concat",
     merge_pair=False,
+    merge_label3d=False,
 ):
     # load annotations from disk
     annot_dict = np.load(os.path.join(root, annot), allow_pickle=True)
@@ -355,6 +356,17 @@ def make_rat7m(
         )
         train_generator = torch.utils.data.ConcatDataset([train_generator, train_generator_pair.dataset])
         valid_generator = valid_generator_pair.dataset
+    
+    if merge_label3d:
+        train_generator_label3d, valid_generator_label3d, _ = make_dataset(
+            params,  
+            base_params,
+            shared_args,
+            shared_args_train,
+            shared_args_valid,
+            logger
+        )
+        train_generator = torch.utils.data.ConcatDataset([train_generator, train_generator_label3d.dataset])
 
     train_dataloader, valid_dataloader = serve_data_DANNCE.setup_dataloaders(train_generator, valid_generator, params)
      
