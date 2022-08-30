@@ -717,7 +717,7 @@ resnet_spec = {18: (BasicBlock, [2, 2, 2, 2]),
                152: (Bottleneck, [3, 8, 36, 3])}
 
 def get_pose_net(num_joints, params, logger):
-    architecture = params.get("architecture")
+    architecture = params.get("architecture", "pose_resnet")
     if architecture == "pose_resnet":
         block_class, layers = resnet_spec[params.get("num_layers", 50)]
 
@@ -742,13 +742,16 @@ def get_pose_net(num_joints, params, logger):
 
 if __name__ == "__main__":
     import time 
+    from dannce.engine.logging.logger import get_logger
 
-    model = get_pose_net().to("cuda")
+    logger = get_logger("training.log", verbosity=2)
+    params = {}
+    model = get_pose_net(23, params, logger).to("cuda")
     input = torch.randn(2*6, 3, 512, 512).to("cuda")
     
     start = time.time()
-    features, heatmaps = model(input)
+    heatmaps = model(input)
     end = time.time()
     print("Time: ", end-start)
-    print(features.shape)
+    # print(features.shape)
     print(heatmaps.shape)
