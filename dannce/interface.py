@@ -37,7 +37,7 @@ def dannce_train(params: Dict):
 
     # setup logger
     setup_logging(params["dannce_train_dir"])
-    logger = get_logger("training.log", verbosity=2)
+    logger = get_logger(verbosity=2)
 
     # set GPU ID
     # Temporarily commented out to test on dsplus gpu
@@ -144,7 +144,7 @@ def com_train(params: Dict):
 
     # setup logger
     setup_logging(params["com_train_dir"])
-    logger = get_logger("training.log", verbosity=2) 
+    logger = get_logger(verbosity=2) 
     
     assert torch.cuda.is_available(), "No available GPU device."
     params["gpu_id"] = [0]
@@ -182,8 +182,8 @@ def com_train(params: Dict):
 def com_predict(params):
     os.environ["CUDA_VISIBLE_DEVICES"] = params["gpu_id"]
     make_folder("com_predict_dir", params)
-    setup_logging(params["com_predict_dir"])
-    logger = get_logger("training.log", verbosity=2) 
+    setup_logging(params["com_predict_dir"], filename="prediction.log")
+    logger = get_logger(verbosity=2) 
 
     device = "cuda:0"
     params, predict_params = config.setup_com_predict(params)

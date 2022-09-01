@@ -182,6 +182,9 @@ demo/markerless_mouse_1/DANNCE/train_results/logs/
 demo/markerless_mouse_1/DANNCE/predict_results/
 demo/markerless_mouse_1/DANNCE/train_results/AVG/weights*
 demo/markerless_mouse_1/DANNCE/predict_test/
+demo/markerless_mouse_1/DANNCE/train/*
+demo/markerless_mouse_1/npy_volumes_80_label3d_dannce
+demo/markerless_mouse_2/npy_volumes_80_label3d_dannce
 
 demo/markerless_mouse_1/DANNCE/train_test_ln/
 demo/markerless_mouse_1/DANNCE/train_test_in/

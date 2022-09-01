@@ -24,12 +24,6 @@ log_config = OrderedDict({
         "datetime": {"format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s"}
     }, 
     "handlers": {
-        "console": {
-            "class": "logging.StreamHandler", 
-            "level": "DEBUG", 
-            "formatter": "simple", 
-            "stream": "ext://sys.stdout"
-            }, 
         "info_file_handler": {
             "class": "logging.handlers.RotatingFileHandler", 
             "level": "INFO", 
@@ -42,25 +36,24 @@ log_config = OrderedDict({
     "root": {
         "level": "INFO", 
         "handlers": [
-            "console", 
             "info_file_handler"
         ]
     }
 })
 
-def setup_logging(save_dir):
+def setup_logging(save_dir, filename="training.log"):
     """
     Setup logging configuration
     """
     for _, handler in log_config['handlers'].items():
         if 'filename' in handler:
-            handler['filename'] = os.path.join(save_dir, handler['filename'])
+            handler['filename'] = os.path.join(save_dir, filename)
         logging.config.dictConfig(log_config)
 
 
-def get_logger(name, verbosity=2):
+def get_logger(verbosity=2):
     msg_verbosity = 'verbosity option {} is invalid. Valid options are {}.'.format(verbosity, log_levels.keys())
     assert verbosity in log_levels, msg_verbosity
-    logger = logging.getLogger(name)
+    logger = logging.getLogger()
     logger.setLevel(log_levels[verbosity])
     return logger
