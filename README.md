@@ -16,7 +16,7 @@ This repository contains the **PyTorch** implementation of [**DANNCE**](https://
 1. Clone this github repository
 ```
 git clone --recursive https://github.com/tqxli/dannce-pytorch.git
-cd dannce
+cd dannce-pytorch
 ```
 
 2. If you do not already have it, install [Anaconda](https://www.anaconda.com/products/individual).
@@ -77,3 +77,5 @@ To finetune a previous checkpoint, run
 ```
 dannce-train ../../configs/dannce_mouse_config.yaml --train-mode finetune --epochs 100
 ```
+
+To work with a larger dataset, you may turn on `--use-npy True` to pre-generate the volumes to disk.
