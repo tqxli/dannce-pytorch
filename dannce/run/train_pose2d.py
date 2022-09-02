@@ -185,6 +185,7 @@ def predict(params):
     n_cams = len(params["camnames"])
 
     if params["dataset"] == "rat7m":    
+        # inference over the withheld animal (subject 5)
         dataset_valid = RAT7MImageDataset(train=False, downsample=1)
         cameras = dataset_valid.cameras
         expname = 5
@@ -193,6 +194,7 @@ def predict(params):
             cammat = ops.camera_matrix(cam["K"], cam["R"], cam["t"])
             cameras[k]["cammat"] = cammat
         generator_len = dataset_valid.n_samples // n_cams
+        endIdx = generator_len if params["max_num_samples"] == "max" else params["start_sample"] + params["max_num_samples"]
         partition = {"valid_sampleIDs": np.arange(params["start_sample"], endIdx)}
     elif params["dataset"] == "label3d":
         params, valid_params = config.setup_predict(params)
@@ -415,13 +417,17 @@ def predict(params):
             plt.show(block=True)
             input("Press Enter to continue...")
         
- #       if i == 5:
- #           vis()
- #           breakpoint()
-
         # triangulation
         save_data[sample_id]["joints"] = np.zeros((params["n_channels_out"], 3))
+        prefix = str(expname)+"_" if params["dataset"] == "rat7m" else None
+        ransac = params.get("ransac", False)
+        direct_optimization = params.get("direct_optimization", False)
+
+        # for each joint
         for joint in range(pred.shape[1]):
+            view_set = set(range(6))
+            inlier_set = set()
+            # for each camera pair
             for n_cam1 in range(n_cams):
                 for n_cam2 in range(n_cam1 + 1, n_cams):
                     camname_1 = str(expname)+"_"+params["camnames"][n_cam1] if params["dataset"] == "rat7m" else params["camnames"][n_cam1]
@@ -432,6 +438,7 @@ def predict(params):
                     pts1 = pts1[np.newaxis, :]
                     pts2 = pts2[np.newaxis, :]
                     
+                    # triangulate into 3D
                     test3d = ops.triangulate(
                         pts1,
                         pts2,
@@ -439,22 +446,66 @@ def predict(params):
                         cameras[camname_2]["cammat"],
                     ).squeeze()
 
-                    save_data[sample_id]["triangulation"][
-                        "{}_{}".format(
-                            params["camnames"][n_cam1], params["camnames"][n_cam2]
+                    keypoints_2d = save_data[sample_id]
+                    if ransac:
+                        # compute the reprojection errors
+                        reproj_errs = ops.cal_reprojection_error(
+                            test3d, keypoints_2d, joint, cameras, params["camnames"], prefix
                         )
-                    ] = test3d
 
-            pairs = [
-                v for v in save_data[sample_id]["triangulation"].values() if len(v) == 3
+                        # keep the inlier views
+                        new_inlier_set = set([n_cam1, n_cam2])
+                        for view in view_set:
+                            if reproj_errs[view] < 15:
+                                new_inlier_set.add(view)
+
+                        if len(new_inlier_set) > len(inlier_set):
+                            inlier_set = new_inlier_set
+                    else:
+                        save_data[sample_id]["triangulation"][
+                            "{}_{}".format(
+                                params["camnames"][n_cam1], params["camnames"][n_cam2]
+                            )
+                        ] = test3d
+            
+            if ransac:
+                inlier_set = np.array(sorted(inlier_set))
+                inlier_pts = [save_data[sample_id][params["camnames"][view]]["COM"][joint] for view in inlier_set]
+                inlier_pts = [pt[np.newaxis, :] for pt in inlier_pts]
+                
+                if params["dataset"] == "rat7m":
+                    inlier_cams = [cameras[prefix+params["camnames"][view]]["cammat"] for view in inlier_set]
+                else:
+                    inlier_cams = [cameras[params["camnames"][view]]["cammat"] for view in inlier_set]
+                
+                final = ops.triangulate_multi_instance(inlier_pts, inlier_cams)
+                final = np.squeeze(final)
+
+                if direct_optimization:
+                    from scipy.optimize import least_squares
+                    def residual_function(x):
+                        residuals = ops.cal_reprojection_error(
+                            x, save_data[sample_id], joint, cameras, np.array(params["camnames"])[inlier_set], prefix
+                        )[0]
+                        return residuals
+                    x0 = final
+                    res = least_squares(residual_function, x0, loss="huber", method="trf")
+                    final = res.x
+
+            else:
+                pairs = [
+                    v for v in save_data[sample_id]["triangulation"].values() if len(v) == 3
+                ]   
             ]   
+                ]   
 
-            pairs = np.stack(pairs, axis=1)
-            final = np.nanmedian(pairs, axis=1).squeeze()
+                pairs = np.stack(pairs, axis=1)
+                # find final reconstructed points by taking their median
+                final = np.nanmedian(pairs, axis=1).squeeze()
             save_data[sample_id]["joints"][joint] = final
     
     pose3d = np.stack([v["joints"] for k, v in save_data.items()], axis=0) #[N, 3, 20]
-    # pose2d = np.
+
     sio.savemat(
         os.path.join(params["dannce_predict_dir"], "pred{}.mat".format(params["start_sample"])),
         {"pred": pose3d},

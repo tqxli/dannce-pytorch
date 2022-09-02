@@ -7,7 +7,7 @@ from tqdm import tqdm
 import torch
 from dannce import config
 from dannce.engine.data import serve_data_DANNCE, dataset, generator, processing
-from dannce.engine.models.backbone import get_pose_net
+from dannce.engine.models.pose2d.pose_net import get_pose_net
 from dannce.engine.trainer.backbone_trainer import BackboneTrainer
 from dannce.interface import make_folder
 from dannce.engine.logging.logger import setup_logging, get_logger

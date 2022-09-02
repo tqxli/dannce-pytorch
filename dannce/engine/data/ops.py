@@ -85,14 +85,16 @@ def project_to2d(pts, M: np.ndarray, device: Text) -> torch.Tensor:
     """
 
     # pts = torch.Tensor(pts.copy()).to(device)
-    M = M.to(device=device)
+    if isinstance(M, torch.Tensor):
+        M = M.to(device=device)
+    else:
+        M = torch.as_tensor(M, device=device)
     pts1 = torch.ones(pts.shape[0], 1, dtype=torch.float32, device=device)
 
     projPts = torch.matmul(torch.cat((pts, pts1), 1), M)
     projPts[:, :2] = projPts[:, :2] / projPts[:, 2:]
 
     return projPts
-
 
 def sample_grid_nearest(
     im: np.ndarray, projPts: np.ndarray, device: Text
@@ -287,6 +289,7 @@ def triangulate_multi_instance(pts, cams):
     pts1 and pts2 must be Mx2, where M is the number of points with
     (x,y) positions. M 3-D points will be returned after triangulation
     """
+
     pts = [pt.T for pt in pts]
     cams = [c.T for c in cams]
     out_3d = np.zeros((3, pts[0].shape[1]))
@@ -385,6 +388,33 @@ def distortPoints(
     distortedPoints = torch.stack((distortedPointsX, distortedPointsY))
 
     return distortedPoints
+
+def cal_reprojection_error(keypoints_3d, keypoints_2d, joint_idx, cameras, camnames, prefix=None):
+    reprojection_errs = []
+    keypoints_3d = torch.as_tensor(keypoints_3d[np.newaxis, :])
+    for cam in camnames:
+        camname = cam if prefix is None else prefix+cam
+        pts = keypoints_2d[cam]["COM"][joint_idx]
+        pts = pts[np.newaxis, :]
+
+        camparam = cameras[camname]
+        proj = project_to2d(keypoints_3d, camparam["cammat"], "cpu")[:, :2]
+        proj = proj.cpu().numpy()
+        proj = unDistortPoints(
+            proj, 
+            camparam["K"], 
+            camparam["RDistort"], 
+            camparam["TDistort"], 
+            camparam["R"], 
+            camparam["t"],
+        )
+
+        err = np.mean(np.sqrt(np.sum((proj - pts) ** 2, axis=1)))
+        reprojection_errs.append(err)
+    
+    reprojection_errs = np.vstack(reprojection_errs).T
+
+    return reprojection_errs[0]
 
 def expected_value_3d(prob_map, grid_centers):
     bs, channels, h, w, d = prob_map.shape
