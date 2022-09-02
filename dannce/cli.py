@@ -1,7 +1,7 @@
 """Entrypoints for dannce training and prediction."""
 import dannce.run.train_voxelpose as voxelpose
 import dannce.run.train_motiondannce as motiondannce
-import dannce.run.train_backbone2d as backbone2d
+# import dannce.run.train_backbone2d as backbone2d
 import dannce.run.train_pose2d as pose2d
 import dannce.run.train_dannce_dbbox as dbbox
 import dannce.run.train_posegcn as posegcn
@@ -156,7 +156,7 @@ def custom_model_train_cli():
     _TYPES = {
         'motiondannce': motiondannce.train,
         'voxelpose3d': voxelpose.train,
-        'backbone2d': backbone2d.train,
+        # 'backbone2d': backbone2d.train,
         'dbbox': dbbox.train,
         'posegcn': posegcn.train,
         'transformer': trans.train,

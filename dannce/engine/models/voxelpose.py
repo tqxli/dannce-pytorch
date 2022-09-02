@@ -9,7 +9,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 import dannce.engine.data.ops as ops
-from dannce.engine.models.backbone import get_pose_net
+from dannce.engine.models.pose2d.pose_net import get_pose_net
 from dannce.engine.models.nets import DANNCE
 
 class FeatureDANNCE(nn.Module):

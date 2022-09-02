@@ -1,7 +1,7 @@
 import dannce.config as config
 from dannce.engine.data import ops
-import dannce.engine.inference as inference
 from dannce.engine.models.pose2d.sleap import SLEAPUNet
+from dannce.engine.models.pose2d import pose_net
 from dannce.run_utils import *
 from dannce.engine.logging.logger import setup_logging, get_logger
 from dannce.engine.trainer.com_trainer import COMTrainer
@@ -16,6 +16,26 @@ def collate_fn(batch):
     y = torch.stack([item[1] for item in batch], dim=0)
 
     return X, y
+
+def build_model(params, logger):
+    model_type = params["custom_model"].get("type", "SLEAP")
+    if model_type == "SLEAP":
+        model = SLEAPUNet(params["n_channels_in"], params["n_channels_out"])
+    elif model_type == "posenet":
+        model = pose_net.get_pose_net(params["n_channels_out"], params["custom_model"], logger)
+    else:
+        logger.info("Invalid architecture.")
+    
+    if params["train_mode"] == "finetune" and params["dannce_finetune_weights"] is not None:
+        logger.info("Loading checkpoint from {}".format(params["dannce_finetune_weights"]))
+        state_dict = torch.load(params["dannce_finetune_weights"])["state_dict"]
+        ckpt_channel_num = state_dict["output_layer.weight"].shape[0]
+        if ckpt_channel_num != params["n_channels_out"]:
+            state_dict.pop("output_layer.weight", None)
+            state_dict.pop("output_layer.bias", None)
+        model.load_state_dict(state_dict, strict=False)
+    
+    return model
 
 def train(params):
     params, base_params, shared_args, shared_args_train, shared_args_valid = config.setup_train(params)
@@ -37,15 +57,7 @@ def train(params):
         set_random_seed(params["random_seed"])
         logger.info("***Fix random seed as {}***".format(params["random_seed"]))
 
-    model = SLEAPUNet(params["n_channels_in"], params["n_channels_out"])
-    if params["train_mode"] == "finetune" and params["dannce_finetune_weights"] is not None:
-        print("Loading checkpoint from {}".format(params["dannce_finetune_weights"]))
-        state_dict = torch.load(params["dannce_finetune_weights"])["state_dict"]
-        ckpt_channel_num = state_dict["output_layer.weight"].shape[0]
-        if ckpt_channel_num != params["n_channels_out"]:
-            state_dict.pop("output_layer.weight", None)
-            state_dict.pop("output_layer.bias", None)
-        model.load_state_dict(state_dict, strict=False)
+    model = build_model(params, logger)
 
     model_params = [p for p in model.parameters() if p.requires_grad]
     optimizer = torch.optim.Adam(model_params, lr=params["lr"], eps=1e-7)
@@ -321,8 +333,6 @@ def predict(params):
 
         generator_len = len(dataset_valid)
         
-        # breakpoint()
-        # output = dataset_valid[0]
         cameras = cameras[expname]
     
     print("Initializing Network...")
@@ -332,13 +342,6 @@ def predict(params):
     model = model.to(device)
 
     save_data = {}
-    # endIdx = np.min(
-    #     [
-    #         params["start_sample"] + params["max_num_samples"],
-    #         generator_len
-    #     ]
-    # ) if params["max_num_samples"] != "max" else generator_len
-
     for i in tqdm(range(params["start_sample"], endIdx)):
         if params["dataset"] == "rat7m":
             batch, coms = [], []
@@ -496,9 +499,6 @@ def predict(params):
                 pairs = [
                     v for v in save_data[sample_id]["triangulation"].values() if len(v) == 3
                 ]   
-            ]   
-                ]   
-
                 pairs = np.stack(pairs, axis=1)
                 # find final reconstructed points by taking their median
                 final = np.nanmedian(pairs, axis=1).squeeze()
