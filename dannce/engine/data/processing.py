@@ -1810,7 +1810,8 @@ def filter_com3ds(pairs, com3d_dict, datadict_3d, threshold=120):
 
     return partition, new_com3d_dict, new_datadict_3d, new_samples
 
-def mask_coords_outside_volume(vmin, vmax, pose3d, anchor):
+def mask_coords_outside_volume(vmin, vmax, pose3d, anchor, n_chan):
+    # compute relative distance to COM
     anchor_dist = pose3d - anchor
     x_in_vol = (anchor_dist[0] >= vmin) & (anchor_dist[0] <= vmax)
     y_in_vol = (anchor_dist[1] >= vmin) & (anchor_dist[1] <= vmax)
@@ -1819,10 +1820,16 @@ def mask_coords_outside_volume(vmin, vmax, pose3d, anchor):
     in_vol = x_in_vol & y_in_vol & z_in_vol
     in_vol = np.stack([in_vol]*3, axis=0)
 
+    # if the other animal's partially in the volume, use masked nan
+    # otherwise repeat the first animal
     nan_pose = np.empty_like(pose3d)
     nan_pose[:] = np.nan
 
     new_pose3d = np.where(in_vol, pose3d, nan_pose)
+
+    if np.isnan(new_pose3d[:, n_chan:]).sum() == n_chan*3:
+        print("The other animal not in volume, repeat the primary.")
+        new_pose3d[:, n_chan:] = new_pose3d[:, :n_chan]
 
     return new_pose3d
 
@@ -1831,14 +1838,16 @@ def prepare_joint_volumes(params, pairs, com3d_dict, datadict_3d):
     for k, v in pairs.items():
         for (vol1, vol2) in v:
             anchor1, anchor2 = com3d_dict[vol1], com3d_dict[vol2]
-            anchor1, anchor2 = anchor1[:, np.newaxis], anchor2[:, np.newaxis]
+            anchor1, anchor2 = anchor1[:, np.newaxis], anchor2[:, np.newaxis] #[3, 1]
             pose3d1, pose3d2 = datadict_3d[vol1], datadict_3d[vol2]
+
+            n_chan = pose3d1.shape[-1]
 
             new_pose3d1 = np.concatenate((pose3d1, pose3d2), axis=-1) #[3, 46]
             new_pose3d2 = np.concatenate((pose3d2, pose3d1), axis=-1) #[3, 46]
 
-            new_pose3d1 = mask_coords_outside_volume(vmin, vmax, new_pose3d1, anchor1)
-            new_pose3d2 = mask_coords_outside_volume(vmin, vmax, new_pose3d2, anchor2) 
+            new_pose3d1 = mask_coords_outside_volume(vmin, vmax, new_pose3d1, anchor1, n_chan)
+            new_pose3d2 = mask_coords_outside_volume(vmin, vmax, new_pose3d2, anchor2, n_chan) 
             
             datadict_3d[vol1] = new_pose3d1
             datadict_3d[vol2] = new_pose3d2
