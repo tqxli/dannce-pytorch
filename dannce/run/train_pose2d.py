@@ -17,14 +17,17 @@ def collate_fn(batch):
 
     return X, y
 
-def build_model(params, logger):
+def build_model(params, logger=None, train=True):
     model_type = params["custom_model"].get("type", "SLEAP")
     if model_type == "SLEAP":
         model = SLEAPUNet(params["n_channels_in"], params["n_channels_out"])
     elif model_type == "posenet":
         model = pose_net.get_pose_net(params["n_channels_out"], params["custom_model"], logger)
     else:
-        logger.info("Invalid architecture.")
+        if logger is not None:
+            logger.info("Invalid architecture.")
+    if not train:
+        return model
     
     if params["train_mode"] == "finetune" and params["dannce_finetune_weights"] is not None:
         logger.info("Loading checkpoint from {}".format(params["dannce_finetune_weights"]))
@@ -191,14 +194,17 @@ def train(params):
 
 def predict(params):
     os.environ["CUDA_VISIBLE_DEVICES"] = params["gpu_id"]
+
     make_folder("dannce_predict_dir", params)
+    setup_logging(params["dannce_predict_dir"])
+    logger = get_logger("training.log", verbosity=2) 
     device = "cuda:0"
     params["n_instances"] = params["n_channels_out"]
     n_cams = len(params["camnames"])
 
     if params["dataset"] == "rat7m":    
         # inference over the withheld animal (subject 5)
-        dataset_valid = RAT7MImageDataset(train=False, downsample=1)
+        dataset_valid = RAT7MImageDataset(train=False, downsample=1) #s5-d1: 10445, s5-d2: 14091
         cameras = dataset_valid.cameras
         expname = 5
         cameras = cameras[5]
@@ -336,13 +342,13 @@ def predict(params):
         cameras = cameras[expname]
     
     print("Initializing Network...")
-    model = SLEAPUNet(params["n_channels_in"], params["n_channels_out"])
+    model = build_model(params, logger, train=False)
     model.load_state_dict(torch.load(params["dannce_predict_model"])['state_dict'])
     model.eval()   
     model = model.to(device)
 
     save_data = {}
-    for i in tqdm(range(params["start_sample"], endIdx)):
+    for idx, i in enumerate(tqdm(range(params["start_sample"], endIdx))):
         if params["dataset"] == "rat7m":
             batch, coms = [], []
             for j in range(n_cams):
@@ -353,14 +359,14 @@ def predict(params):
             data = dataset_valid[i]
             batch = data[0][0]
             batch = batch.reshape(-1, *batch.shape[2:]).float()
-            ID = partition["valid_sampleIDs"][i]
+            ID = partition["valid_sampleIDs"][idx]
             # TODO: the 2d com here is not right, need to project from 3D ... annoying
             coms = [np.nanmean(dataset_valid.labels[ID]["data"][f"0_Camera{j}"].round(), axis=1) for j in range(1, 7)]
 
         pred = model(batch.to(device))
         pred = pred.detach().cpu().numpy()
 
-        sample_id = partition["valid_sampleIDs"][i]
+        sample_id = partition["valid_sampleIDs"][idx]
         save_data[sample_id] = {}
         save_data[sample_id]["triangulation"] = {}    
 
@@ -505,9 +511,17 @@ def predict(params):
             save_data[sample_id]["joints"][joint] = final
     
     pose3d = np.stack([v["joints"] for k, v in save_data.items()], axis=0) #[N, 3, 20]
+    pose2d = []
+    for k, v in save_data.items():
+        pose = [v[cam]["COM"] for cam in params["camnames"]]
+        pose2d.append(np.stack(pose, axis=0))
+    pose2d = np.stack(pose2d, axis=0)
 
     sio.savemat(
         os.path.join(params["dannce_predict_dir"], "pred{}.mat".format(params["start_sample"])),
-        {"pred": pose3d},
+        {
+            "pred": pose3d,
+            "pose2d": pose2d,
+        },
     )
     return

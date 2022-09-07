@@ -563,8 +563,9 @@ def setup_predict(params):
     # While we can use experiment files for DANNCE training,
     # for prediction we use the base data files present in the main config
     # Grab the input file for prediction
-    params["label3d_file"] = grab_predict_label3d_file(index=params["label3d_index"])
-    params["base_exp_folder"] = os.path.dirname(params["label3d_file"])
+    if params["dataset"] != "rat7m":
+        params["label3d_file"] = grab_predict_label3d_file(index=params["label3d_index"])
+        params["base_exp_folder"] = os.path.dirname(params["label3d_file"])
     params["multi_mode"] = False
 
     print("Using camnames: {}".format(params["camnames"]))

@@ -1445,6 +1445,55 @@ class RAT7MImageDataset(torch.utils.data.Dataset):
 
         return im, targets
 
+class RAT7MNPYDataset(torch.utils.data.Dataset):
+    def __init__(
+        self, 
+        root="/media/mynewdrive/datasets/rat7m",
+        annot="final_annotations_w_correct_clusterIDs.pkl",
+        train=False,
+    ):
+        super().__init__()
+
+        self.root = root
+        self.exps = ["s5-d1", "s5-d2"] if not train else ["s1-d1", "s2-d1", "s2-d2", "s3-d1", "s4-d1"]
+        # load annotations from disk
+        self.annot_dict = annot_dict = np.load(os.path.join(root, annot), allow_pickle=True)["table"]
+        
+        vol_paths, grid_paths = [], []
+        for e in self.exps:
+            sid, did = int(e[1]), int(e[-1])
+            filter = (annot_dict["subject_idx"] == sid) & (annot_dict["day_idx"] == did)
+            frames = annot_dict["frame_idx"]["Camera1"][filter]
+            # frames = sorted(frames, key=lambda x:int(x))
+            fnames = [f"0_{frame}.npy" for frame in frames]
+            vp = [os.path.join(root, "npy_volumes", e, "image_volumes", f) for f in fnames]
+            gp = [os.path.join(root, "npy_volumes", e, "grid_volumes", f) for f in fnames]
+            vol_paths += vp 
+            grid_paths += gp
+
+        self.vol_paths = vol_paths
+        self.grid_paths = grid_paths
+
+        # just check for sure
+        for vp in self.vol_paths:
+            assert os.path.exists(vp)
+        for gp in self.grid_paths:
+            assert os.path.exists(gp)        
+
+        assert len(self.vol_paths) == len(self.grid_paths)
+    
+    def __len__(self):
+        return len(self.vol_paths)
+    
+    def __getitem__(self, idx):
+        X = np.load(self.vol_paths[idx], allow_pickle=True).astype("float32")
+        X_grid = np.load(self.grid_paths[idx], allow_pickle=True)
+
+        X = processing.preprocess_3d(X)
+        X = X[np.newaxis, :, :, :, :]
+        X_grid = X_grid[np.newaxis, :, :]
+
+        return [X, X_grid], [None]
 
 if __name__ == "__main__":
     import time

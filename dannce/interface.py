@@ -117,7 +117,13 @@ def dannce_predict(params: Dict):
     # Because CUDA_VISBILE_DEVICES is already set to a single GPU, the gpu_id here should be "0"
     device = "cuda:0"
     params, valid_params = config.setup_predict(params)
-    predict_generator, predict_generator_sil, camnames, partition = make_dataset_inference(params, valid_params)
+    if params["dataset"] == "rat7m":
+        predict_generator = dataset.RAT7MNPYDataset(train=False)
+        predict_generator_sil = None
+        camnames = [["Camera1", "Camera2", "Camera3", "Camera4", "Camera5", "Camera6"]]
+        partition = {"valid_sampleIDs": np.arange(len(predict_generator))}
+    else:
+        predict_generator, predict_generator_sil, camnames, partition = make_dataset_inference(params, valid_params)
 
     # model = build_model(params, camnames)
     print("Initializing Network...")
