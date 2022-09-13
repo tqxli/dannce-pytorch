@@ -24,6 +24,24 @@ def set_random_seed(seed: int):
     torch.cuda.manual_seed(seed)
     torch.backends.cudnn.deterministic = True
 
+def set_device(params, logger):
+    # set GPU ID
+    # Temporarily commented out to test on dsplus gpu
+    # if not params["multi_gpu_train"]:
+    # os.environ["CUDA_VISIBLE_DEVICES"] = params["gpu_id"]
+    # deploy GPU devices
+    assert torch.cuda.is_available(), "No available GPU device."
+    
+    if params["multi_gpu_train"]:
+        params["gpu_id"] = list(range(torch.cuda.device_count()))
+        device = torch.device("cuda") # use all available GPUs
+    else:
+        params["gpu_id"] = [0]
+        device = torch.device("cuda")
+    logger.info("***Use {} GPU for training.***".format(params["gpu_id"]))
+    # device = "cuda:0" if torch.cuda.is_available() else "cpu"
+    return device
+
 def make_folder(key: Text, params: Dict):
     """Make the prediction or training directories.
 
@@ -487,9 +505,9 @@ def _make_data_npy(
         "temporal_chunk_list": partition["valid_chunks"] if params["use_temporal"] else None
     }
     
-    if params["social_training"]:
-        args_train = {**args_train, "pairs": pairs["train_pairs"]}
-        args_valid = {**args_valid, "pairs": pairs["valid_pairs"]}
+    # if params["social_training"]:
+    #     args_train = {**args_train, "pairs": pairs["train_pairs"]}
+    #     args_valid = {**args_valid, "pairs": pairs["valid_pairs"]}
 
     # initialize datasets and dataloaders
     train_generator = genfunc(**args_train)

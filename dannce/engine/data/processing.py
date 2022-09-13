@@ -19,7 +19,7 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
 from dannce.engine.data import serve_data_DANNCE, io
-from dannce.config import make_paths_safe, make_none_safe
+from dannce.config import check_camnames, make_paths_safe, make_none_safe
 # _DEFAULT_VIDDIR = "videos"
 # _DEFAULT_VIDDIR_SIL = "videos_sil"
 # _DEFAULT_COMSTRING = "COM"
@@ -720,7 +720,7 @@ def load_volumes_into_mem(params, logger, partition, n_cams, generator, train=Tr
 
     # initialize vars
     if silhouette:
-        X = np.empty((n_samples, *gridsize, 1), dtype="float32")
+        X = np.empty((n_samples, *gridsize, n_cams), dtype="float32")
     else:
         X = np.empty((n_samples, *gridsize, params["chan_num"]*n_cams), dtype="float32")
     logger.info(message)
@@ -749,10 +749,12 @@ def load_volumes_into_mem(params, logger, partition, n_cams, generator, train=Tr
                     X[j, i] = vol
                     X_grid[j, i], y[j, i] = rr[0][1][j], rr[1][0][j]
                 else:
-                    X[j, i] = extract_3d_sil(vol)
+                    X[j, i] = vol[:, :, :, ::3] #extract_3d_sil(vol)
                     X_grid[j, i] = rr[0][1][j]
 
         X = np.reshape(X, (-1, *X.shape[2:]))
+        # if silhouette:
+        #     save_volumes_into_tif(params, './sil3d', X, np.arange(n_samples), n_cams, logger)
         if X_grid is not None:
             X_grid = np.reshape(X_grid, (-1, *X_grid.shape[2:]))
         if y is not None:
@@ -767,7 +769,7 @@ def load_volumes_into_mem(params, logger, partition, n_cams, generator, train=Tr
                     X[i] = vol
                     X_grid[i], y[i] = rr[0][1], rr[1][0]
                 else:
-                    X[i] = extract_3d_sil(vol)
+                    X[i] = vol[:, :, :, ::3] # extract_3d_sil(vol)
                     X_grid[i] = rr[0][1]
             else:
                 X[i], y[i] = rr[0][0], rr[1][0]
@@ -869,8 +871,10 @@ def save_volumes_into_npy(params, npy_generator, missing_npydir, samples, logger
                     if params["downscale_occluded_view"]:    
                         np.save(os.path.join(save_root, "occlusion_scores", fname), rr[0][2][j]) 
                 else:
-                    sil = extract_3d_sil(rr[0][0][j].astype("uint8"))
+                    # sil = extract_3d_sil(rr[0][0][j].astype("uint8"))
+                    sil = rr[0][0][j].astype("uint8")[:, :, :, ::3]
                     np.save(os.path.join(save_root, "visual_hulls", fname), sil)
+
         else:
             exp = int(samp.split("_")[0])
             save_root = missing_npydir[exp]
@@ -883,7 +887,8 @@ def save_volumes_into_npy(params, npy_generator, missing_npydir, samples, logger
                     if not os.path.exists(outdir):
                         np.save(outdir, data)
             else:
-                sil = extract_3d_sil(X)
+                # sil = extract_3d_sil(X)
+                sil = X[:, :, :, ::3]
                 np.save(os.path.join(save_root, "visual_hulls", fname), sil) 
     
     # samples = remove_samples_npy(npydir, samples, params)
@@ -906,7 +911,7 @@ def save_volumes_into_tif(params, tifdir, X, sampleIDs, n_cams, logger):
             im = im.astype("uint8")
             of = os.path.join(
                 tifdir,
-                sampleIDs[i] + "_cam" + str(j) + ".tif",
+                str(sampleIDs[i]) + "_cam" + str(j) + ".tif",
             )
             imageio.mimwrite(of, np.transpose(im, [2, 0, 1, 3]))
 

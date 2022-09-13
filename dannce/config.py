@@ -16,7 +16,7 @@ _DEFAULT_VIDDIR = "videos"
 _DEFAULT_VIDDIR_SIL = "videos_sil"
 _DEFAULT_COMSTRING = "COM"
 _DEFAULT_COMFILENAME = "com3d.mat"
-_DEFAULT_SEG_MODEL = 'weights/maskrcnn.pth'
+_DEFAULT_SEG_MODEL = '../weights/maskrcnn.pth'
 
 # from dannce.engine.data.processing import _DEFAULT_VIDDIR, _DEFAULT_VIDDIR_SIL, _DEFAULT_COMSTRING, _DEFAULT_COMFILENAME
 
@@ -409,7 +409,7 @@ def adjust_loss_params(params):
         params["use_silhouette"] = True
         params["n_rand_views"] = None
     
-    if "SilhouetteLoss" in params["loss"].keys():
+    if "SilhouetteLoss" in params["loss"].keys() or "SilhouetteLoss2D" in params["loss"].keys():
         params["use_silhouette"] = True
 
     if "TemporalLoss" in params["loss"].keys():

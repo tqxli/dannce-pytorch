@@ -1,5 +1,4 @@
 from abc import abstractmethod
-from lib2to3.pytree import Base
 import imageio, os
 
 import numpy as np
@@ -447,23 +446,42 @@ class PairRepulsionLoss(BaseLoss):
 
 
 class SilhouetteLoss(BaseLoss):
-    def __init__(self, delta=5, **kwargs):
+    def __init__(self, delta=5, reduction_axes=[2,3,4], **kwargs):
         super().__init__(**kwargs)
         self.delta = delta
+        self.reduction_axes = reduction_axes
     
-    def forward(self, vh, heatmaps, reduce_axes=[2, 3, 4]):
+    def forward(self, vh, heatmaps):
         """
         vh, heatmaps: [bs, n_joints, H, W, D]
         Heatmap is not softmaxed.
         """
         prob = ops.spatial_softmax(heatmaps)
 
-        sil = torch.sum(vh * prob, axis=reduce_axes)
+        sil = torch.sum(vh * prob, axis=self.reduction_axes)
         sil = torch.mean(-(sil + 1e-12).log())
         if torch.isnan(sil):
             sil = sil.new_zeros((), requires_grad=True)
         
         return self.loss_weight * sil
+
+class SilhouetteLoss2D(BaseLoss):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+    
+    def forward(self, sils, heatmaps):
+        """
+        vh: [bs, n_cams, H, W, D]
+        heatmaps: [bs, n_joints, H, W, D]. Heatmap is not softmaxed.
+        """
+        prob = ops.spatial_softmax(heatmaps).unsqueeze(1) #[bs, 1, n_joints, H, W, D]
+        sils = sils.unsqueeze(2) #[bs, n_cams, 1, H, W, D]
+        sils = torch.sum(sils * prob, axis=[3, 4, 5]) #[bs, n_cams, n_joints, H, W, D]
+        sils = torch.mean(-(sils + 1e-12).log())
+        if torch.isnan(sils):
+            sils = sils.new_zeros((), requires_grad=True)
+        
+        return self.loss_weight * sils
 
 class VarianceLoss(BaseLoss):
     def __init__(self, **kwargs):

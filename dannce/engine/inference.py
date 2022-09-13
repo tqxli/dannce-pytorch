@@ -963,7 +963,7 @@ def inference_ttt(
 
     return save_data
 
-def random_rotate(X, y_3d):
+def random_rotate(X, y_3d, aux=None):
     def rot90(X):
         X = X.permute(1, 0, 2, 3)
         return X.flip(1)
@@ -978,25 +978,32 @@ def random_rotate(X, y_3d):
         elif rot == 1:
             # Rotate180
             X[j], y_3d[j] = rot180(X[j]), rot180(y_3d[j])
+            if aux is not None:
+                aux[j] = rot180(aux[j])
         elif rot  == 2:
             # Rotate90
             X[j], y_3d[j] = rot90(X[j]), rot90(y_3d[j])
+            if aux is not None:
+                aux[j] = rot90(aux[j])
         elif rot == 3:
             # Rotate -90/270
             X[j], y_3d[j] = rot180(rot90(X[j])), rot180(rot90(y_3d[j]))
-    return X, y_3d
+            if aux is not None:
+                aux[j] = rot180(rot90(aux[j]))
+    return X, y_3d, aux
 
-def apply_random_transforms(volumes, grids):
+def apply_random_transforms(volumes, grids, aux=None):
     grids = grids.reshape(grids.shape[0], 80, 80, 80, 3)
 
-    volumes, grids = random_rotate(volumes, grids)
+    volumes, grids, aux = random_rotate(volumes, grids, aux)
     grids = grids.reshape(grids.shape[0], -1, 3)
-    return volumes, grids
+    return volumes, grids, aux
 
-def form_batch(volumes, grids, batch_size=4):
-    copies = [apply_random_transforms(volumes.clone(), grids.clone()) for i in range(batch_size)]
+def form_batch(volumes, grids, aux=None, batch_size=4):
+    copies = [apply_random_transforms(volumes.clone(), grids.clone(), aux.clone()) for i in range(batch_size)]
     
     volumes = torch.cat([copy[0] for copy in copies], dim=0)
     grids = torch.cat([copy[1] for copy in copies], dim=0)
+    aux = torch.cat([copy[2] for copy in copies], dim=0) if aux is not None else aux
 
-    return volumes, grids
+    return volumes, grids, aux

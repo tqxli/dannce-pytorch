@@ -82,8 +82,14 @@ class DannceTrainer(BaseTrainer):
             return
 
         if train and self.form_batch:
-            volumes, grid_centers = form_batch(volumes.permute(0, 2, 3, 4, 1), grid_centers, batch_size=self.form_bs)
+            volumes, grid_centers, aux = form_batch(
+                volumes.permute(0, 2, 3, 4, 1), 
+                grid_centers, 
+                batch_size=self.form_bs,
+                aux=aux if aux is None else aux.permute(0, 2, 3, 4, 1)
+            )
             volumes = volumes.permute(0, 4, 1, 2, 3)
+            aux = aux if aux is None else aux.permute(0, 4, 1, 2, 3)
             keypoints_3d_gt = keypoints_3d_gt.repeat(self.form_bs, 1, 1)
 
         keypoints_3d_pred, heatmaps, _ = self.model(volumes, grid_centers)

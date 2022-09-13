@@ -705,10 +705,8 @@ class PoseDatasetNPY(PoseDatasetFromMem):
             )
 
             if self.aux:
-                aux.append(
-                    np.load(os.path.join(self.npydir[eID], self.auxdir, "0_" + sID + ".npy")
-                ).astype("float32")
-                )
+                a = np.load(os.path.join(self.npydir[eID], self.auxdir, "0_" + sID + ".npy")).astype("float32")
+                aux.append(a)
 
         X = np.stack(X)
         y_3d = np.stack(y_3d)
