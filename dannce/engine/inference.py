@@ -1000,7 +1000,11 @@ def apply_random_transforms(volumes, grids, aux=None):
     return volumes, grids, aux
 
 def form_batch(volumes, grids, aux=None, batch_size=4):
-    copies = [apply_random_transforms(volumes.clone(), grids.clone(), aux.clone()) for i in range(batch_size)]
+    copies = [apply_random_transforms(
+        volumes.clone(), 
+        grids.clone(), 
+        aux.clone() if aux is not None else aux
+    ) for i in range(batch_size)]
     
     volumes = torch.cat([copy[0] for copy in copies], dim=0)
     grids = torch.cat([copy[1] for copy in copies], dim=0)
