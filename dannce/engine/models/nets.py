@@ -289,7 +289,7 @@ def initialize_train(params, n_cams, device, logger):
 
         state_dict = checkpoints["state_dict"]
         # replace final output layer if do not match with the checkpoint
-        if "dannce" in params["net_type"]":
+        if "dannce" in params["net_type"]:
             ckpt_channel_num = state_dict["output_layer.weight"].shape[0]
             if ckpt_channel_num != params["n_channels_out"]:
                 state_dict.pop("output_layer.weight", None)
