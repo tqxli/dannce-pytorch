@@ -710,6 +710,30 @@ def remove_samples_npy(npydir, samples, params):
 
     return np.array(samps)
 
+def reselect_training(partition, datadict_3d, frac, logger):
+    samples = partition["train_sampleIDs"]
+    unlabeled_samples = []
+    for samp in samples:
+        if np.isnan(datadict_3d[samp]).all():
+            unlabeled_samples.append(samp)
+    
+    labeled_samples = list(set(samples) - set(unlabeled_samples))
+    n_unlabeled = len(unlabeled_samples)
+
+    # the fraction number can either be a float <= 1 or an explicit integer
+    if frac <= 1.0:
+        n_selected = int(n_unlabeled*frac)
+    else:
+        n_selected = int(frac)
+
+    unlabeled_samples = list(np.random.choice(unlabeled_samples, n_selected, replace=False))
+
+    partition["train_sampleIDs"] = sorted(unlabeled_samples + labeled_samples)
+
+    logger.info("***LABELED: UNLABELED = {}:{}".format(len(labeled_samples), len(unlabeled_samples)))
+
+    return partition
+
 """
 PRELOAD DATA INTO MEMORY
 """

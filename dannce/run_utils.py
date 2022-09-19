@@ -101,6 +101,10 @@ def make_dataset(
     pairs = None
     if params["social_training"]:
         partition, pairs = processing.resplit_social(partition)
+    
+    # check all nan inputs
+    if params["unlabeled_fraction"] != None:
+        partition = processing.reselect_training(partition, datadict_3d, params["unlabeled_fraction"], logger)
 
     if params.get("social_big_volume", False):  
         vmin, vmax = params["vmin"], params["vmax"]
@@ -188,6 +192,7 @@ def make_dataset(
         samples, partition, pairs, tifdirs, vids,
         logger
     )
+    logger.info("***TRAIN:VALIDATION = {}:{}***".format(len(train_generator), len(valid_generator)))
     train_dataloader, valid_dataloader = serve_data_DANNCE.setup_dataloaders(train_generator, valid_generator, params)
      
     return train_dataloader, valid_dataloader, len(camnames[0])

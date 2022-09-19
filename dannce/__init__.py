@@ -121,7 +121,9 @@ _param_defaults_dannce = {
     "inference_ttt": None,
     ## augmentation
     "form_batch": False,
-    "form_bs": None
+    "form_bs": None,
+    ## unsupervised training
+    "unlabeled_fraction": None
 }
 _param_defaults_com = {
     "dsmode": "nn",
