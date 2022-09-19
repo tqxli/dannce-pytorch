@@ -719,10 +719,11 @@ def reselect_training(partition, datadict_3d, frac, logger):
     
     labeled_samples = list(set(samples) - set(unlabeled_samples))
     n_unlabeled = len(unlabeled_samples)
+    n_labeled = len(labeled_samples)
 
     # the fraction number can either be a float <= 1 or an explicit integer
-    if frac <= 1.0:
-        n_selected = int(n_unlabeled*frac)
+    if isinstance(frac, float):
+        n_selected = np.minimum(int(frac*n_labeled), n_unlabeled) #int(n_unlabeled*frac)
     else:
         n_selected = int(frac)
 
