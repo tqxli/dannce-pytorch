@@ -173,7 +173,13 @@ class BoneVectorLoss(BaseLoss):
         return loss * self.loss_weight
 
 class BoneLengthLoss(BaseLoss):
-    def __init__(self, priors, body_profile="rat23", mask=None, std_multiplier=1, upper_only=False, **kwargs):
+    def __init__(self, 
+        priors, 
+        body_profile="rat23", 
+        mask=None, std_multiplier=1, upper_only=False, 
+        relative_scale=False, ref_index=3, ref_loss_weight=0.1, relative_priors=None, 
+        **kwargs
+    ):
         super().__init__(**kwargs)
 
         self.animal = body_profile
@@ -181,6 +187,14 @@ class BoneLengthLoss(BaseLoss):
         self.priors = np.load(priors, allow_pickle=True) #[n_limbs, 2]
         self.upper_only = upper_only
         self.std_multiplier = std_multiplier
+
+        # use relative scales instead of actual bone lengths
+        self.relative_scale = relative_scale
+        if relative_scale:
+            self.ref_index = ref_index
+            self.ref = self.priors[ref_index, 0]
+            self.ref_loss_weight = ref_loss_weight
+            self.relative_priors = np.load(relative_priors, allow_pickle=True)
 
         # consider mask out some of the constraints (e.g. Snout-SpineF, 2)
         self.mask = mask
@@ -190,7 +204,8 @@ class BoneLengthLoss(BaseLoss):
     def _construct_intervals(self, do_masking=False):
         self.intervals = []
 
-        for idx, (mean, std) in enumerate(self.priors):
+        priors = self.relative_priors if self.relative_scale else self.priors
+        for idx, (mean, std) in enumerate(priors):
             if (do_masking) and (idx in self.mask):
                 self.intervals.append([-10000, 10000])
             elif self.upper_only:
@@ -206,13 +221,22 @@ class BoneLengthLoss(BaseLoss):
         kpts_pred: [bs, 3, n_joints]
         """
         device = kpts_pred.device
+
         kpts_from = kpts_pred[:, :, self.limbs[:, 0].to(device)] #[bs, 3, n_limbs]
         kpts_to = kpts_pred[:, :, self.limbs[:, 1].to(device)] #[bs, 3, n_limbs]
         lens = torch.norm(kpts_from-kpts_to, dim=1, p=2) #[bs, n_limbs]
+
+        if self.relative_scale:
+            loss_ref = (lens[:, self.ref_index] - self.ref).abs().mean()
+            lens = lens / lens[:, self.ref_index].unsqueeze(1)
         
         loss = torch.maximum(lens - self.ubound.to(device), torch.zeros(())) + torch.maximum(self.lbound.to(device) - lens, torch.zeros(()))
+        loss = loss.mean()
 
-        return self.loss_weight * loss.mean()
+        if self.relative_scale:
+            loss += self.ref_loss_weight * loss_ref
+
+        return self.loss_weight * loss
 
 class KCSLoss(BaseLoss):
     def __init__(self, body_profile="rat23", **kwargs):
