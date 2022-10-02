@@ -7,23 +7,56 @@ import os, psutil
 from tqdm import tqdm
 
 import torch
+import dannce.config as config
+from dannce.run_utils import *
 from dannce.engine.data import serve_data_DANNCE, dataset, generator, processing
 from dannce.interface import make_folder
-from dannce.engine.models.voxelpose import FeatureDANNCE
+from dannce.engine.models.voxelpose import VoxelPose
 from dannce.engine.trainer.voxelpose_trainer import VoxelPoseTrainer
 from dannce.engine.logging.logger import setup_logging, get_logger
 
 process = psutil.Process(os.getpid())
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "1"
 
+def generate_Gaussian_target(all_labels, heatmap_size=[64, 64], ds_fac=4, sigma=2):
+    all_targets = []
+    for labels in all_labels[0]:
+        (x_coord, y_coord) = np.meshgrid(
+            np.arange(heatmap_size[1]), np.arange(heatmap_size[0])
+        )
+        
+        targets = []
+        for joint in range(labels.shape[-1]):
+            if np.isnan(labels[:, joint]).sum() == 0:
+                target = np.exp(
+                        -(
+                            (y_coord - labels[1, joint] // ds_fac) ** 2
+                            + (x_coord - labels[0, joint] // ds_fac) ** 2
+                        )
+                        / (2 * sigma ** 2)
+                    )
+            else:
+                target = np.zeros((heatmap_size[1], heatmap_size[0]))
+            targets.append(target)
+        # crop out and keep the max to be 1 might still work...
+        targets = np.stack(targets, axis=0)
+        targets = torch.from_numpy(targets).float()
+
+        all_targets.append(targets)
+
+    targets = np.stack(all_targets, axis=0)
+
+    return torch.from_numpy(targets).unsqueeze(0)
+
 def load_data_into_mem(params, logger, partition, n_cams, generator, train=True):
     n_samples = len(partition["train_sampleIDs"]) if train else len(partition["valid_sampleIDs"]) 
     message = "Loading training data into memory" if train else "Loading validation data into memory"
 
     # initialize
-    X = torch.empty((n_samples, n_cams, params["chan_num"], 512, 512), dtype=torch.float32)
+    X = torch.empty((n_samples, n_cams, params["chan_num"], 256, 256), dtype=torch.float32)
+    y2d = torch.empty((n_samples, n_cams, params["n_channels_out"], 64, 64), dtype=torch.float32)
     X_grid = torch.empty((n_samples, params["nvox"] ** 3, 3), dtype=torch.float32)
-    y = torch.empty((n_samples, 3, params["n_channels_out"]), dtype=torch.float32)
+    y3d = torch.empty((n_samples, 3, params["n_channels_out"]), dtype=torch.float32)
     cameras = []
     # load data from generator
     for i in tqdm(range(n_samples)):
@@ -31,40 +64,27 @@ def load_data_into_mem(params, logger, partition, n_cams, generator, train=True)
         rr = generator.__getitem__(i)
 
         X[i] = rr[0][0]
+        y2d[i] = generate_Gaussian_target(rr[1][1].numpy())
         X_grid[i] = rr[0][1]
-        y[i] = rr[1][0]
-        cameras.append(rr[0][2][0])
-    
-    return X, X_grid, y, cameras
+        y3d[i] = rr[1][0]
 
-def load_data2d_into_mem(params, logger, partition, n_cams, generator, train=True):
-    n_samples = len(partition["train_sampleIDs"]) if train else len(partition["valid_sampleIDs"]) 
-    message = "Loading training data into memory" if train else "Loading validation data into memory"
+        # since the heatmaps are even smaller (64x64), resize here
+        cam = rr[0][2][0]
+        for c in cam:
+            c.update_after_resize(image_shape=[256, 256], new_image_shape=[64, 64])
 
-    # initialize
-    X = torch.empty((n_samples, n_cams, params["chan_num"], 512, 512), dtype=torch.float32)
-    y = torch.empty((n_samples, n_cams, 2, params["n_channels_out"]), dtype=torch.float32)
+        cameras.append(cam)
     
-    # load data from generator
-    for i in tqdm(range(n_samples)):
-        # print(i, end='\r')
-        rr = generator.__getitem__(i)
-
-        X[i] = rr[0][0]
-        y[i] = rr[1][1]
-    
-    X = X.reshape(-1, *X.shape[2:])
-    y = y.reshape(-1, *y.shape[2:])
-    return X, y
+    return X, y2d, X_grid, y3d, cameras
 
 def collate_fn(items):
-    X = torch.stack([item[0] for item in items], dim=0) #[bs, 6, 3, H, W]
-    grid = torch.stack([item[1] for item in items], dim=0) #[bs, gridsize**3, 3]
+    ims = torch.stack([item[0] for item in items], dim=0) #[bs, 6, 3, H, W]
+    y2d_gaussian = torch.stack([item[1] for item in items], dim=0) #[bs, 6, H, W]
     camera = [item[2] for item in items]
-    
-    target = torch.stack([item[3] for item in items], dim=0) #[bs, 3, n_joints]
+    grid = torch.stack([item[3] for item in items], dim=0) #[bs, gridsize**3, 3]
+    y3d = torch.stack([item[4] for item in items], dim=0) #[bs, 3, n_joints]
 
-    return X, grid, camera, target
+    return ims, y2d_gaussian, grid, camera, y3d
 
 def setup_dataloaders(train_dataset, valid_dataset, params):
     valid_batch_size = params["batch_size"] 
@@ -87,10 +107,7 @@ def train(params: Dict):
     Raises:
         Exception: Error if training mode is invalid.
     """
-    # turn off currently unavailable features
-    params["multi_mode"] = False
-    params["depth"] = False
-    params["n_views"] = int(params["n_views"])
+    params, base_params, shared_args, shared_args_train, shared_args_valid = config.setup_train(params)
 
     # Make the training directory if it does not exist.
     make_folder("dannce_train_dir", params)
@@ -99,10 +116,21 @@ def train(params: Dict):
     setup_logging(params["dannce_train_dir"])
     logger = get_logger("training.log", verbosity=2)
 
+    assert torch.cuda.is_available(), "No available GPU device."
+    params["gpu_id"] = [0]
+    device = torch.device("cuda")
+    logger.info("***Use {} GPU for training.***".format(params["gpu_id"]))
+
+    # fix random seed if specified
+    if params["random_seed"] is not None:
+        set_random_seed(params["random_seed"])
+        logger.info("***Fix random seed as {}***".format(params["random_seed"]))
+
     # load in necessary exp & data information
     exps = params["exp"]
     num_experiments = len(exps)
     params["experiment"] = {}
+    params["return_full2d"] = True
 
     (
         samples, 
@@ -138,88 +166,65 @@ def train(params: Dict):
     logger.info("\nTRAIN:VALIDATION SPLIT = {}:{}\n".format(len(partition["train_sampleIDs"]), len(partition["valid_sampleIDs"])))
 
     base_params = {
-        "dim_in": (
-            params["crop_height"][1] - params["crop_height"][0],
-            params["crop_width"][1] - params["crop_width"][0],
-        ),
-        "n_channels_in": params["n_channels_in"],
-        "batch_size": 1,
-        "n_channels_out": params["new_n_channels_out"],
-        "out_scale": params["sigma"],
-        "crop_width": params["crop_width"],
-        "crop_height": params["crop_height"],
-        "vmin": params["vmin"],
-        "vmax": params["vmax"],
-        "nvox": params["nvox"],
-        "interp": params["interp"],
-        "depth": params["depth"],
-        "mode": outmode,
+        **base_params,
         "camnames": camnames,
-        "immode": params["immode"],
-        "shuffle": False,  # will shuffle later
-        "rotation": False,  # will rotate later if desired
         "vidreaders": vids,
-        "distort": True,
-        "crop_im": False,
         "chunks": total_chunks,
-        "mono": params["mono"],
-        "mirror": params["mirror"],
     }
-
-    genfunc = generator.MultiviewImageGenerator
-
-    # Used to initialize arrays for mono, and also in *frommem (the final generator)
-    params["chan_num"] = 1 if params["mono"] else params["n_channels_in"]
-
     spec_params = {
         "channel_combo":  params["channel_combo"],
         "expval": params["expval"],
     }
-
     valid_params = {**base_params, **spec_params}
 
-    # Setup a generator that will read videos and labels
-    train_gen_params = [partition["train_sampleIDs"],
-                        datadict,
-                        datadict_3d,
-                        cameras,
-                        partition["train_sampleIDs"],
-                        com3d_dict,
-                        tifdirs]
-    valid_gen_params = [partition["valid_sampleIDs"],
-                        datadict,
-                        datadict_3d,
-                        cameras,
-                        partition["valid_sampleIDs"],
-                        com3d_dict,
-                        tifdirs]
+    genfunc = generator.MultiviewImageGenerator
 
-    train_generator = genfunc(*train_gen_params, **valid_params)
-    valid_generator = genfunc(*valid_gen_params, **valid_params)
+    train_gen_params = {
+        "list_IDs": partition["train_sampleIDs"],
+        "labels": datadict,
+        "labels_3d": datadict_3d,
+        "camera_params": cameras,
+        "clusterIDs": partition["train_sampleIDs"],
+        "com3d": com3d_dict,
+        "tifdirs": tifdirs
+    }
+    valid_gen_params = {
+        "list_IDs": partition["valid_sampleIDs"],
+        "labels": datadict,
+        "labels_3d": datadict_3d,
+        "camera_params": cameras,
+        "clusterIDs": partition["valid_sampleIDs"],
+        "com3d": com3d_dict,
+        "tifdirs": tifdirs
+    }
+
+    train_generator = genfunc(**train_gen_params, **valid_params)
+    valid_generator = genfunc(**valid_gen_params, **valid_params)
     
     # load everything into memory
-    X_train, X_train_grid, y_train, cameras_train = load_data_into_mem(params, logger, partition, n_cams, train_generator, train=True)
-    X_valid, X_valid_grid, y_valid, cameras_valid = load_data_into_mem(params, logger, partition, n_cams, valid_generator, train=False)
-    
-    if params["debug_volume_tifdir"] is not None:
-        # When this option is toggled in the config, rather than
-        # training, the image volumes are dumped to tif stacks.
-        # This can be used for debugging problems with calibration or COM estimation
-        processing.save_volumes_into_tif(params, params["debug_volume_tifdir"], X_train, partition["train_sampleIDs"], n_cams, logger)
-        return
+    X_train, y2d_train, X_train_grid, y3d_train, cameras_train = load_data_into_mem(params, logger, partition, n_cams, train_generator, train=True)
+    X_valid, y2d_valid, X_valid_grid, y3d_valid, cameras_valid = load_data_into_mem(params, logger, partition, n_cams, valid_generator, train=False)
 
     # initialize datasets and dataloaders
-    train_generator = dataset.MultiViewImageDataset(
+    train_generator = dataset.ImageDataset(
         images=X_train,
+        labels=y2d_train,
+        num_joints=params["n_channels_out"],
+        return_Gaussian=False,
+        train=True,
         grids=X_train_grid,
-        labels_3d=y_train,
-        cameras=cameras_train 
+        labels_3d=y3d_train,
+        cameras=cameras_train
     )
-    valid_generator = dataset.MultiViewImageDataset(
+    valid_generator = dataset.ImageDataset(
         images=X_valid,
+        labels=y2d_valid,
+        num_joints=params["n_channels_out"],
+        return_Gaussian=False,
+        train=False,
         grids=X_valid_grid,
-        labels_3d=y_valid,
-        cameras=cameras_valid 
+        labels_3d=y3d_valid,
+        cameras=cameras_valid
     )
 
     train_dataloader, valid_dataloader = setup_dataloaders(train_generator, valid_generator, params)
@@ -227,7 +232,13 @@ def train(params: Dict):
     # Build network
     logger.info("Initializing Network...")
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
-    model = FeatureDANNCE(n_cams=n_cams, output_channels=22, input_shape=params["nvox"], bottleneck_channels=6)
+    
+    # model = FeatureDANNCE(n_cams=n_cams, output_channels=22, input_shape=params["nvox"], bottleneck_channels=6)
+    model = VoxelPose(params["n_channels_out"], params, logger)
+    if params["custom_model"]["backbone_pretrained"] is not None:
+        ckpt = torch.load(params["custom_model"]["backbone_pretrained"])["state_dict"]
+        model.backbone.load_state_dict(ckpt)
+        logger.info("Successfully load backbone checkpoint.")
     model = model.to(device)
 
     model_params = [p for p in model.parameters() if p.requires_grad]

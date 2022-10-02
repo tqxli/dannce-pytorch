@@ -155,7 +155,7 @@ def dannce_train_cli():
 def custom_model_train_cli():
     _TYPES = {
         'motiondannce': motiondannce.train,
-        'voxelpose3d': voxelpose.train,
+        'voxelpose': voxelpose.train,
         # 'backbone2d': backbone2d.train,
         'dbbox': dbbox.train,
         'posegcn': posegcn.train,

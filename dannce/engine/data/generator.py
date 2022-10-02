@@ -1155,7 +1155,7 @@ class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
         return inputs, targets
 
 class MultiviewImageGenerator(DataGenerator_3Dconv):
-    def __init__(self, resize=True, image_size=256, crop=True, crop_size=384, **kwargs):
+    def __init__(self, resize=True, image_size=256, crop=True, crop_size=512, **kwargs):
         
         super(MultiviewImageGenerator, self).__init__(**kwargs)
         self.image_size = image_size
@@ -1179,10 +1179,10 @@ class MultiviewImageGenerator(DataGenerator_3Dconv):
                 )
     def _get_bbox(self, com_precrop):
         return (
-            com_precrop[1]-self.crop_size//2, 
             com_precrop[0]-self.crop_size//2, 
-            com_precrop[1]+self.crop_size//2, 
-            com_precrop[0]+self.crop_size//2
+            com_precrop[1]-self.crop_size//2, 
+            com_precrop[0]+self.crop_size//2, 
+            com_precrop[1]+self.crop_size//2
         )
     
     def _save_image_bbox(self, 
@@ -1259,8 +1259,8 @@ class MultiviewImageGenerator(DataGenerator_3Dconv):
         if self.crop:
             # crop images due to memory constraints
             im, cropdim = processing.cropcom(im, com_precrop, size=self.crop_size) 
-            # bbox = self._get_bbox(com_precrop)
-            # cam.update_after_crop(bbox)
+            bbox = self._get_bbox(com_precrop)
+            cam.update_after_crop(bbox)
             new_y[0, :] -= cropdim[2]
             new_y[1, :] -= cropdim[0]
         
@@ -1268,7 +1268,7 @@ class MultiviewImageGenerator(DataGenerator_3Dconv):
         if self.resize:
             # old_height, old_width = im.shape[:2]
             # # im = cv2.resize(im, (self.image_size, self.image_size))
-            # # cam.update_after_resize((old_height, old_width), (self.image_size, self.image_size))
+            # cam.update_after_resize((old_height, old_width), (self.image_size, self.image_size))
             # new_y[1, :] *= (im.shape[0] / old_height) # y
             # new_y[0, :] *= (im.shape[1] / old_width)  # x
             im = processing.downsample_batch(im[np.newaxis, ...], fac=self.ds_fac)
@@ -1346,9 +1346,14 @@ class MultiviewImageGenerator(DataGenerator_3Dconv):
             y_2d.append(torch.stack([r[2] for r in results], dim=0))
 
         X = torch.stack(X, dim=0)
-        y_2d = torch.stack(y_2d, dim=0) #[BS, 6, 2, n_joints]
+        try:
+            y_2d = torch.stack(y_2d, dim=0) #[BS, 6, 2, n_joints]
+        except:
+            y_2d = torch.zeros(X.shape[0], 6, 2, 1)
+            print("Found {}".format(list_IDs_temp))
         
-        # self._visualize_multiview(list_IDs_temp[0], X[0], y_2d[0])
+        self._visualize_multiview(list_IDs_temp[0], X[0], y_2d[0])
+        # breakpoint()
         # self._save_image_bbox(list_IDs_temp, X, y_2d)
 
         return (X.cpu(), X_grid.cpu(), cameras), (y_3d.cpu(), y_2d.cpu())

@@ -57,9 +57,8 @@ class MSELoss(BaseLoss):
         super().__init__(**kwargs)
 
     def forward(self, heatmap_gt, heatmap_pred):
-        bs, n_joints = heatmap_pred.shape[:2]
-        if len(heatmap_gt.shape) == 5:
-            heatmap_gt = heatmap_gt.permute(0, 4, 1, 2, 3)
+        # if len(heatmap_gt.shape) == 5:
+        #     heatmap_gt = heatmap_gt.permute(0, 4, 1, 2, 3)
         loss = F.mse_loss(heatmap_gt, heatmap_pred)
 
         return self.loss_weight * loss
@@ -76,6 +75,20 @@ class BCELoss(BaseLoss):
         loss = F.binary_cross_entropy(heatmap_pred, heatmap_gt)
 
         return self.loss_weight * loss
+
+class HuberLoss(BaseLoss):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+    
+    def forward(self, kpts_gt, kpts_pred):
+        return F.huber_loss(kpts_gt, kpts_pred)
+
+class BCEWithLogitsLoss(BaseLoss):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+    
+    def forward(self, kpts_gt, kpts_pred):
+        return F.binary_cross_entropy_with_logits(kpts_pred, kpts_gt)
 
 class ReconstructionLoss(BaseLoss):
     def __init__(self, **kwargs):

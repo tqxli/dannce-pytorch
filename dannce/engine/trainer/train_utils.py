@@ -21,7 +21,7 @@ class LossHelper:
         for name, args in self.loss_params["loss"].items():
             self.loss_fcns[name] = getattr(custom_losses, name)(**args)
         
-    def compute_loss(self, kpts_gt, kpts_pred, heatmaps, grid_centers=None, aux=None):
+    def compute_loss(self, kpts_gt, kpts_pred, heatmaps, grid_centers=None, aux=None, heatmaps_gt=None):
         """
         Compute each loss and return their weighted sum for backprop.
         """
@@ -31,7 +31,12 @@ class LossHelper:
             if k == "GaussianRegLoss":
                 loss_val = lossfcn(kpts_gt, kpts_pred.clone().detach(), heatmaps, grid_centers.clone().detach())
             elif k == "MSELoss" or k == "BCELoss":
-                loss_val = lossfcn(kpts_gt, heatmaps)
+                # if the 2D heatmaps ground truth are available 
+                # and we want to compute the associated 2D losses
+                if heatmaps_gt is not None:
+                    loss_val = lossfcn(heatmaps_gt, heatmaps)
+                else:
+                    loss_val = lossfcn(kpts_gt, heatmaps)
             elif 'SilhouetteLoss' in k or k == 'ReconstructionLoss':
                 loss_val = lossfcn(aux, heatmaps)
             elif k == 'VarianceLoss':
