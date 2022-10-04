@@ -1185,6 +1185,14 @@ class MultiviewImageGenerator(DataGenerator_3Dconv):
             com_precrop[1]+self.crop_size//2
         )
     
+    def _project_to_views(self, ID, camname, experimentID):
+        com3d = torch.from_numpy(self.com3d[ID]).unsqueeze(0).float()
+        cam  = self.camera_objs[experimentID][camname]
+        proj2d = ops.project_to2d(com3d, cam.M, "cpu")[:, :2]
+        proj2d = ops.distortPoints(proj2d, cam.K, cam.rdist, cam.tdist, "cpu")
+        
+        return proj2d.numpy()
+    
     def _save_image_bbox(self, 
         list_IDs, X, y_2d, 
         bbox_offset=(20, 30, 20, 20),
@@ -1237,15 +1245,18 @@ class MultiviewImageGenerator(DataGenerator_3Dconv):
         for i, ax in enumerate(axes):
             ax.imshow(ims[i].cpu().permute(1, 2, 0).numpy())
         
-            # Plot keypoints
-            ax.scatter(y_2d[i, 0].cpu().numpy(), y_2d[i, 1].cpu().numpy(), marker='.', color='r', linewidths=0.5)
+            # # Plot keypoints
+            # if not np.isnan(y_2d).all():
+            #     ax.scatter(y_2d[i, 0].cpu().numpy(), y_2d[i, 1].cpu().numpy(), marker='.', color='r', linewidths=0.5)
             
         fig.savefig(os.path.join(savedir, fname))
         plt.close(fig)
 
     def _load_im(self, ID, camname, experimentID):
         this_y = self.labels[ID]["data"][camname]
-        com_precrop = np.nanmean(this_y.round(), axis=1).astype("float32")
+        com_precrop = self._project_to_views(ID, camname, experimentID)
+        com_precrop = com_precrop.round().astype("float32")
+        # com_precrop = np.nanmean(this_y.round(), axis=1).astype("float32")
         this_y = torch.tensor(this_y, dtype=torch.float32)
 
         im = self.load_frame.load_vid_frame(
@@ -1352,7 +1363,7 @@ class MultiviewImageGenerator(DataGenerator_3Dconv):
             y_2d = torch.zeros(X.shape[0], 6, 2, 1)
             print("Found {}".format(list_IDs_temp))
         
-        self._visualize_multiview(list_IDs_temp[0], X[0], y_2d[0])
+        # self._visualize_multiview(list_IDs_temp[0], X[0], y_2d[0])
         # breakpoint()
         # self._save_image_bbox(list_IDs_temp, X, y_2d)
 

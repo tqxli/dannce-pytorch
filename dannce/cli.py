@@ -180,6 +180,7 @@ def custom_model_predict_cli():
         'posegcn-multi': posegcn.predict_multi_animal,
         'socialattn': socialattn.predict,
         'pose2d': pose2d.predict,
+        'voxelpose': voxelpose.predict,
     }
 
     parser = argparse.ArgumentParser(
