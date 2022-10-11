@@ -98,6 +98,36 @@ class ReconstructionLoss(BaseLoss):
         loss = F.mse_loss(gt, pred)
         return self.loss_weight * loss
 
+class VolumetricCELoss(BaseLoss):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+    
+    def forward(self, grids, vol_pred, kpts_gt):
+        loss = 0.0
+        n_losses = 0
+
+        batch_size = vol_pred.shape[0]
+        for batch_i in range(batch_size):
+            coord_volume = grids[batch_i]
+            keypoints_gt_i = kpts_gt[batch_i]
+
+            coord_volume_unsq = coord_volume.unsqueeze(0)
+            keypoints_gt_i_unsq = keypoints_gt_i.unsqueeze(1).unsqueeze(1).unsqueeze(1)
+
+            dists = torch.sqrt(((coord_volume_unsq - keypoints_gt_i_unsq) ** 2).sum(-1))
+            dists = dists.view(dists.shape[0], -1)
+
+            min_indexes = torch.argmin(dists, dim=-1).detach().cpu().numpy()
+            min_indexes = np.stack(np.unravel_index(min_indexes, vol_pred.shape[-3:]), axis=1)
+
+            for joint_i, index in enumerate(min_indexes):
+                loss += (-torch.log(vol_pred[batch_i, joint_i, index[0], index[1], index[2]] + 1e-6))
+                n_losses += 1
+
+        loss /= n_losses
+
+        return loss * self.loss_weight
+
 class L1Loss(BaseLoss):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)

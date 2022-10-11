@@ -264,7 +264,7 @@ class PoseResNet(nn.Module):
         x = self.final_layer(x)
         heatmaps = x
 
-        return heatmaps #, features, alg_confidences, vol_confidences
+        return heatmaps, features #, alg_confidences, vol_confidences
     
     def init_weights(self, logger, pretrained=''):
         #this_dir = os.path.dirname(__file__)

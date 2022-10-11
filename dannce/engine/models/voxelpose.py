@@ -170,7 +170,7 @@ class VoxelPose(nn.Module):
             
         # extract heatmaps from 2D backbone
         images = images.view(-1, *images.shape[2:])
-        heatmaps2d = self.backbone(images)
+        heatmaps2d = self.backbone(images)[0]
         heatmaps2d = heatmaps2d.reshape(bs, n_cams, *heatmaps2d.shape[1:]) #[B, J, C, H, W]
         
         # feature unprojection

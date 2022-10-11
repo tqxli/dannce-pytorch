@@ -156,6 +156,7 @@ def custom_model_train_cli():
     _TYPES = {
         'motiondannce': motiondannce.train,
         'voxelpose': voxelpose.train,
+        'lt': voxelpose.train,
         # 'backbone2d': backbone2d.train,
         'dbbox': dbbox.train,
         'posegcn': posegcn.train,
@@ -181,6 +182,7 @@ def custom_model_predict_cli():
         'socialattn': socialattn.predict,
         'pose2d': pose2d.predict,
         'voxelpose': voxelpose.predict,
+        'lt': voxelpose.predict,
     }
 
     parser = argparse.ArgumentParser(

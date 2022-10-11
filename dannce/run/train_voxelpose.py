@@ -13,6 +13,7 @@ from dannce.run_utils import *
 from dannce.engine.data import serve_data_DANNCE, dataset, generator, processing
 from dannce.interface import make_folder
 from dannce.engine.models.voxelpose import VoxelPose
+from dannce.engine.models.pose2d.learnable_triangulation import VolumetricTriangulationNet
 from dannce.engine.trainer.voxelpose_trainer import VoxelPoseTrainer
 from dannce.engine.logging.logger import setup_logging, get_logger
 from dannce.config import print_and_set
@@ -52,11 +53,12 @@ def generate_Gaussian_target(all_labels, heatmap_size=[64, 64], ds_fac=4, sigma=
 
 def load_data_into_mem(params, logger, partition, n_cams, generator, train=True):
     n_samples = len(partition["train_sampleIDs"]) if train else len(partition["valid_sampleIDs"]) 
-    message = "Loading training data into memory" if train else "Loading validation data into memory"
+    custom_params = params["custom_model"]
+    heatmap_size = [custom_params["resize_size"]//4, custom_params["resize_size"]//4]
 
     # initialize
-    X = torch.empty((n_samples, n_cams, params["chan_num"], 256, 256), dtype=torch.float32)
-    y2d = torch.empty((n_samples, n_cams, params["n_channels_out"], 64, 64), dtype=torch.float32)
+    X = torch.empty((n_samples, n_cams, params["chan_num"], custom_params["resize_size"], custom_params["resize_size"]), dtype=torch.float32)
+    y2d = torch.empty((n_samples, n_cams, params["n_channels_out"], *heatmap_size), dtype=torch.float32)
     X_grid = torch.empty((n_samples, params["nvox"] ** 3, 3), dtype=torch.float32)
     y3d = torch.empty((n_samples, 3, params["n_channels_out"]), dtype=torch.float32)
     cameras = []
@@ -66,15 +68,15 @@ def load_data_into_mem(params, logger, partition, n_cams, generator, train=True)
         rr = generator.__getitem__(i)
 
         X[i] = rr[0][0]
-        y2d[i] = generate_Gaussian_target(rr[1][1].numpy())
+        y2d[i] = generate_Gaussian_target(rr[1][1].numpy(), heatmap_size=heatmap_size, sigma=custom_params.get("sigma", 2))
         X_grid[i] = rr[0][1]
         y3d[i] = rr[1][0]
 
         # the cropped image is [512, 512], resized to [256, 256]
         # but the heatmaps are even smaller smaller (64x64), resize all here
         cam = rr[0][2][0]
-        for c in cam:
-            c.update_after_resize(image_shape=[512, 512], new_image_shape=[64, 64])
+        # for c in cam:
+        #     c.update_after_resize(image_shape=[512, 512], new_image_shape=[64, 64])
 
         cameras.append(cam)
     
@@ -110,7 +112,7 @@ def train(params: Dict):
     Raises:
         Exception: Error if training mode is invalid.
     """
-    params, base_params, shared_args, shared_args_train, shared_args_valid = config.setup_train(params)
+    params, base_params = config.setup_train(params)[:2]
 
     # Make the training directory if it does not exist.
     make_folder("dannce_train_dir", params)
@@ -150,6 +152,8 @@ def train(params: Dict):
     # Dump the params into file for reproducibility
     processing.save_params_pickle(params)
     logger.info(params)
+
+    custom_params = params["custom_model"]
 
     # Setup additional variables for later use
     n_cams = len(camnames[0])
@@ -201,8 +205,13 @@ def train(params: Dict):
         "tifdirs": tifdirs
     }
 
-    train_generator = genfunc(**train_gen_params, **valid_params)
-    valid_generator = genfunc(**valid_gen_params, **valid_params)
+    image_params = {
+        "crop_size": custom_params.get("crop_size", 512),
+        "image_size": custom_params.get("resize_size", 256)
+    }
+
+    train_generator = genfunc(**train_gen_params, **valid_params, **image_params)
+    valid_generator = genfunc(**valid_gen_params, **valid_params, **image_params)
     
     # load everything into memory
     X_train, y2d_train, X_train_grid, y3d_train, cameras_train = load_data_into_mem(params, logger, partition, n_cams, train_generator, train=True)
@@ -214,7 +223,7 @@ def train(params: Dict):
         labels=y2d_train,
         num_joints=params["n_channels_out"],
         return_Gaussian=False,
-        train=True,
+        train=False, # must be False here for unprojection afterwards!
         grids=X_train_grid,
         labels_3d=y3d_train,
         cameras=cameras_train
@@ -237,15 +246,30 @@ def train(params: Dict):
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
     
     # model = FeatureDANNCE(n_cams=n_cams, output_channels=22, input_shape=params["nvox"], bottleneck_channels=6)
-    model = VoxelPose(params["n_channels_out"], params, logger)
+    if custom_params["name"] == "lt":
+        # Iskakov et al. learnable triangulation implementation
+        model = VolumetricTriangulationNet(params["n_channels_out"], params, logger)
+        
+        # use different lrs for 2d backbone and volumetric backbone
+        optimizer = torch.optim.Adam(
+            [
+                {'params': model.backbone.parameters()},
+                {'params': model.process_features.parameters(), 'lr': 0.001},
+                {'params': model.volume_net.parameters(), 'lr': 0.001}
+            ],
+            lr=0.0001,
+        )
+    else:
+        # VoxelPose implementation
+        model = VoxelPose(params["n_channels_out"], params, logger)
+        model_params = [p for p in model.parameters() if p.requires_grad]
+        optimizer = torch.optim.Adam(model_params, lr=params["lr"])
+
     if params["custom_model"]["backbone_pretrained"] is not None:
         ckpt = torch.load(params["custom_model"]["backbone_pretrained"])["state_dict"]
         model.backbone.load_state_dict(ckpt)
         logger.info("Successfully load backbone checkpoint.")
     model = model.to(device)
-
-    model_params = [p for p in model.parameters() if p.requires_grad]
-    optimizer = torch.optim.Adam(model_params, lr=params["lr"])
 
     logger.info("COMPLETE\n")
 
