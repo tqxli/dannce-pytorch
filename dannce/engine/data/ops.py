@@ -18,7 +18,7 @@ class Camera:
         assert self.K.shape == (3, 3)
 
         self.extrinsics = torch.cat((self.R, self.t), dim=0) # extrinsics
-        self.M = self.extrinsics @ self.K # camera matrix
+        # self.M = self.extrinsics @ self.K # camera matrix
 
         # distortion
         self.tdist = torch.tensor(tdist).squeeze().float()
@@ -50,7 +50,7 @@ class Camera:
         self.K[0, 0], self.K[1, 1], self.K[2, 0], self.K[2, 1] = new_fx, new_fy, new_cx, new_cy
     
     def camera_matrix(self):
-        return self.M
+        return self.extrinsics @ self.K
 
     def extrinsics(self):
         return self.extrinsics

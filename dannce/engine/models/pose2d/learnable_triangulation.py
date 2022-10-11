@@ -1,4 +1,5 @@
 import torch
+import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
 from dannce.engine.models.voxelpose import Res3DBlock, Basic3DBlock, Pool3DBlock, Upsample3DBlock
@@ -119,7 +120,7 @@ class V2VModel(nn.Module):
                 nn.init.constant_(m.bias, 0)
 
 class VolumetricTriangulationNet(nn.Module):
-    def __init__(self, output_channels, params, logger):
+    def __init__(self, output_channels, params, logger, training=False):
         super().__init__()
 
         self.backbone = get_pose_net(output_channels, params["custom_model"], logger)
@@ -134,11 +135,12 @@ class VolumetricTriangulationNet(nn.Module):
         self.output_channels = output_channels
         self.volume_net = V2VModel(32, self.output_channels)   
 
+        self.training = False
 
     def _unproject_heatmaps(self, feature, cam, grid_coords):
         proj_grid = ops.project_to2d(grid_coords, cam.camera_matrix(), feature.device)
         proj_grid = ops.distortPoints(proj_grid[:, :2], cam.K, cam.rdist, cam.tdist, device=feature.device)
-        proj_grid = proj_grid.permute(1, 0)[:, :2]
+        proj_grid = proj_grid.permute(1, 0) # transpose here since output from distortPoints is channel first
 
         vol = ops.sample_grid(feature, proj_grid, device=feature.device)
         return vol.squeeze() # [C, H, W, D]
@@ -161,15 +163,35 @@ class VolumetricTriangulationNet(nn.Module):
         volumes = []
         for idx in range(bs):
             batch_vols = []
+            grids = grid_coords[idx].clone()
+
+            # augmentation
+            if self.training:
+                rot = np.random.choice(np.arange(3), 1)
+            else:
+                rot = 0
+
+            # if rot == 0:
+            #     pass
+            # elif rot == 1:
+            #     grids = grids.reshape(64, 64, 64, 3)
+            #     grids = grids.flip(0).flip(1)
+            # elif rot == 2:
+            #     grids = grids.reshape(64, 64, 64, 3).permute(1, 0, 2, 3)
+            #     grids = grids.flip(1)
+            
+            # grids = grids.reshape(-1, 3)
+
             for j, cam in enumerate(cameras[idx]):
                 batch_vols.append(
                     self._unproject_heatmaps(
                         features[idx, j].permute(1, 2, 0), #[H, W, C]
                         cam, 
-                        grid_coords[idx]
+                        grids
                     )
                 )
-            volumes.append(torch.stack(batch_vols, dim=0))
+            batch_vols = torch.stack(batch_vols, dim=0)
+            volumes.append(batch_vols)
         # end = time.time()
         # print("Feature volume unprojection takes {}".format(end-start))
         volumes = torch.stack(volumes, dim=0) #[BS, n_cams, 32, 64, 64, 64]
