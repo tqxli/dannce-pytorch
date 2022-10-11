@@ -1155,7 +1155,11 @@ class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
         return inputs, targets
 
 class MultiviewImageGenerator(DataGenerator_3Dconv):
-    def __init__(self, resize=True, image_size=256, crop=True, crop_size=512, **kwargs):
+    def __init__(
+            self, 
+            resize=True, image_size=256, 
+            crop=True, crop_size=512, **kwargs
+        ):
         
         super(MultiviewImageGenerator, self).__init__(**kwargs)
         self.image_size = image_size
@@ -1165,6 +1169,12 @@ class MultiviewImageGenerator(DataGenerator_3Dconv):
         self._get_camera_objs()
 
         self.ds_fac = self.crop_size / self.image_size
+
+        self.old_image_shapes = {}
+        self.image_bboxs = {}
+        for ID in self.list_IDs:
+            self.old_image_shapes[ID] = {}
+            self.image_bboxs[ID] = {}
 
     def _get_camera_objs(self):
         self.camera_objs = {}
@@ -1243,20 +1253,36 @@ class MultiviewImageGenerator(DataGenerator_3Dconv):
         fname = f"{ID}.jpg"
 
         for i, ax in enumerate(axes):
-            ax.imshow(ims[i].cpu().permute(1, 2, 0).numpy())
+            ax.imshow(ims[i].cpu().permute(1, 2, 0).numpy() * 255)
         
             # # Plot keypoints
-            # if not np.isnan(y_2d).all():
-            #     ax.scatter(y_2d[i, 0].cpu().numpy(), y_2d[i, 1].cpu().numpy(), marker='.', color='r', linewidths=0.5)
+            if not np.isnan(y_2d).all():
+                ax.scatter(y_2d[i, 0].cpu().numpy(), y_2d[i, 1].cpu().numpy(), marker='.', color='r', linewidths=0.5)
             
         fig.savefig(os.path.join(savedir, fname))
         plt.close(fig)
 
+    def _crop_im(self, im, com, size):
+        """Crops single input image around the coordinates com."""
+        minlim_r = int(np.round(com[1])) - size // 2
+        maxlim_r = int(np.round(com[1])) + size // 2
+        minlim_c = int(np.round(com[0])) - size // 2
+        maxlim_c = int(np.round(com[0])) + size // 2
+
+        diff = (minlim_r, maxlim_r, minlim_c, maxlim_c)
+        crop_dim = (np.max([minlim_r, 0]), maxlim_r, np.max([minlim_c, 0]), maxlim_c)
+
+        out = im[crop_dim[0] : crop_dim[1], crop_dim[2] : crop_dim[3], :]
+
+        dim = out.shape[2]
+
+        return out, crop_dim
+
     def _load_im(self, ID, camname, experimentID):
         this_y = self.labels[ID]["data"][camname]
-        com_precrop = self._project_to_views(ID, camname, experimentID)
-        com_precrop = com_precrop.round().astype("float32")
-        # com_precrop = np.nanmean(this_y.round(), axis=1).astype("float32")
+        # com_precrop = self._project_to_views(ID, camname, experimentID)
+        # com_precrop = com_precrop.round().astype("float32")
+        com_precrop = np.nanmean(this_y.round(), axis=1).astype("float32")
         this_y = torch.tensor(this_y, dtype=torch.float32)
 
         im = self.load_frame.load_vid_frame(
@@ -1269,22 +1295,56 @@ class MultiviewImageGenerator(DataGenerator_3Dconv):
         
         if self.crop:
             # crop images due to memory constraints
-            im, cropdim = processing.cropcom(im, com_precrop, size=self.crop_size) 
-            bbox = self._get_bbox(com_precrop)
+            ybound, xbound = im.shape[:2]
+            nonan = ~torch.isnan(new_y[0])
+            if this_y.shape[1] == 1:
+                # use the predicted 2D COM as anchor, get fix-sized bounding box
+                cx = com_precrop[0]
+                cy = com_precrop[1]
+                dim = self.crop_size
+            else:
+                # use the ground truth labels to obtain bounding box
+                xmin, xmax = new_y[0][nonan].min().numpy(), new_y[0][nonan].max().numpy()
+                ymin, ymax = new_y[1][nonan].min().numpy(), new_y[1][nonan].max().numpy()
+                width = xmax - xmin
+                height = ymax - ymin
+                dim = np.maximum(width, height) + 30
+                cx = (xmin + xmax) // 2
+                cy = (ymin + ymax) // 2
+            
+            xmin = round(np.maximum(0, cx - dim // 2))
+            xmax = round(np.minimum(cx + dim // 2, xbound))
+            ymin = round(np.maximum(0, cy - dim // 2))
+            ymax = round(np.minimum(cy + dim // 2, ybound))
+            # print(f"{xmin}:{xmax}")
+
+            # crop image
+            im = im[ymin:ymax, xmin:xmax]
+            bbox = [xmin, ymin, xmax, ymax]
+            
+            # update camera parameters
             cam.update_after_crop(bbox)
-            new_y[0, :] -= cropdim[2]
-            new_y[1, :] -= cropdim[0]
+
+            # update pose 2d
+            new_y[0, :] -= xmin
+            new_y[1, :] -= ymin
+
+            self.image_bboxs[ID][camname] = bbox
         
         # resize
+        old_image_shape = im.shape[:2]
+        self.old_image_shapes[ID][camname] = old_image_shape
+
+
         if self.resize:
-            # old_height, old_width = im.shape[:2]
-            # # im = cv2.resize(im, (self.image_size, self.image_size))
-            # cam.update_after_resize((old_height, old_width), (self.image_size, self.image_size))
-            # new_y[1, :] *= (im.shape[0] / old_height) # y
-            # new_y[0, :] *= (im.shape[1] / old_width)  # x
-            im = processing.downsample_batch(im[np.newaxis, ...], fac=self.ds_fac)
-            im = np.squeeze(im)
-            new_y /= self.ds_fac
+            im = cv2.resize(im, (self.image_size, self.image_size))
+
+            cam.update_after_resize(old_image_shape, (self.image_size // 4, self.image_size // 4))
+            new_y[1, :] *= (self.image_size / old_image_shape[0]) # y
+            new_y[0, :] *= (self.image_size / old_image_shape[1])  # x
+            # im = processing.downsample_batch(im[np.newaxis, ...], fac=self.ds_fac)
+            # im = np.squeeze(im)
+            # new_y /= self.ds_fac
         
         return im, cam, new_y
     
@@ -1347,7 +1407,8 @@ class MultiviewImageGenerator(DataGenerator_3Dconv):
             results = self.threadpool.starmap(self._load_im, arglist)
 
             ims = np.stack([r[0] for r in results], axis=0).astype(np.uint8) #[6, H, W, 3]
-            ims = torch.tensor(ims).permute(0, 3, 1, 2)
+            ims = processing._preprocess_numpy_input(ims, data_format="channels_last", mode="torch")
+            ims = torch.tensor(ims).permute(0, 3, 1, 2) #[6, 3, H, W]
             X.append(ims)
 
             # also need camera params for each view

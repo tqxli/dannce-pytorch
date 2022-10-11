@@ -2,6 +2,7 @@ import dannce.config as config
 from dannce.engine.data import ops
 from dannce.engine.models.pose2d.sleap import SLEAPUNet
 from dannce.engine.models.pose2d import pose_net
+from dannce.engine.models.pose2d.dlc import DLC
 from dannce.run_utils import *
 from dannce.engine.logging.logger import setup_logging, get_logger
 from dannce.engine.trainer.com_trainer import COMTrainer
@@ -23,25 +24,29 @@ def build_model(params, logger=None, train=True):
         model = SLEAPUNet(params["n_channels_in"], params["n_channels_out"])
     elif model_type == "posenet":
         model = pose_net.get_pose_net(params["n_channels_out"], params["custom_model"], logger)
+    elif model_type == "dlc":
+        model = DLC(params["n_channels_out"])
     else:
         if logger is not None:
             logger.info("Invalid architecture.")
     if not train:
         return model
-    
+
     if params["train_mode"] == "finetune" and params["dannce_finetune_weights"] is not None:
         logger.info("Loading checkpoint from {}".format(params["dannce_finetune_weights"]))
         state_dict = torch.load(params["dannce_finetune_weights"])["state_dict"]
-        ckpt_channel_num = state_dict["output_layer.weight"].shape[0]
+        ckpt_channel_num = state_dict["final_layer.weight"].shape[0]
         if ckpt_channel_num != params["n_channels_out"]:
-            state_dict.pop("output_layer.weight", None)
-            state_dict.pop("output_layer.bias", None)
+            state_dict.pop("final_layer.weight", None)
+            state_dict.pop("final_layer.bias", None)
+            logger.info("Replacing the last output layer from {} to {}".format(ckpt_channel_num, params["n_channels_out"]))
         model.load_state_dict(state_dict, strict=False)
     
     return model
 
 def train(params):
     params, base_params, shared_args, shared_args_train, shared_args_valid = config.setup_train(params)
+    custom_params = params["custom_model"]
 
     # make the train directory if does not exist
     make_folder("dannce_train_dir", params)
@@ -63,7 +68,11 @@ def train(params):
     model = build_model(params, logger)
 
     model_params = [p for p in model.parameters() if p.requires_grad]
-    optimizer = torch.optim.Adam(model_params, lr=params["lr"], eps=1e-7)
+    if "optimizer" in params.keys():
+        optimizer_class = getattr(torch.optim, params["optimizer"])
+        optimizer = optimizer_class(model_params, lr=params["lr"])
+    else:
+        optimizer = torch.optim.Adam(model_params, eps=1e-7)
     lr_scheduler = None
     if params["lr_scheduler"] is not None:
         lr_scheduler_class = getattr(torch.optim.lr_scheduler, params["lr_scheduler"]["type"])
@@ -126,6 +135,13 @@ def train(params):
         }
 
         valid_params = {**base_params, **spec_params}
+        model_type = custom_params.get("type", "SLEAP")
+        DLC_flag = (model_type == "dlc")
+        image_params = {
+            "resize": False if DLC_flag else True,
+            "crop_size": 512 if DLC_flag else custom_params.get("crop_size", 512),
+            "image_size": 512 if DLC_flag else custom_params.get("resize_size", 256),
+        }
 
         train_gen_params = {
             "list_IDs": partition["train_sampleIDs"],
@@ -145,27 +161,37 @@ def train(params):
             "com3d": com3d_dict,
             "tifdirs": tifdirs
         }
-        train_generator = genfunc(**train_gen_params, **valid_params)
-        valid_generator = genfunc(**valid_gen_params, **valid_params)
+        train_generator = genfunc(**train_gen_params, **valid_params, **image_params)
+        valid_generator = genfunc(**valid_gen_params, **valid_params, **image_params)
         
         # load everything into memory
-        X_train, y_train = load_data2d_into_mem(params, logger, partition, n_cams, train_generator, train=True, image_size=256)
-        X_valid, y_valid = load_data2d_into_mem(params, logger, partition, n_cams, valid_generator, train=False, image_size=256)
+        X_train, y_train = load_data2d_into_mem(params, logger, partition, n_cams, train_generator, train=True, image_size=image_params["image_size"])
+        X_valid, y_valid = load_data2d_into_mem(params, logger, partition, n_cams, valid_generator, train=False, image_size=image_params["image_size"])
     
+        if DLC_flag:
+            heatmap_size = [image_params["image_size"]//8, image_params["image_size"]//8]
+        else:
+            heatmap_size = [image_params["image_size"]//4, image_params["image_size"]//4]
+
         dataset_train = dataset.ImageDataset(
             images=X_train,
             labels=y_train,
             num_joints=params["n_channels_out"],
             return_Gaussian=True,
-            train=True
+            train=True,
+            image_size=[image_params["image_size"]]*2,
+            heatmap_size=heatmap_size
         )
         dataset_valid = dataset.ImageDataset(
             images=X_valid,
             labels=y_valid,
             num_joints=params["n_channels_out"],
             return_Gaussian=True,
-            train=False
+            train=False,
+            image_size=[image_params["image_size"]]*2,
+            heatmap_size=heatmap_size
         )
+    # sample = dataset_train[0]
     
     train_dataloader = torch.utils.data.DataLoader(
         dataset_train, batch_size=params["batch_size"], shuffle=True, collate_fn=collate_fn,
@@ -201,6 +227,8 @@ def predict(params):
     device = "cuda:0"
     params["n_instances"] = params["n_channels_out"]
     n_cams = len(params["camnames"])
+    custom_params = params["custom_model"]
+    params["return_full2d"] = True
 
     if params["dataset"] == "rat7m":    
         # inference over the withheld animal (subject 5)
@@ -322,7 +350,6 @@ def predict(params):
 
         # Generators
         genfunc = generator.MultiviewImageGenerator
-
         valid_gen_params = {
             "list_IDs": partition["valid_sampleIDs"],
             "labels": datadict,
@@ -332,9 +359,17 @@ def predict(params):
             "com3d": com3d_dict,
             "tifdirs": tifdirs
         }
+        model_type = params["custom_model"].get("type", "SLEAP")
+        DLC_flag = (model_type == "dlc")
+        image_params = {
+            "resize": False if DLC_flag else True,
+            "crop_size": 512 if DLC_flag else custom_params.get("crop_size", 512),
+            "image_size": 512 if DLC_flag else custom_params.get("resize_size", 256)
+        }
         dataset_valid = genfunc(
             **valid_gen_params,
             **valid_params,
+            **image_params
         )
 
         generator_len = len(dataset_valid)
@@ -360,7 +395,6 @@ def predict(params):
             batch = data[0][0]
             batch = batch.reshape(-1, *batch.shape[2:]).float()
             ID = partition["valid_sampleIDs"][idx]
-            # TODO: the 2d com here is not right, need to project from 3D ... annoying
             coms = [np.nanmean(dataset_valid.labels[ID]["data"][f"0_Camera{j}"].round(), axis=1) for j in range(1, 7)]
 
         pred = model(batch.to(device))
@@ -370,21 +404,31 @@ def predict(params):
         save_data[sample_id] = {}
         save_data[sample_id]["triangulation"] = {}    
 
+        heatmap_shape = pred.shape[-1]
+
         for n_cam in range(n_cams):
             camname = str(expname)+"_"+params["camnames"][n_cam] if params["dataset"] == "rat7m" else params["camnames"][n_cam]
 
             save_data[sample_id][params["camnames"][n_cam]] = {
                 "COM": np.zeros((params["n_channels_out"], 2)),
             }
+
+            old_image_size = dataset_valid.old_image_shapes[ID][camname]
+            scales = [old_image_size[0] / heatmap_shape, old_image_size[1] / heatmap_shape]
+            bbox = dataset_valid.image_bboxs[ID][camname]
+            center_real = [(bbox[0]+bbox[2])/2, (bbox[1]+bbox[3])/2]
+            # ori_inds = []
             for n_joint in range(pred.shape[1]):
                 ind = (
                     np.array(processing.get_peak_inds(np.squeeze(pred[n_cam, n_joint])))
                 )
-                # breakpoint()
-                ind[0] = (ind[0] - 32) * 8 #4
-                ind[1] = (ind[1] - 32) * 8 #4
-                ind[0] += coms[n_cam][1]
-                ind[1] += coms[n_cam][0]
+                # scale back to the original image scale
+                # this is in ij
+                ind[0] = (ind[0] - heatmap_shape//2) * scales[0]
+                ind[1] = (ind[1] - heatmap_shape//2) * scales[1]
+                ind[0] = ind[0] + center_real[1]
+                ind[1] = ind[1] + center_real[0]
+                # convert to xy
                 ind = ind[::-1]
 
                 # Undistort this COM here.
@@ -401,30 +445,40 @@ def predict(params):
 
                 save_data[sample_id][params["camnames"][n_cam]]["COM"][n_joint] = np.squeeze(pts1)
 
-        def vis():
-            import matplotlib
-            import matplotlib.pyplot as plt
-            matplotlib.use('TkAgg')
+            # def vis():
+            #     import matplotlib
+            #     import matplotlib.pyplot as plt
+            #     matplotlib.use('TkAgg')
 
-            fig = plt.figure(figsize=(10, 10))
-            ax = fig.add_subplot(121)
-            ax.imshow(batch[0].permute(1, 2, 0).numpy().astype(np.uint8))
+            #     fig = plt.figure(figsize=(10, 10))
+            #     ax = fig.add_subplot(121)
+            #     ax.imshow(batch[0].permute(1, 2, 0).numpy().astype(np.uint8))
 
-            com = np.array(coms[0])
-            kpts2d = save_data[sample_id][params["camnames"][0]]["COM"] - com[np.newaxis, :]
-            kpts2d = kpts2d + 128
-            ax.scatter(kpts2d[:, 0], kpts2d[:, 1])
+            #     com = np.array(coms[0])
+            #     kpts2d = save_data[sample_id][params["camnames"][0]]["COM"] - com[np.newaxis, :]
+            #     kpts2d = kpts2d + 128
+            #     ax.scatter(kpts2d[:, 0], kpts2d[:, 1])
 
-            ax = fig.add_subplot(122)
-            ax.imshow(batch[1].permute(1, 2, 0).numpy().astype(np.uint8))
+            #     # ax = fig.add_subplot(122)
+            #     # ax.imshow(batch[1].permute(1, 2, 0).numpy().astype(np.uint8))
 
-            com = np.array(coms[1])
-            kpts2d = save_data[sample_id][params["camnames"][1]]["COM"] - com[np.newaxis, :]
-            kpts2d += 128
-            ax.scatter(kpts2d[:, 0], kpts2d[:, 1])
+            #     # com = np.array(coms[1])
+            #     # kpts2d = save_data[sample_id][params["camnames"][1]]["COM"] - com[np.newaxis, :]
+            #     # kpts2d += 128
+            #     # ax.scatter(kpts2d[:, 0], kpts2d[:, 1])
 
-            plt.show(block=True)
-            input("Press Enter to continue...")
+            #     ax = fig.add_subplot(122)
+            #     for ind in ori_inds:
+            #         ax.scatter(ind[1], ind[0], color='red')
+                
+            #     ax.set_xlim([0, 64])
+            #     ax.set_ylim([0, 64])
+
+            #     plt.show(block=True)
+            #     input("Press Enter to continue...")
+        
+            # vis()
+            # breakpoint()
         
         # triangulation
         save_data[sample_id]["joints"] = np.zeros((params["n_channels_out"], 3))

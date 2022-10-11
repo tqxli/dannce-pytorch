@@ -1169,7 +1169,7 @@ class ImageDataset(torch.utils.data.Dataset):
                         im = TF.rotate(im, rot)
                         targets = TF.rotate(targets, rot)
         # breakpoint()
-        # self._vis_heatmap(im[0], targets[0])
+        # self._vis_heatmap(im, targets)
 
         if self.return_3d:
             grid = self.grids[idx]
