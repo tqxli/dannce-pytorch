@@ -10,6 +10,7 @@ class VoxelPoseTrainer(DannceTrainer):
     
     def _train_epoch(self, epoch):
         self.model.train()
+        self.model.set_train()
 
         epoch_loss_dict, epoch_metric_dict = {}, {}
 
@@ -43,6 +44,7 @@ class VoxelPoseTrainer(DannceTrainer):
     
     def _valid_epoch(self, epoch):
         self.model.eval()
+        self.model.set_eval()
 
         epoch_loss_dict = {}
         epoch_metric_dict = {}

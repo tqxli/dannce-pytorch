@@ -135,6 +135,12 @@ class VolumetricTriangulationNet(nn.Module):
         self.output_channels = output_channels
         self.volume_net = V2VModel(32, self.output_channels)   
 
+        self.training = training
+    
+    def set_train(self):
+        self.training = True
+    
+    def set_eval(self):
         self.training = False
 
     def _unproject_heatmaps(self, feature, cam, grid_coords):
@@ -144,6 +150,34 @@ class VolumetricTriangulationNet(nn.Module):
 
         vol = ops.sample_grid(feature, proj_grid, device=feature.device)
         return vol.squeeze() # [C, H, W, D]
+    
+    def get_rotation_matrix(self, axis, theta):
+        """Returns the rotation matrix associated with counterclockwise rotation about
+        the given axis by theta radians.
+        """
+        axis = np.asarray(axis)
+        axis = axis / np.sqrt(np.dot(axis, axis))
+        a = np.cos(theta / 2.0)
+        b, c, d = -axis * np.sin(theta / 2.0)
+        aa, bb, cc, dd = a * a, b * b, c * c, d * d
+        bc, ad, ac, ab, bd, cd = b * c, a * d, a * c, a * b, b * d, c * d
+        return np.array([[aa + bb - cc - dd, 2 * (bc + ad), 2 * (bd - ac)],
+                        [2 * (bc - ad), aa + cc - bb - dd, 2 * (cd + ab)],
+                        [2 * (bd + ac), 2 * (cd - ab), aa + dd - bb - cc]])
+
+    def rotate_coord_volume(self, coord_volume, theta, axis):
+        shape = coord_volume.shape
+        device = coord_volume.device
+
+        rot = self.get_rotation_matrix(axis, theta)
+        rot = torch.from_numpy(rot).type(torch.float).to(device)
+
+        coord_volume = coord_volume.view(-1, 3)
+        coord_volume = rot.mm(coord_volume.t()).t()
+
+        coord_volume = coord_volume.view(*shape)
+
+        return coord_volume
     
     def forward(self, images, grid_coords, cameras):
         bs, n_cams = images.shape[:2]
@@ -165,23 +199,20 @@ class VolumetricTriangulationNet(nn.Module):
             batch_vols = []
             grids = grid_coords[idx].clone()
 
-            # augmentation
+            # rotation augmentation during training
             if self.training:
-                rot = np.random.choice(np.arange(3), 1)
+                theta = np.random.uniform(0.0, 2 * np.pi)
             else:
-                rot = 0
+                theta = 0.0
 
-            # if rot == 0:
-            #     pass
-            # elif rot == 1:
-            #     grids = grids.reshape(64, 64, 64, 3)
-            #     grids = grids.flip(0).flip(1)
-            # elif rot == 2:
-            #     grids = grids.reshape(64, 64, 64, 3).permute(1, 0, 2, 3)
-            #     grids = grids.flip(1)
-            
-            # grids = grids.reshape(-1, 3)
+            center = torch.mean(grids, 0)
+            axis = [0, 0, 1]
 
+            grids = grids - center
+            grids = self.rotate_coord_volume(grids, theta, axis)
+            grids = grids + center
+
+            # unprojection
             for j, cam in enumerate(cameras[idx]):
                 batch_vols.append(
                     self._unproject_heatmaps(
