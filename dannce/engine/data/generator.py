@@ -1158,7 +1158,9 @@ class MultiviewImageGenerator(DataGenerator_3Dconv):
     def __init__(
             self, 
             resize=True, image_size=256, 
-            crop=True, crop_size=512, **kwargs
+            crop=True, crop_size=512, 
+            use_gt_bbox=False,
+            **kwargs
         ):
         
         super(MultiviewImageGenerator, self).__init__(**kwargs)
@@ -1175,6 +1177,8 @@ class MultiviewImageGenerator(DataGenerator_3Dconv):
         for ID in self.list_IDs:
             self.old_image_shapes[ID] = {}
             self.image_bboxs[ID] = {}
+        
+        self.use_gt_bbox = use_gt_bbox
 
     def _get_camera_objs(self):
         self.camera_objs = {}
@@ -1297,8 +1301,8 @@ class MultiviewImageGenerator(DataGenerator_3Dconv):
             # crop images due to memory constraints
             ybound, xbound = im.shape[:2]
             nonan = ~torch.isnan(new_y[0])
-            if this_y.shape[1] == 1:
-                # use the predicted 2D COM as anchor, get fix-sized bounding box
+            if not self.use_gt_bbox:
+                # ony use the predicted 2D COM as anchor, get a fix-sized bounding box
                 cx = com_precrop[0]
                 cy = com_precrop[1]
                 dim = self.crop_size

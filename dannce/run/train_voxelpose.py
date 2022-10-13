@@ -207,7 +207,8 @@ def train(params: Dict):
 
     image_params = {
         "crop_size": custom_params.get("crop_size", 512),
-        "image_size": custom_params.get("resize_size", 256)
+        "image_size": custom_params.get("resize_size", 256),
+        "use_gt_bbox": custom_params.get("use_gt_bbox", False)
     }
 
     train_generator = genfunc(**train_gen_params, **valid_params, **image_params)
