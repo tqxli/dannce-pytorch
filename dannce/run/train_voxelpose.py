@@ -300,6 +300,7 @@ def predict(params):
     # Because CUDA_VISBILE_DEVICES is already set to a single GPU, the gpu_id here should be "0"
     device = "cuda:0"
     params, valid_params = config.setup_predict(params)
+    custom_params = params["custom_model"]
     params["return_full2d"] = True
 
     samples = []
@@ -390,13 +391,25 @@ def predict(params):
         "com3d": com3d_dict,
         "tifdirs": tifdirs
     }
-    predict_generator = genfunc(**valid_gen_params, **valid_params)
+    image_params = {
+        "crop_size": custom_params.get("crop_size", 512),
+        "image_size": custom_params.get("resize_size", 256),
+        "use_gt_bbox": custom_params.get("use_gt_bbox", False)
+    }
+    predict_generator = genfunc(**valid_gen_params, **valid_params, **image_params)
 
     print("Initializing Network...")
-    model = VoxelPose(params["n_channels_out"], params, logger)
+    if custom_params["name"] == "lt":
+        # Iskakov et al. learnable triangulation implementation
+        model = VolumetricTriangulationNet(params["n_channels_out"], params, logger)
+    else:
+        model = VoxelPose(params["n_channels_out"], params, logger)
     model = model.to(device)
-    model.load_state_dict(torch.load(params["dannce_predict_model"])['state_dict'])
+    model.load_state_dict(
+        torch.load(params["dannce_predict_model"])['state_dict']
+    )
     model.eval()
+    model.set_eval()
 
     if params["maxbatch"] != "max" and params["maxbatch"] > len(predict_generator):
         print(
@@ -439,14 +452,13 @@ def predict(params):
         rr = predict_generator.__getitem__(idx)
         images = rr[0][0] #[BS, 6, 3, 256, 256]
         grids = rr[0][1] #[BS, nvox**3, 3]
-        cam = rr[0][2][0] #
-        cameras = []
-        for c in cam:
-            c.update_after_resize(image_shape=[512, 512], new_image_shape=[64, 64])
-            cameras.append(cam)
+        cams = [rr[0][2][0]] #
+        # for c in cam:
+        #     c.update_after_resize(image_shape=[512, 512], new_image_shape=[64, 64])
+        #     cameras.append(cam)
 
         images, grids = images.to(device).float(), grids.to(device).float()
-        pred = model(images, grids, cameras)[1]
+        pred = model(images, grids, cams)[1]
         pred = pred.detach().cpu().numpy()
 
         for j in range(pred.shape[0]):

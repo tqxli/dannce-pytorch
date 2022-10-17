@@ -35,20 +35,24 @@ def prepare_data(
     """
     if prediction:
         # allow predictions only on labeled frames for easier metric evaluation
-        labels = load_labels(params["label3d_file"]) if predict_labeled_only else load_sync(params["label3d_file"])
-        nFrames = np.max(labels[0]["data_frame"].shape) 
+        if predict_labeled_only:
+            labels = load_labels(params["label3d_file"])
         
-        if predict_smoothed_labels:
-            nFrames *= 10
-        
-        nKeypoints = params["n_channels_out"]
-        if "new_n_channels_out" in params.keys():
-            if params["new_n_channels_out"] is not None:
-                nKeypoints = params["new_n_channels_out"]
+        else:
+            labels = load_sync(params["label3d_file"])
+            nFrames = np.max(labels[0]["data_frame"].shape) 
+            
+            if predict_smoothed_labels:
+                nFrames *= 10
+            
+            nKeypoints = params["n_channels_out"]
+            if "new_n_channels_out" in params.keys():
+                if params["new_n_channels_out"] is not None:
+                    nKeypoints = params["new_n_channels_out"]
 
-        for i in range(len(labels)):
-            labels[i]["data_3d"] = np.zeros((nFrames, 3 * nKeypoints))
-            labels[i]["data_2d"] = np.zeros((nFrames, 2 * nKeypoints))
+            for i in range(len(labels)):
+                labels[i]["data_3d"] = np.zeros((nFrames, 3 * nKeypoints))
+                labels[i]["data_2d"] = np.zeros((nFrames, 2 * nKeypoints))
     else:
         print(params["label3d_file"])
         labels = load_labels(params["label3d_file"])
