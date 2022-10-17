@@ -52,7 +52,8 @@ _param_defaults_shared = {
     "predict_labeled_only": False,
     "training_fraction": None,
     "custom_model": None,
-    "label3d_index": 0
+    "label3d_index": 0,
+    "optimizer": "Adam"
 }
 _param_defaults_dannce = {
     "dataset": "label3d",
