@@ -362,7 +362,7 @@ def predict(params):
         model_type = params["custom_model"].get("type", "SLEAP")
         DLC_flag = (model_type == "dlc")
         image_params = {
-            "resize": False if DLC_flag else True,
+            # "resize": False if DLC_flag else True,
             "crop_size": 512 if DLC_flag else custom_params.get("crop_size", 512),
             "image_size": 512 if DLC_flag else custom_params.get("resize_size", 256)
         }

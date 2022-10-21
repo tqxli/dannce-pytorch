@@ -1317,9 +1317,9 @@ class MultiviewImageGenerator(DataGenerator_3Dconv):
                 cy = (ymin + ymax) // 2
             
             xmin = round(np.maximum(0, cx - dim // 2))
-            xmax = round(np.minimum(cx + dim // 2, xbound))
+            xmax = round(np.minimum(xmin+dim, xbound))
             ymin = round(np.maximum(0, cy - dim // 2))
-            ymax = round(np.minimum(cy + dim // 2, ybound))
+            ymax = round(np.minimum(ymin+dim, ybound))
             # print(f"{xmin}:{xmax}")
 
             # crop image
@@ -1342,7 +1342,7 @@ class MultiviewImageGenerator(DataGenerator_3Dconv):
 
         if self.resize:
             im = cv2.resize(im, (self.image_size, self.image_size))
-
+            # cam.update_after_resize(old_image_shape, (self.image_size, self.image_size))
             cam.update_after_resize(old_image_shape, (self.image_size // 4, self.image_size // 4))
             new_y[1, :] *= (self.image_size / old_image_shape[0]) # y
             new_y[0, :] *= (self.image_size / old_image_shape[1])  # x
@@ -1410,8 +1410,11 @@ class MultiviewImageGenerator(DataGenerator_3Dconv):
                 arglist.append([ID, self.camnames[experimentID][c], experimentID])
             results = self.threadpool.starmap(self._load_im, arglist)
 
-            ims = np.stack([r[0] for r in results], axis=0).astype(np.uint8) #[6, H, W, 3]
-            ims = processing._preprocess_numpy_input(ims, data_format="channels_last", mode="torch")
+            try:
+                ims = np.stack([r[0] for r in results], axis=0).astype(np.uint8) #[6, H, W, 3]
+            except:
+                breakpoint()
+            # ims = processing._preprocess_numpy_input(ims, data_format="channels_last", mode="torch")
             ims = torch.tensor(ims).permute(0, 3, 1, 2) #[6, 3, H, W]
             X.append(ims)
 
