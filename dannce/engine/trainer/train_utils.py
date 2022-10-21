@@ -22,7 +22,7 @@ class LossHelper:
             if name == "ConsistencyLoss":
                 # params that need to be directly computed from known
                 extra_params = {
-                    "per_batch_sample": self.loss_params["batch_size"],
+                    "copies_per_sample": self.loss_params["form_bs"] // self.loss_params["batch_size"],
                 }
                 self.loss_fcns[name] = getattr(custom_losses, name)(**args, **extra_params)
             else:

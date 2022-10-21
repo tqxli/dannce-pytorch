@@ -999,14 +999,15 @@ def apply_random_transforms(volumes, grids, aux=None):
     grids = grids.reshape(grids.shape[0], -1, 3)
     return volumes, grids, aux
 
-def form_batch(volumes, grids, aux=None, batch_size=4, n_sample=1):
+def form_batch(volumes, grids, aux=None, copies_per_sample=1):
     copies = []
-    for i in range(n_sample):
+    n_samples = volumes.shape[0]
+    for i in range(n_samples):
         copies += [apply_random_transforms(
             volumes[i].clone().unsqueeze(0), 
             grids[i].clone().unsqueeze(0), 
             aux[i].clone().unsqueeze(0) if aux is not None else aux
-        ) for _ in range(batch_size // n_sample)]
+        ) for _ in range(copies_per_sample)]
     
     volumes = torch.cat([copy[0] for copy in copies], dim=0)
     grids = torch.cat([copy[1] for copy in copies], dim=0)

@@ -86,9 +86,10 @@ class DannceTrainer(BaseTrainer):
             volumes, grid_centers, aux = form_batch(
                 volumes.permute(0, 2, 3, 4, 1), 
                 grid_centers, 
-                batch_size=self.form_bs,
+                # batch_size=self.form_bs,
                 aux=aux if aux is None else aux.permute(0, 2, 3, 4, 1),
-                n_sample=self.per_batch_sample
+                # n_sample=self.per_batch_sample
+                copies_per_sample=self.form_bs // self.per_batch_sample
             )
             volumes = volumes.permute(0, 4, 1, 2, 3)
             aux = aux if aux is None else aux.permute(0, 4, 1, 2, 3)
