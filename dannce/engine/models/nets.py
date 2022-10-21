@@ -10,8 +10,17 @@ class EncoderDecorder_DANNCE(nn.Module):
     """
     3D UNet class for 3D pose estimation.
     """
-    def __init__(self, in_channels, normalization, input_shape, residual=False, norm_upsampling=False):
+    def __init__(self, 
+        in_channels, 
+        normalization, 
+        input_shape, 
+        residual=False, norm_upsampling=False,
+        ret_enc_feat=False
+    ):
         super().__init__()
+
+        self.ret_enc_feat = ret_enc_feat
+
         conv_block = Res3DBlock if residual else Basic3DBlock
         deconv_block = Upsample3DBlock if norm_upsampling else BasicUpSample3DBlock
 
@@ -31,18 +40,21 @@ class EncoderDecorder_DANNCE(nn.Module):
         self.decoder_upsample1 = deconv_block(128, 64, 2, 2, normalization, [input_shape]*3)
 
     def forward(self, x):
-        features = []
+        skips, dec_feats = [], []
         # encoder
         x = self.encoder_res1(x)
         skip_x1 = x
+        skips.append(skip_x1)
         x = self.encoder_pool1(x)
 
         x = self.encoder_res2(x)    
-        skip_x2 = x    
+        skip_x2 = x
+        skips.append(skip_x2)
         x = self.encoder_pool2(x)
 
         x = self.encoder_res3(x)
         skip_x3 = x
+        skips.append(skip_x3)
         x = self.encoder_pool3(x)
 
         x = self.encoder_res4(x)
@@ -50,18 +62,22 @@ class EncoderDecorder_DANNCE(nn.Module):
         # decoder with skip connections
         x = self.decoder_upsample3(x)
         x = self.decoder_res3(torch.cat([x, skip_x3], dim=1))
-        features.append(x)
+        dec_feats.append(x)
         x = self.decoder_upsample2(x)
         x = self.decoder_res2(torch.cat([x, skip_x2], dim=1))
-        features.append(x)
+        dec_feats.append(x)
         x = self.decoder_upsample1(x)
         x = self.decoder_res1(torch.cat([x, skip_x1], dim=1))
-        features.append(x)
-        return x, features
+        dec_feats.append(x)
+
+        if self.ret_enc_feat:
+            return x, skips
+
+        return x, dec_feats
 
 class EncoderDecoder(EncoderDecorder_DANNCE):
-    def __init__(self, in_channels, normalization, input_shape, residual=False, norm_upsampling=False):
-        super().__init__(in_channels, normalization, input_shape, residual=False, norm_upsampling=False)
+    def __init__(self, in_channels, normalization, input_shape, residual=False, norm_upsampling=False, ret_enc_feat=False):
+        super().__init__(in_channels, normalization, input_shape, residual=False, norm_upsampling=False, ret_enc_feat=False)
         conv_block = Res3DBlock if residual else Basic3DBlock
         deconv_block = Upsample3DBlock if norm_upsampling else BasicUpSample3DBlock
 
@@ -111,15 +127,16 @@ class DANNCE(nn.Module):
         norm_upsampling=False,
         return_inter_features=False,
         compressed=False,
+        ret_enc_feat=False
     ):
         super().__init__()
 
         self.compressed = compressed
         if self.compressed:
-            self.encoder_decoder = EncoderDecoder(input_channels, norm_method, input_shape, residual, norm_upsampling)
+            self.encoder_decoder = EncoderDecoder(input_channels, norm_method, input_shape, residual, norm_upsampling, ret_enc_feat)
             self.output_layer = nn.Conv3d(32, output_channels, kernel_size=1, stride=1, padding=0)
         else:
-            self.encoder_decoder = EncoderDecorder_DANNCE(input_channels, norm_method, input_shape, residual, norm_upsampling)
+            self.encoder_decoder = EncoderDecorder_DANNCE(input_channels, norm_method, input_shape, residual, norm_upsampling, ret_enc_feat)
             self.output_layer = nn.Conv3d(64, output_channels, kernel_size=1, stride=1, padding=0)
         
         self._initialize_weights()
@@ -245,6 +262,7 @@ def initialize_model(params, n_cams, device):
         "norm_method": params["norm_method"],
         "input_shape": params["nvox"],
         "return_inter_features": params.get("use_features", False),
+        "ret_enc_feat": params.get("custom_models", {}).get("ret_enc_feat", False)
     }
 
     if params["net_type"] == "dannce":
