@@ -52,15 +52,19 @@ class GCNTrainer(DannceTrainer):
             return
 
         if train and self.form_batch:
+            # form batch with augmented samples
             volumes, grid_centers, aux = form_batch(
                 volumes.permute(0, 2, 3, 4, 1), 
                 grid_centers, 
                 batch_size=self.form_bs,
                 aux=aux if aux is None else aux.permute(0, 2, 3, 4, 1),
+                n_sample=self.per_batch_sample
             )
             volumes = volumes.permute(0, 4, 1, 2, 3)
             aux = aux if aux is None else aux.permute(0, 4, 1, 2, 3)
-            keypoints_3d_gt = keypoints_3d_gt.repeat(self.form_bs, 1, 1)
+
+            # update ground truth
+            keypoints_3d_gt = keypoints_3d_gt.repeat(self.form_bs // self.per_batch_sample, 1, 1, 1).transpose(1, 0).flatten(0, 1)
 
         init_poses, keypoints_3d_pred, heatmaps = self.model(volumes, grid_centers)
         

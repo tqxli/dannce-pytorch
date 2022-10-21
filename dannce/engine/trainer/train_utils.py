@@ -19,7 +19,14 @@ class LossHelper:
     def _get_losses(self):
         self.loss_fcns = {}
         for name, args in self.loss_params["loss"].items():
-            self.loss_fcns[name] = getattr(custom_losses, name)(**args)
+            if name == "ConsistencyLoss":
+                # params that need to be directly computed from known
+                extra_params = {
+                    "per_batch_sample": self.loss_params["batch_size"],
+                }
+                self.loss_fcns[name] = getattr(custom_losses, name)(**args, **extra_params)
+            else:
+                self.loss_fcns[name] = getattr(custom_losses, name)(**args)
         
     def compute_loss(self, kpts_gt, kpts_pred, heatmaps, grid_centers=None, aux=None, heatmaps_gt=None):
         """

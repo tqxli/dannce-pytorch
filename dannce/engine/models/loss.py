@@ -129,13 +129,15 @@ class WeightedL1Loss(BaseLoss):
         return self.loss_weight * loss_mean
 
 class ConsistencyLoss(BaseLoss):
-    def __init__(self, method="l1", **kwargs):
+    def __init__(self, method="l1", per_batch_sample=1, **kwargs):
         super().__init__(**kwargs)
         assert method in ["l1", "l2"]
         self.method = method
+        self.per_batch_sample = per_batch_sample
 
     def forward(self, kpts_gt, kpts_pred):
-        diff = torch.diff(kpts_pred, dim=0)
+        kpts_pred = kpts_pred.reshape(self.per_batch_sample, -1, *kpts_pred.shape[1:])
+        diff = torch.diff(kpts_pred, dim=1)
         if self.method == 'l1':
             loss_temp = torch.abs(diff).mean()
         else:
