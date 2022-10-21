@@ -77,7 +77,7 @@ class EncoderDecorder_DANNCE(nn.Module):
 
 class EncoderDecoder(EncoderDecorder_DANNCE):
     def __init__(self, in_channels, normalization, input_shape, residual=False, norm_upsampling=False, ret_enc_feat=False):
-        super().__init__(in_channels, normalization, input_shape, residual=False, norm_upsampling=False, ret_enc_feat=False)
+        super().__init__(in_channels, normalization, input_shape, residual, norm_upsampling, ret_enc_feat)
         conv_block = Res3DBlock if residual else Basic3DBlock
         deconv_block = Upsample3DBlock if norm_upsampling else BasicUpSample3DBlock
 
@@ -262,7 +262,7 @@ def initialize_model(params, n_cams, device):
         "norm_method": params["norm_method"],
         "input_shape": params["nvox"],
         "return_inter_features": params.get("use_features", False),
-        "ret_enc_feat": params.get("custom_models", {}).get("ret_enc_feat", False)
+        "ret_enc_feat": params.get("custom_model", {}).get("ret_enc_feat", False)
     }
 
     if params["net_type"] == "dannce":
