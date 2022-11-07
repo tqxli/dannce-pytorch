@@ -1160,6 +1160,7 @@ class MultiviewImageGenerator(DataGenerator_3Dconv):
             resize=True, image_size=256, 
             crop=True, crop_size=512, 
             use_gt_bbox=False,
+            resize_to_nearest=False,
             **kwargs
         ):
         
@@ -1179,6 +1180,7 @@ class MultiviewImageGenerator(DataGenerator_3Dconv):
             self.image_bboxs[ID] = {}
         
         self.use_gt_bbox = use_gt_bbox
+        self.resize_to_nearest = resize_to_nearest
 
     def _get_camera_objs(self):
         self.camera_objs = {}
@@ -1313,6 +1315,7 @@ class MultiviewImageGenerator(DataGenerator_3Dconv):
                 width = xmax - xmin
                 height = ymax - ymin
                 dim = np.maximum(width, height) + 30
+                # dim = int(np.ceil(dim / 16) * 16) # use the closest number divisible by 16
                 cx = (xmin + xmax) // 2
                 cy = (ymin + ymax) // 2
             
@@ -1349,6 +1352,12 @@ class MultiviewImageGenerator(DataGenerator_3Dconv):
             # im = processing.downsample_batch(im[np.newaxis, ...], fac=self.ds_fac)
             # im = np.squeeze(im)
             # new_y /= self.ds_fac
+        
+        if self.resize_to_nearest:
+            h, w = int(np.ceil(old_image_shape[0] / 16) * 16), int(np.ceil(old_image_shape[1] / 16) * 16)
+            im = cv2.resize(im, (h, w))
+            new_y[1, :] *= (h / old_image_shape[0]) # y
+            new_y[0, :] *= (w / old_image_shape[1])  # x
         
         return im, cam, new_y
     
