@@ -454,14 +454,26 @@ def max_coord_3d(heatmaps):
 
     return preds
 
-def expected_value_2d(prob_map, grid):
+def expected_value_2d(prob_map):
+    """
+    Return the 2D center of mass in x-y coords
+    """
+    # bs, channels, h, w = prob_map.shape
+
+    # prob_map = prob_map.permute(0, 2, 3, 1).reshape(bs, -1, channels).unsqueeze(2) #[bs, h*w, 1, channels]
+    # weighted_centers = prob_map * grid #[bs, h*w, 2, channels]
+
+    # return weighted_centers.sum(1) #[bs, 2, channels]
     bs, channels, h, w = prob_map.shape
+    accu_x = prob_map.sum(2)
+    accu_y = prob_map.sum(3)
+    accu_x = accu_x * torch.arange(w).float().to(prob_map.device)
+    accu_y = accu_y * torch.arange(h).float().to(prob_map.device)
 
-    prob_map = prob_map.permute(0, 2, 3, 1).reshape(bs, -1, channels).unsqueeze(2) #[bs, h*w, 1, channels]
-    weighted_centers = prob_map * grid #[bs, h*w, 2, channels]
-
-    return weighted_centers.sum(1) #[bs, 2, channels]
-
+    x = accu_x.sum(dim=2, keepdim=True)
+    y = accu_y.sum(dim=2, keepdim=True)
+    
+    return torch.cat((x, y), dim=2)
 
 def spatial_softmax(feats):
     """
