@@ -974,11 +974,18 @@ class ImageDataset(torch.utils.data.Dataset):
         sigma=2,
         image_size=[256, 256],
         heatmap_size=[64, 64],
-        train=True
+        ds_fac=8,
+        train=True,
+        augs=['hflip', 'vlip', 'randomrot'],
+        return_chunk_size=1,
     ):
         super(ImageDataset, self).__init__()
         self.images = images
         self.labels = labels
+        indices = np.arange(labels.shape[0])
+        indices = indices.reshape(-1, return_chunk_size, 6)
+        indices = np.transpose(indices, (0, 2, 1)).reshape(-1, return_chunk_size)
+        self.indices = indices
 
         self.read_frommem = (self.images is not None)
 
@@ -996,7 +1003,7 @@ class ImageDataset(torch.utils.data.Dataset):
 
         self.image_size = np.array(image_size)
         self.heatmap_size = np.array(heatmap_size)
-        self.ds_fac = image_size[0] // heatmap_size[0]
+        self.ds_fac = ds_fac #image_size[0] // heatmap_size[0]
 
         self.grids = grids
         self.labels_3d = labels_3d
@@ -1006,12 +1013,16 @@ class ImageDataset(torch.utils.data.Dataset):
         self.return_cameras = (cameras is not None)
 
         self.train = train
+        self.augs = augs
         self._transforms()
 
+        self.return_chunk_size = return_chunk_size
+
     def __len__(self):
-        if self.read_frommem:
-            return self.images.shape[0]
-        return len(self.imlist)
+        # if self.read_frommem:
+        #     return len(self.images) // self.return_chunk_size
+        # return len(self.imlist)
+        return self.indices.shape[0]
     
     def _vis_heatmap(self, im, target):
         import matplotlib
@@ -1030,9 +1041,9 @@ class ImageDataset(torch.utils.data.Dataset):
         plt.show(block=True)
         input("Press Enter to continue...")
     
-    def _generate_Gaussian_target(self, labels):
+    def _generate_Gaussian_target(self, labels, heatmap_size):
         (x_coord, y_coord) = np.meshgrid(
-            np.arange(self.heatmap_size[1]), np.arange(self.heatmap_size[0])
+            np.arange(heatmap_size[1]), np.arange(heatmap_size[0])
         )
         
         targets = []
@@ -1046,7 +1057,8 @@ class ImageDataset(torch.utils.data.Dataset):
                         / (2 * self.sigma ** 2)
                     )
             else:
-                target = np.zeros((self.heatmap_size[1], self.heatmap_size[0]))
+                target = np.zeros((heatmap_size[0], heatmap_size[1]))
+
             targets.append(target)
         # crop out and keep the max to be 1 might still work...
         targets = np.stack(targets, axis=0)
@@ -1103,73 +1115,128 @@ class ImageDataset(torch.utils.data.Dataset):
             normalize,
         ])
 
-    def __getitem__(self, idx):
+    def __getitem__(self, i):
         if self.read_frommem:
-            im = self.images[idx].clone()
-            targets = self.labels[idx]
-        else:
-            im = cv2.imread(
-                os.path.join(self.imdir, self.imlist[idx]),  
-                cv2.IMREAD_COLOR | cv2.IMREAD_IGNORE_ORIENTATION
-            )
-            im = cv2.cvtColor(im, cv2.COLOR_BGR2RGB)
+            # chunk_range = list(range(
+            #     i*self.return_chunk_size,
+            #     (i+1)*self.return_chunk_size
+            # ))
+            chunk_range = self.indices[i]
 
-            annot = np.load(os.path.join(self.labeldir, self.annot[idx]), allow_pickle=True)[()]
-            x1, y1, x2, y2 = annot["bbox"]
-            w, h = x2-x1, y2-y1
-            max_side = max(w, h)
-            center = ((x1 + x2) / 2, (y1 + y2) / 2)
+        # else:
+        #     im = cv2.imread(
+        #         os.path.join(self.imdir, self.imlist[idx]),  
+        #         cv2.IMREAD_COLOR | cv2.IMREAD_IGNORE_ORIENTATION
+        #     )
+        #     im = cv2.cvtColor(im, cv2.COLOR_BGR2RGB)
 
-            x1 = int(center[0]-max_side/2)
-            x2 = int(center[0]+max_side/2)
-            y1 = int(center[1]-max_side/2)
-            y2 = int(center[1]+max_side/2)
+        #     annot = np.load(os.path.join(self.labeldir, self.annot[idx]), allow_pickle=True)[()]
+        #     x1, y1, x2, y2 = annot["bbox"]
+        #     w, h = x2-x1, y2-y1
+        #     max_side = max(w, h)
+        #     center = ((x1 + x2) / 2, (y1 + y2) / 2)
 
-            kpts2d = annot["keypoints"]
+            # x1 = int(center[0]-max_side/2)
+            # x2 = int(center[0]+max_side/2)
+            # y1 = int(center[1]-max_side/2)
+            # y2 = int(center[1]+max_side/2)
 
-            im = im[int(y1):int(y2), int(x1):int(x2), :]
-            kpts2d[0, :] -= int(x1)
-            kpts2d[1, :] -= int(y1)
+            # kpts2d = annot["keypoints"]
 
-            ori_size = im.shape[:2]
-            im = cv2.resize(im, tuple(self.image_size))
-            kpts2d[0, :] *= (im.shape[1] / ori_size[1])
-            kpts2d[1, :] *= (im.shape[0] / ori_size[0])
+            # im = im[int(y1):int(y2), int(x1):int(x2), :]
+            # kpts2d[0, :] -= int(x1)
+            # kpts2d[1, :] -= int(y1)
 
-        im = im # self.transforms(im).float()
-        # kpts2d = torch.from_numpy(kpts2d)
+            # ori_size = im.shape[:2]
+            # im = cv2.resize(im, tuple(self.image_size))
+            # kpts2d[0, :] *= (im.shape[1] / ori_size[1])
+            # kpts2d[1, :] *= (im.shape[0] / ori_size[0])
+            ims, all_targets = [], []
+            for idx in chunk_range:
+                im = self.images[idx].clone()
+                labels = self.labels[idx].clone()
+                im = im # self.transforms(im).float()
+                h, w = im.shape[-2:]
+                heatmap_size = (h//self.ds_fac, w//self.ds_fac)
 
-        if self.return_Gaussian:
-            if not self.return_3d:
-                targets = self._generate_Gaussian_target(targets.numpy())
-            else:
-                # start = time.time()
-                all_targets = []
-                for i in range(targets.shape[0]):
-                    temp = self._generate_Gaussian_target(targets[i].numpy())
-                    all_targets.append(temp)
-                targets = np.stack(all_targets, axis=0)
-                targets = torch.from_numpy(targets).float() 
-                # end = time.time()
-                # print("Create gaussian takes {} seconds".format(end-start))
-            if self.train:
-                if random.random() > 0.5:
-                    im = TF.hflip(im)
-                    targets = TF.hflip(targets)
+                targets = labels
+                if self.return_Gaussian:
+                    if not self.return_3d:
+                        targets = self._generate_Gaussian_target(
+                            targets.numpy(),
+                            heatmap_size
+                        )
+                    else:
+                        all_targets = []
+                        for i in range(targets.shape[0]):
+                            temp = self._generate_Gaussian_target(
+                                targets[i].numpy(),
+                                heatmap_size
+                            )
+                            all_targets.append(temp)
+                        targets = np.stack(all_targets, axis=0)
+                        targets = torch.from_numpy(targets).float()
 
-                # Random vertical flipping
-                if random.random() > 0.5:
-                    im = TF.vflip(im)
-                    targets = TF.vflip(targets)
+                    if self.train:
+                        if 'hflip' in self.augs:
+                            if random.random() > 0.5:
+                                im = TF.hflip(im)
+                                targets = TF.hflip(targets)
 
-                # Random rotation
-                if random.random() > 0.5:
-                    rot = random.randint(0, 3) * 90
-                    if rot != 0:
-                        im = TF.rotate(im, rot)
-                        targets = TF.rotate(targets, rot)
-        # breakpoint()
+                        # Random vertical flipping
+                        if 'vflip' in self.augs:
+                            if random.random() > 0.5:
+                                im = TF.vflip(im)
+                                targets = TF.vflip(targets)
+
+                        # Random rotation
+                        if 'randomrot' in self.augs:
+                            if random.random() > 0.5:
+                                rot = random.randint(0, 3) * 90
+                                if rot != 0:
+                                    im = TF.rotate(im, rot)
+                                    targets = TF.rotate(targets, rot)
+
+                    # # Random resize/scaling                
+                    # if random.random() > 0.5:
+                    #     h, w = im.shape[-2:]
+                    #     scale_fac = 1 + (random.random() - 0.5)
+                    #     target_h, target_w = targets.shape[-2:]
+                    #     im = TF.resize(im, (int(h*scale_fac), int(w*scale_fac)))
+                    #     targets = TF.resize(targets, (int(target_h*scale_fac), int(target_w*scale_fac)))
+                else:
+                    targets /= self.ds_fac
+
+                    if self.train:
+                        if 'hflip' in self.augs:
+                            if random.random() > 0.5:
+                                im = TF.hflip(im)
+                                targets[:, 0] = im.shape[2] - targets[:, 0]
+
+                        # Random vertical flipping
+                        if 'vflip' in self.augs:
+                            if random.random() > 0.5:
+                                im = TF.vflip(im)
+                                targets = TF.vflip(targets)
+                                targets[:, 1] = im.shape[1] - targets[:, 1]
+
+                        # Random rotation
+                        if 'randomrot' in self.augs:
+                            if random.random() > 0.5:
+                                rot = random.randint(0, 3) * 90
+                                if (rot != 90) or (rot != 270):
+                                    im = TF.rotate(im, rot)
+                                    
+                                    if rot == 90:
+                                        targets = torch.flip(targets, dims=(1, ))
+                                    elif rot == 270:
+                                        prev_x = targets[:, 0]
+                                        targets[:, 0] = im.shape[2] - targets[:, 1]
+                                        targets[:, 1] = prev_x
+                ims.append(im)
+                all_targets.append(targets)       
         # self._vis_heatmap(im, targets)
+        # breakpoint()
 
         if self.return_3d:
             grid = self.grids[idx]
@@ -1179,6 +1246,8 @@ class ImageDataset(torch.utils.data.Dataset):
                 return im, targets, cam, grid, y3d
             return im, targets, grid, y3d
 
+        im = torch.stack(ims, dim=0)
+        targets = torch.stack(all_targets, dim=0)
         return im, targets
 
 class RAT7MSeqDataset(torch.utils.data.Dataset):

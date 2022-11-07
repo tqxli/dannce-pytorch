@@ -1,3 +1,4 @@
+from tkinter import N
 import dannce.config as config
 from dannce.engine.data import ops
 from dannce.engine.models.pose2d.sleap import SLEAPUNet
@@ -7,15 +8,72 @@ from dannce.run_utils import *
 from dannce.engine.logging.logger import setup_logging, get_logger
 from dannce.engine.trainer.com_trainer import COMTrainer
 from dannce.engine.data.dataset import RAT7MImageDataset
-from dannce.run.train_backbone2d import load_data2d_into_mem
+from dannce.engine.data.ops import expected_value_2d, spatial_softmax
 
 import scipy.io as sio
 from tqdm import tqdm
 
+def load_data2d_into_mem(params, logger, partition, n_cams, generator, image_size=512, train=True):
+    n_samples = len(partition["train_sampleIDs"]) if train else len(partition["valid_sampleIDs"]) 
+    message = "Loading training data into memory" if train else "Loading validation data into memory"
+
+    # initialize
+    # (n_samples, n_cams, params["chan_num"], image_size, image_size)
+    X = []
+    y = torch.empty((n_samples, n_cams, 2, params["n_channels_out"]), dtype=torch.float32)
+    
+    # load data from generator
+    for i in tqdm(range(n_samples)):
+        # print(i, end='\r')
+        rr = generator.__getitem__(i)
+        X += rr[0][0][0]
+        y[i] = rr[1][1]
+    
+    # X = X.reshape(-1, *X.shape[2:]) 
+    y = y.reshape(-1, *y.shape[2:]) #[n_samples*n_cams, 2, n_joints]
+    return X, y
+
+
+def configure_dataset(custom_params):
+    model_type = custom_params.get("type", "SLEAP")
+    DLC_flag = (model_type == "dlc")
+    use_gt_bbox = custom_params.get("use_gt_bbox", True)
+    return_Gaussian=custom_params.get("return_gaussian", True)
+    use_original_image = custom_params.get("use_original_image", False)
+
+    if use_original_image:
+        image_params = {
+            "resize": False,
+            "crop": False,
+            "resize_to_nearest": True,
+            "image_size": 1152 # placeholder
+        }
+    else:
+        image_params = {
+            "resize": False if DLC_flag else True,
+            "crop_size": 512 if DLC_flag else custom_params.get("crop_size", 512),
+            "image_size": 512 if DLC_flag else custom_params.get("resize_size", 256),
+            "use_gt_bbox": use_gt_bbox,
+            "resize_to_nearest": DLC_flag
+        }
+
+    if DLC_flag:
+        heatmap_size = [image_params["image_size"]//8, image_params["image_size"]//8]
+        ds_fac = 8
+    else:
+        heatmap_size = [image_params["image_size"]//4, image_params["image_size"]//4]
+        ds_fac = 4
+    
+    return image_params, heatmap_size, ds_fac, return_Gaussian
+
+def batched_collate_fn(batch):
+    X = torch.cat([item[0] for item in batch], dim=0)
+    y = torch.cat([item[1] for item in batch], dim=0)
+    return X, y
+
 def collate_fn(batch):
     X = torch.stack([item[0] for item in batch], dim=0)
     y = torch.stack([item[1] for item in batch], dim=0)
-
     return X, y
 
 def build_model(params, logger=None, train=True):
@@ -135,14 +193,35 @@ def train(params):
         }
 
         valid_params = {**base_params, **spec_params}
-        model_type = custom_params.get("type", "SLEAP")
-        DLC_flag = (model_type == "dlc")
-        image_params = {
-            "resize": False if DLC_flag else True,
-            "crop_size": 512 if DLC_flag else custom_params.get("crop_size", 512),
-            "image_size": 512 if DLC_flag else custom_params.get("resize_size", 256),
-        }
+        image_params, heatmap_size, ds_fac, return_Gaussian = configure_dataset(custom_params)
 
+        # workaround:
+        # must use the same bounding box for neighboring cropped 2D images
+        # otherwise temporal loss does not make sense
+        if params["use_temporal"]:
+            chunk_keys = ["train_chunks", "valid_chunks"]
+            sample_keys = ["train_sampleIDs", "valid_sampleIDs"]
+            labeled_idx = params["temporal_chunk_size"] // 2
+            for ckey, skey in zip(chunk_keys, sample_keys):
+                for chunk_idx, chunk in enumerate(partition[ckey]):
+                    chunk_sampleIDs = np.array(partition[skey])[chunk]
+                    # at least one chunk should have ground truth labels
+                    labeled_samp = chunk_sampleIDs[labeled_idx]
+                    # replace neighbors' nan labels
+                    for sampidx, samp in enumerate(chunk_sampleIDs):
+                        if samp == labeled_samp:
+                            continue
+                        expid = samp.split("_")[0]
+                        if np.isnan(datadict[samp]['data'][f'{expid}_Camera1'][:, 0]).sum() < 2:
+                            samp_new = samp+"b"
+                            print(f"repetitive sampleID in chunks: {samp_new}")
+                            samp_new_idx = chunk_idx*params["temporal_chunk_size"] + sampidx
+                            partition[skey][samp_new_idx] = samp_new
+                            datadict[samp_new] = datadict[labeled_samp]
+                            datadict_3d[samp_new] = datadict_3d[labeled_samp]
+                            com3d_dict[samp_new] = com3d_dict[labeled_samp]
+                        else:
+                            datadict[samp] = datadict[labeled_samp]
         train_gen_params = {
             "list_IDs": partition["train_sampleIDs"],
             "labels": datadict,
@@ -167,39 +246,46 @@ def train(params):
         # load everything into memory
         X_train, y_train = load_data2d_into_mem(params, logger, partition, n_cams, train_generator, train=True, image_size=image_params["image_size"])
         X_valid, y_valid = load_data2d_into_mem(params, logger, partition, n_cams, valid_generator, train=False, image_size=image_params["image_size"])
-    
-        if DLC_flag:
-            heatmap_size = [image_params["image_size"]//8, image_params["image_size"]//8]
-        else:
-            heatmap_size = [image_params["image_size"]//4, image_params["image_size"]//4]
 
         dataset_train = dataset.ImageDataset(
             images=X_train,
             labels=y_train,
             num_joints=params["n_channels_out"],
-            return_Gaussian=True,
+            return_Gaussian=return_Gaussian,
             train=True,
             image_size=[image_params["image_size"]]*2,
-            heatmap_size=heatmap_size
+            heatmap_size=heatmap_size,
+            ds_fac=ds_fac,
+            sigma=custom_params.get("sigma", 2),
+            augs=custom_params.get("augs", ['hflip', 'vflip', 'randomrot']),
+            return_chunk_size=params.get("temporal_chunk_size", 1)
         )
         dataset_valid = dataset.ImageDataset(
             images=X_valid,
             labels=y_valid,
             num_joints=params["n_channels_out"],
-            return_Gaussian=True,
+            return_Gaussian=return_Gaussian,
             train=False,
             image_size=[image_params["image_size"]]*2,
-            heatmap_size=heatmap_size
+            heatmap_size=heatmap_size,
+            ds_fac=ds_fac,
+            sigma=custom_params.get("sigma", 2),
+            return_chunk_size=params.get("temporal_chunk_size", 1)
         )
-    # sample = dataset_train[0]
-    
+
+    if params["use_temporal"]:
+        valid_batch_size = params["batch_size"] // params["temporal_chunk_size"]
+    else:
+        valid_batch_size = params["batch_size"]
     train_dataloader = torch.utils.data.DataLoader(
-        dataset_train, batch_size=params["batch_size"], shuffle=True, collate_fn=collate_fn,
-        num_workers=8,
+        dataset_train, batch_size=valid_batch_size, shuffle=True,
+        collate_fn=batched_collate_fn,
+        num_workers=4,
     )
     valid_dataloader = torch.utils.data.DataLoader(
-        dataset_valid, batch_size=params["batch_size"], shuffle=False, collate_fn=collate_fn,
-        num_workers=8
+        dataset_valid, batch_size=valid_batch_size, shuffle=False,
+        collate_fn=batched_collate_fn,
+        num_workers=4
     )
 
     params["com_train_dir"] = params["dannce_train_dir"]
@@ -213,7 +299,8 @@ def train(params):
         optimizer=optimizer,
         device=device,
         logger=logger,
-        lr_scheduler=lr_scheduler
+        lr_scheduler=lr_scheduler,
+        return_gaussian=return_Gaussian
     )
 
     trainer.train()
@@ -228,6 +315,8 @@ def predict(params):
     params["n_instances"] = params["n_channels_out"]
     n_cams = len(params["camnames"])
     custom_params = params["custom_model"]
+
+    # used for getting access to ground truth labels
     params["return_full2d"] = True
 
     if params["dataset"] == "rat7m":    
@@ -359,13 +448,8 @@ def predict(params):
             "com3d": com3d_dict,
             "tifdirs": tifdirs
         }
-        model_type = params["custom_model"].get("type", "SLEAP")
-        DLC_flag = (model_type == "dlc")
-        image_params = {
-            # "resize": False if DLC_flag else True,
-            "crop_size": 512 if DLC_flag else custom_params.get("crop_size", 512),
-            "image_size": 512 if DLC_flag else custom_params.get("resize_size", 256)
-        }
+
+        image_params, heatmap_size, ds_fac, return_Gaussian = configure_dataset(custom_params)
         dataset_valid = genfunc(
             **valid_gen_params,
             **valid_params,
@@ -392,19 +476,33 @@ def predict(params):
             batch = torch.stack(batch, dim=0)
         elif params["dataset"] == "label3d":
             data = dataset_valid[i]
-            batch = data[0][0]
-            batch = batch.reshape(-1, *batch.shape[2:]).float()
+            batch = data[0][0][0]
+            # batch = batch.reshape(-1, *batch.shape[2:]).float()
             ID = partition["valid_sampleIDs"][idx]
             coms = [np.nanmean(dataset_valid.labels[ID]["data"][f"0_Camera{j}"].round(), axis=1) for j in range(1, 7)]
 
-        pred = model(batch.to(device))
-        pred = pred.detach().cpu().numpy()
+        pred = []
+        heatmap_shapes = [] # this is important for keeping track of sizes
+
+        for view in batch:
+            out = model(view.unsqueeze(0).to(device))
+            out = out.detach().cpu()
+            pred.append(out)
+            heatmap_shapes.append(out.shape[-2:])
+        # pred = model(batch.to(device))
+        # pred = pred.detach().cpu()
+
+        if return_Gaussian:
+            pred = [out.numpy()[0] for out in pred]
+            n_joints = pred[0].shape[0]
+        else:
+            pred = [expected_value_2d(spatial_softmax(out)) for out in pred]
+            pred = torch.stack(pred, dim=1).numpy()[0] # [n_cams, J, 2]
+            n_joints = pred.shape[1]
 
         sample_id = partition["valid_sampleIDs"][idx]
         save_data[sample_id] = {}
-        save_data[sample_id]["triangulation"] = {}    
-
-        heatmap_shape = pred.shape[-1]
+        save_data[sample_id]["triangulation"] = {}
 
         for n_cam in range(n_cams):
             camname = str(expname)+"_"+params["camnames"][n_cam] if params["dataset"] == "rat7m" else params["camnames"][n_cam]
@@ -412,20 +510,29 @@ def predict(params):
             save_data[sample_id][params["camnames"][n_cam]] = {
                 "COM": np.zeros((params["n_channels_out"], 2)),
             }
+            heatmap_shape = heatmap_shapes[n_cam]
 
             old_image_size = dataset_valid.old_image_shapes[ID][camname]
-            scales = [old_image_size[0] / heatmap_shape, old_image_size[1] / heatmap_shape]
+            scales = [old_image_size[0] / heatmap_shape[0], old_image_size[1] / heatmap_shape[1]]
             bbox = dataset_valid.image_bboxs[ID][camname]
             center_real = [(bbox[0]+bbox[2])/2, (bbox[1]+bbox[3])/2]
             # ori_inds = []
-            for n_joint in range(pred.shape[1]):
-                ind = (
-                    np.array(processing.get_peak_inds(np.squeeze(pred[n_cam, n_joint])))
-                )
+            for n_joint in range(n_joints):
+                # take the absolute maximum
+                if return_Gaussian:
+                    ind = (
+                        np.array(processing.get_peak_inds(np.squeeze(pred[n_cam][n_joint])))
+                    )
+                # take the softargmax
+                else:
+                    ind = pred[n_cam, n_joint]
+                    # convert to ij to keep consistency with above
+                    ind = ind[::-1]
+                
                 # scale back to the original image scale
                 # this is in ij
-                ind[0] = (ind[0] - heatmap_shape//2) * scales[0]
-                ind[1] = (ind[1] - heatmap_shape//2) * scales[1]
+                ind[0] = (ind[0] - heatmap_shape[0]//2) * scales[0]
+                ind[1] = (ind[1] - heatmap_shape[1]//2) * scales[1]
                 ind[0] = ind[0] + center_real[1]
                 ind[1] = ind[1] + center_real[0]
                 # convert to xy
@@ -444,41 +551,6 @@ def predict(params):
                 )
 
                 save_data[sample_id][params["camnames"][n_cam]]["COM"][n_joint] = np.squeeze(pts1)
-
-            # def vis():
-            #     import matplotlib
-            #     import matplotlib.pyplot as plt
-            #     matplotlib.use('TkAgg')
-
-            #     fig = plt.figure(figsize=(10, 10))
-            #     ax = fig.add_subplot(121)
-            #     ax.imshow(batch[0].permute(1, 2, 0).numpy().astype(np.uint8))
-
-            #     com = np.array(coms[0])
-            #     kpts2d = save_data[sample_id][params["camnames"][0]]["COM"] - com[np.newaxis, :]
-            #     kpts2d = kpts2d + 128
-            #     ax.scatter(kpts2d[:, 0], kpts2d[:, 1])
-
-            #     # ax = fig.add_subplot(122)
-            #     # ax.imshow(batch[1].permute(1, 2, 0).numpy().astype(np.uint8))
-
-            #     # com = np.array(coms[1])
-            #     # kpts2d = save_data[sample_id][params["camnames"][1]]["COM"] - com[np.newaxis, :]
-            #     # kpts2d += 128
-            #     # ax.scatter(kpts2d[:, 0], kpts2d[:, 1])
-
-            #     ax = fig.add_subplot(122)
-            #     for ind in ori_inds:
-            #         ax.scatter(ind[1], ind[0], color='red')
-                
-            #     ax.set_xlim([0, 64])
-            #     ax.set_ylim([0, 64])
-
-            #     plt.show(block=True)
-            #     input("Press Enter to continue...")
-        
-            # vis()
-            # breakpoint()
         
         # triangulation
         save_data[sample_id]["joints"] = np.zeros((params["n_channels_out"], 3))
@@ -487,7 +559,7 @@ def predict(params):
         direct_optimization = params.get("direct_optimization", False)
 
         # for each joint
-        for joint in range(pred.shape[1]):
+        for joint in range(n_joints):
             view_set = set(range(6))
             inlier_set = set()
             # for each camera pair

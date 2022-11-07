@@ -3,9 +3,10 @@ import csv, os
 from tqdm import tqdm
 
 from dannce.engine.trainer.dannce_trainer import DannceTrainer
+from dannce.engine.data.ops import expected_value_2d, spatial_softmax
 
 class COMTrainer(DannceTrainer):
-    def __init__(self, **kwargs):
+    def __init__(self, return_gaussian=True, **kwargs):
         super().__init__(dannce=False, **kwargs)
 
         stats_file = open(os.path.join(self.params["com_train_dir"], "training.csv"), 'w', newline='')
@@ -15,6 +16,8 @@ class COMTrainer(DannceTrainer):
         self.valid_stats_keys = ["val_"+k for k in self.stats_keys]
         stats_writer.writerow(["Epoch", *self.train_stats_keys, *self.valid_stats_keys])
         stats_file.close()
+
+        self.return_gaussian = return_gaussian
 
     def train(self):
         for epoch in range(self.start_epoch, self.epochs + 1):
@@ -61,7 +64,16 @@ class COMTrainer(DannceTrainer):
             self.optimizer.zero_grad()
             
             imgs, gt = batch[0].to(self.device), batch[1].to(self.device)
+            # workaround
+            if self.params["use_temporal"]:
+                gt[[0, 1, 3]] = float('nan')
+
             pred = self.model(imgs)
+
+            if not self.return_gaussian:
+                pred = spatial_softmax(pred)
+                pred = expected_value_2d(pred)
+                pred = pred.permute(0, 2, 1)
 
             total_loss, loss_dict = self.loss.compute_loss(gt, pred, pred)
             result = f"Epoch[{epoch}/{self.epochs}] " + "".join(f"train_{loss}: {val:.6f} " for loss, val in loss_dict.items())
@@ -93,7 +105,17 @@ class COMTrainer(DannceTrainer):
         with torch.no_grad():
             for batch in pbar:
                 imgs, gt = batch[0].to(self.device), batch[1].to(self.device)
+                
+                # workaround
+                if self.params["use_temporal"]:
+                    gt[[0, 1, 3]] = float('nan')
+                
                 pred = self.model(imgs)
+
+                if not self.return_gaussian:
+                    pred = spatial_softmax(pred)
+                    pred = expected_value_2d(pred)
+                    pred = pred.permute(0, 2, 1)
 
                 total_loss, loss_dict = self.loss.compute_loss(gt, pred, pred)
                 result = f"Epoch[{epoch}/{self.epochs}] " + "".join(f"train_{loss}: {val:.6f} " for loss, val in loss_dict.items())
