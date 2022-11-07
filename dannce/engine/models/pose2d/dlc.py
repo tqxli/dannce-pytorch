@@ -15,16 +15,19 @@ class DLC(nn.Module):
         backbone = torch.nn.Sequential(*(list(backbone.children())[:-2]))
         self.backbone = backbone
 
-        # "same" padding
+        # "same" padding imposed here
+        # refer to DLC/layers.py, the 'prediction layer' is indeed one single 2D transpose conv layer
+        # there is no intermediate supervision from conv3 as indicated by the paper & DeeperCut
+        # when using the default setting
         self.deconvolution_layer = nn.ConvTranspose2d(
             in_channels=2048, out_channels=num_joints,
             kernel_size=3, stride=2, padding=1, output_padding=1
         )
     
     def forward(self, x):
-        features = self.backbone(x)
+        features = self.backbone(x) # [B, 2048, w//16, h//16]
 
-        heatmaps = self.deconvolution_layer(features)
+        heatmaps = self.deconvolution_layer(features) #[B, 2048, w//8, h//8]
 
         return heatmaps
 
