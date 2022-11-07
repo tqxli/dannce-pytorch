@@ -1419,12 +1419,15 @@ class MultiviewImageGenerator(DataGenerator_3Dconv):
                 arglist.append([ID, self.camnames[experimentID][c], experimentID])
             results = self.threadpool.starmap(self._load_im, arglist)
 
-            try:
-                ims = np.stack([r[0] for r in results], axis=0).astype(np.uint8) #[6, H, W, 3]
-            except:
-                breakpoint()
+            # try:
+            #     ims = np.stack([r[0] for r in results], axis=0).astype(np.uint8) #[6, H, W, 3]
+            # except:
+            #     breakpoint()
             # ims = processing._preprocess_numpy_input(ims, data_format="channels_last", mode="torch")
-            ims = torch.tensor(ims).permute(0, 3, 1, 2) #[6, 3, H, W]
+            # ims = torch.tensor(ims).permute(0, 3, 1, 2) #[6, 3, H, W]
+
+            # change from an integral array to list due to variable sized data
+            ims = [torch.from_numpy(r[0].astype(np.uint8)).permute(2, 0, 1).cpu().float() for r in results]
             X.append(ims)
 
             # also need camera params for each view
@@ -1433,7 +1436,7 @@ class MultiviewImageGenerator(DataGenerator_3Dconv):
             # potentially need 2d labels as well
             y_2d.append(torch.stack([r[2] for r in results], dim=0))
 
-        X = torch.stack(X, dim=0)
+        # X = torch.stack(X, dim=0)
         try:
             y_2d = torch.stack(y_2d, dim=0) #[BS, 6, 2, n_joints]
         except:
@@ -1444,7 +1447,7 @@ class MultiviewImageGenerator(DataGenerator_3Dconv):
         # breakpoint()
         # self._save_image_bbox(list_IDs_temp, X, y_2d)
 
-        return (X.cpu(), X_grid.cpu(), cameras), (y_3d.cpu(), y_2d.cpu())
+        return (X, X_grid.cpu(), cameras), (y_3d.cpu(), y_2d.cpu())
 
 class DataGenerator_Dynamic(DataGenerator_3Dconv):
     def __init__(
