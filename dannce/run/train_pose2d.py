@@ -45,7 +45,7 @@ def configure_dataset(custom_params):
         image_params = {
             "resize": False,
             "crop": False,
-            "resize_to_nearest": True,
+            "resize_to_nearest": False,
             "image_size": 1152 # placeholder
         }
     else:
@@ -513,8 +513,14 @@ def predict(params):
             heatmap_shape = heatmap_shapes[n_cam]
 
             old_image_size = dataset_valid.old_image_shapes[ID][camname]
+            # old_image_size = (old_image_size[1], old_image_size[0])
             scales = [old_image_size[0] / heatmap_shape[0], old_image_size[1] / heatmap_shape[1]]
-            bbox = dataset_valid.image_bboxs[ID][camname]
+
+            try:
+                bbox = dataset_valid.image_bboxs[ID][camname]
+            except:
+                # no cropping was done, make the bbox cover the entire image
+                bbox = [0, 0, old_image_size[1], old_image_size[0]]
             center_real = [(bbox[0]+bbox[2])/2, (bbox[1]+bbox[3])/2]
             # ori_inds = []
             for n_joint in range(n_joints):

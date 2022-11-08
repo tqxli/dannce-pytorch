@@ -1259,7 +1259,7 @@ class MultiviewImageGenerator(DataGenerator_3Dconv):
         fname = f"{ID}.jpg"
 
         for i, ax in enumerate(axes):
-            ax.imshow(ims[i].cpu().permute(1, 2, 0).numpy() * 255)
+            ax.imshow(ims[i].cpu().permute(1, 2, 0).numpy() / 255.0)
         
             # # Plot keypoints
             if not np.isnan(y_2d).all():
@@ -1296,6 +1296,7 @@ class MultiviewImageGenerator(DataGenerator_3Dconv):
             camname,
             extension=self.extension,
         )
+        # im = np.transpose(im, (1, 0, 2)) #[h, w, c]
         cam = deepcopy(self.camera_objs[experimentID][camname])
         new_y = this_y.clone() #[2, 23]
         
@@ -1355,7 +1356,7 @@ class MultiviewImageGenerator(DataGenerator_3Dconv):
         
         if self.resize_to_nearest:
             h, w = int(np.ceil(old_image_shape[0] / 16) * 16), int(np.ceil(old_image_shape[1] / 16) * 16)
-            im = cv2.resize(im, (h, w))
+            im = cv2.resize(im, (w, h)) #!!!! cv2 is doing xy
             new_y[1, :] *= (h / old_image_shape[0]) # y
             new_y[0, :] *= (w / old_image_shape[1])  # x
         
@@ -1427,7 +1428,13 @@ class MultiviewImageGenerator(DataGenerator_3Dconv):
             # ims = torch.tensor(ims).permute(0, 3, 1, 2) #[6, 3, H, W]
 
             # change from an integral array to list due to variable sized data
-            ims = [torch.from_numpy(r[0].astype(np.uint8)).permute(2, 0, 1).cpu().float() for r in results]
+            ims = []
+            for r in results:
+                im = r[0]
+                im = processing._preprocess_numpy_input(im)
+                im = torch.from_numpy(im).permute(2, 0, 1).cpu().float()
+                ims.append(im)
+            # ims = [torch.from_numpy(r[0].astype(np.uint8)).permute(2, 0, 1).cpu().float() for r in results]
             X.append(ims)
 
             # also need camera params for each view
