@@ -69,6 +69,8 @@ class COMTrainer(DannceTrainer):
                 gt[[0, 1, 3]] = float('nan')
 
             pred = self.model(imgs)
+            if len(pred) >= 1:
+                pred = pred[0]
 
             if not self.return_gaussian:
                 pred = spatial_softmax(pred)
@@ -111,6 +113,8 @@ class COMTrainer(DannceTrainer):
                     gt[[0, 1, 3]] = float('nan')
                 
                 pred = self.model(imgs)
+                if len(pred) >= 1:
+                    pred = pred[0]
 
                 if not self.return_gaussian:
                     pred = spatial_softmax(pred)
