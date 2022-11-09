@@ -974,6 +974,7 @@ class ImageDataset(torch.utils.data.Dataset):
         sigma=2,
         image_size=[256, 256],
         heatmap_size=[64, 64],
+        heatmap_type="gaussian",
         ds_fac=8,
         train=True,
         augs=['hflip', 'vlip', 'randomrot'],
@@ -999,6 +1000,10 @@ class ImageDataset(torch.utils.data.Dataset):
 
         self.num_joints = num_joints
         self.return_Gaussian = return_Gaussian
+        if heatmap_type == "gaussian":
+            self.heatmap_generator = self._generate_Gaussian_target 
+        else:
+            self.heatmap_generator = self._generate_common_target
         self.sigma = sigma
 
         self.image_size = np.array(image_size)
@@ -1065,53 +1070,51 @@ class ImageDataset(torch.utils.data.Dataset):
         targets = torch.from_numpy(targets).float()
 
         return targets
+    
+    def _generate_common_target(self, labels, size):
+        dist_thresh = 2 # 17 // 8, which is the stride
+        dist_thresh_sq = dist_thresh ** 2
+        num_joints = labels.shape[-1]
+        scmap = np.zeros(np.concatenate([np.array([num_joints]), size]))
+        stride = 8
+        half_stride = stride // 2
 
-        # target_weight = joints.new_ones((self.num_joints, 1))
-        # target = joints.new_zeros(self.num_joints, self.heatmap_size[1], self.heatmap_size[0])
+        width = size[1]
+        height = size[0]
+        grid = np.mgrid[:height, :width].transpose((1, 2, 0))
 
-        # tmp_size = self.sigma * 3
+        for j_id in range(num_joints):
+            joint_pt = labels[:, j_id]
+            if np.isnan(joint_pt).all():
+                continue
 
-        # for joint_id in range(self.num_joints):
-        #     feat_stride = self.image_size / self.heatmap_size
-
-        #     mu_x = int(joints[0, joint_id] / feat_stride[0] + 0.5)
-        #     mu_y = int(joints[1, joint_id] / feat_stride[1] + 0.5)
-        #     # Check that any part of the gaussian is in-bounds
-        #     ul = [int(mu_x - tmp_size), int(mu_y - tmp_size)]
-        #     br = [int(mu_x + tmp_size + 1), int(mu_y + tmp_size + 1)]
-        #     if ul[0] >= self.heatmap_size[0] or ul[1] >= self.heatmap_size[1] \
-        #             or br[0] < 0 or br[1] < 0:
-        #         # If not, just return the image as is
-        #         target_weight[joint_id] = 0
-        #         continue
-
-        #     # # Generate gaussian
-        #     size = 2 * tmp_size + 1
-        #     x = torch.arange(0, size, 1)
-        #     y = x.unsqueeze(-1)
-        #     x0 = y0 = size // 2
-        #     # The gaussian is not normalized, we want the center value to equal 1
-        #     g = torch.exp(- ((x - x0) ** 2 + (y - y0) ** 2) / (2 * self.sigma ** 2))
-
-        #     # Usable gaussian range
-        #     g_x = max(0, -ul[0]), min(br[0], self.heatmap_size[0]) - ul[0]
-        #     g_y = max(0, -ul[1]), min(br[1], self.heatmap_size[1]) - ul[1]
-        #     # Image range
-        #     img_x = max(0, ul[0]), min(br[0], self.heatmap_size[0])
-        #     img_y = max(0, ul[1]), min(br[1], self.heatmap_size[1])
-
-        #     v = target_weight[joint_id]
-        #     if v > 0.5:
-        #         target[joint_id][img_y[0]:img_y[1], img_x[0]:img_x[1]] = \
-        #             g[g_y[0]:g_y[1], g_x[0]:g_x[1]]
+            j_x = np.asarray(joint_pt[0]).item()
+            j_x_sm = round((j_x - half_stride) / stride)
+            j_y = np.asarray(joint_pt[1]).item()
+            j_y_sm = round((j_y - half_stride) / stride)
+            min_x = round(max(j_x_sm - dist_thresh - 1, 0))
+            max_x = round(min(j_x_sm + dist_thresh + 1, width - 1))
+            min_y = round(max(j_y_sm - dist_thresh - 1, 0))
+            max_y = round(min(j_y_sm + dist_thresh + 1, height - 1))
+            x = grid.copy()[:, :, 1]
+            y = grid.copy()[:, :, 0]
+            dx = j_x_sm - x
+            dy = j_y_sm - y
+            dist = dx ** 2 + dy ** 2
+            mask1 = dist <= dist_thresh_sq
+            mask2 = (x >= min_x) & (x <= max_x)
+            mask3 = (y >= min_y) & (y <= max_y)
+            mask = mask1 & mask2 & mask3
+            scmap[j_id, mask] = 1
         
-        # return target, target_weight
+        targets = torch.from_numpy(scmap).float()
+        return targets
+
 
     def _transforms(self):
         normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                         std=[0.229, 0.224, 0.225])
         self.transforms = transforms.Compose([
-            # transforms.ToTensor(),
             normalize,
         ])
 
@@ -1162,14 +1165,14 @@ class ImageDataset(torch.utils.data.Dataset):
                 targets = labels
                 if self.return_Gaussian:
                     if not self.return_3d:
-                        targets = self._generate_Gaussian_target(
+                        targets = self.heatmap_generator(
                             targets.numpy(),
                             heatmap_size
                         )
                     else:
                         all_targets = []
                         for i in range(targets.shape[0]):
-                            temp = self._generate_Gaussian_target(
+                            temp = self.heatmap_generator(
                                 targets[i].numpy(),
                                 heatmap_size
                             )

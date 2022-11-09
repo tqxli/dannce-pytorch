@@ -1315,7 +1315,7 @@ class MultiviewImageGenerator(DataGenerator_3Dconv):
                 ymin, ymax = new_y[1][nonan].min().numpy(), new_y[1][nonan].max().numpy()
                 width = xmax - xmin
                 height = ymax - ymin
-                dim = np.maximum(width, height) + 30
+                dim = np.maximum(width, height) + 128 # add padding to the boundary
                 # dim = int(np.ceil(dim / 16) * 16) # use the closest number divisible by 16
                 cx = (xmin + xmax) // 2
                 cy = (ymin + ymax) // 2

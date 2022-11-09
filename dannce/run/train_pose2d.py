@@ -51,8 +51,8 @@ def configure_dataset(custom_params):
     else:
         image_params = {
             "resize": False if DLC_flag else True,
-            "crop_size": 512 if DLC_flag else custom_params.get("crop_size", 512),
-            "image_size": 512 if DLC_flag else custom_params.get("resize_size", 256),
+            "crop_size": custom_params.get("crop_size", 512),
+            "image_size": custom_params.get("resize_size", 256),
             "use_gt_bbox": use_gt_bbox,
             "resize_to_nearest": DLC_flag
         }
@@ -103,7 +103,7 @@ def build_model(params, logger=None, train=True):
     return model
 
 def train(params):
-    params, base_params, shared_args, shared_args_train, shared_args_valid = config.setup_train(params)
+    params, base_params = config.setup_train(params)[:2]
     custom_params = params["custom_model"]
 
     # make the train directory if does not exist
@@ -247,32 +247,30 @@ def train(params):
         X_train, y_train = load_data2d_into_mem(params, logger, partition, n_cams, train_generator, train=True, image_size=image_params["image_size"])
         X_valid, y_valid = load_data2d_into_mem(params, logger, partition, n_cams, valid_generator, train=False, image_size=image_params["image_size"])
 
+        args_common = {   
+            "return_Gaussian": return_Gaussian,         
+            "num_joints": params["n_channels_out"],
+            "image_size": [image_params["image_size"]]*2,
+            "heatmap_size": heatmap_size,
+            "heatmap_type": custom_params.get("heatmap_type", "gaussian"),            
+            "ds_fac": ds_fac,
+            "sigma": custom_params.get("sigma", 2),
+            "return_chunk_size": params.get("temporal_chunk_size", 1),
+        }
         dataset_train = dataset.ImageDataset(
             images=X_train,
             labels=y_train,
-            num_joints=params["n_channels_out"],
-            return_Gaussian=return_Gaussian,
             train=True,
-            image_size=[image_params["image_size"]]*2,
-            heatmap_size=heatmap_size,
-            ds_fac=ds_fac,
-            sigma=custom_params.get("sigma", 2),
             augs=custom_params.get("augs", ['hflip', 'vflip', 'randomrot']),
-            return_chunk_size=params.get("temporal_chunk_size", 1)
+            **args_common
         )
         dataset_valid = dataset.ImageDataset(
             images=X_valid,
             labels=y_valid,
-            num_joints=params["n_channels_out"],
-            return_Gaussian=return_Gaussian,
             train=False,
-            image_size=[image_params["image_size"]]*2,
-            heatmap_size=heatmap_size,
-            ds_fac=ds_fac,
-            sigma=custom_params.get("sigma", 2),
-            return_chunk_size=params.get("temporal_chunk_size", 1)
+            **args_common
         )
-
+    # sample = dataset_valid[0]
     if params["use_temporal"]:
         valid_batch_size = params["batch_size"] // params["temporal_chunk_size"]
     else:
