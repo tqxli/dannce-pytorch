@@ -416,6 +416,7 @@ def predict(params):
         valid_inds = np.arange(len(samples))
         partition = {"valid_sampleIDs": samples[valid_inds]}
 
+        # only load the true 2D coms, instead of full ground truth
         for k in tqdm(samples[params["start_sample"]:endIdx]):
             com3d = com3d_dict[k]
             com3d = torch.from_numpy(com3d[np.newaxis, :]).float()
@@ -430,7 +431,8 @@ def predict(params):
                 com2d = ops.project_to2d(com3d, M, "cpu")[:, :2]
                 com2d = ops.distortPoints(com2d, K, np.squeeze(cam["RDistort"]), np.squeeze(cam["TDistort"]), "cpu")
 
-                datadict[k]["data"][camname] = com2d.numpy()
+                if not custom_params.get("use_gt_bbox", False):
+                    datadict[k]["data"][camname] = com2d.numpy()
 
         # TODO: Remove tifdirs arguments, which are deprecated
         tifdirs = []
@@ -484,6 +486,8 @@ def predict(params):
 
         for view in batch:
             out = model(view.unsqueeze(0).to(device))
+            if len(out) > 1:
+                out = out[0]
             out = out.detach().cpu()
             pred.append(out)
             heatmap_shapes.append(out.shape[-2:])
