@@ -69,7 +69,7 @@ class COMTrainer(DannceTrainer):
                 gt[[0, 1, 3]] = float('nan')
 
             pred = self.model(imgs)
-            if len(pred) >= 1:
+            if isinstance(pred, tuple):
                 pred = pred[0]
 
             if not self.return_gaussian:
@@ -113,7 +113,7 @@ class COMTrainer(DannceTrainer):
                     gt[[0, 1, 3]] = float('nan')
                 
                 pred = self.model(imgs)
-                if len(pred) >= 1:
+                if isinstance(pred, tuple):
                     pred = pred[0]
 
                 if not self.return_gaussian:
