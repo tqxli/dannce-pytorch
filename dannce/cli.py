@@ -1,12 +1,6 @@
 """Entrypoints for dannce training and prediction."""
-import dannce.run.train_voxelpose as voxelpose
-import dannce.run.train_motiondannce as motiondannce
-# import dannce.run.train_backbone2d as backbone2d
+import dannce.run.train_pose3d as pose3d
 import dannce.run.train_pose2d as pose2d
-import dannce.run.train_dannce_dbbox as dbbox
-import dannce.run.train_posegcn as posegcn
-import dannce.run.train_transformer as trans
-import dannce.run.train_crossattn as socialattn
 from dannce.interface import (
     com_predict,
     com_train,
@@ -154,14 +148,8 @@ def dannce_train_cli():
 
 def custom_model_train_cli():
     _TYPES = {
-        'motiondannce': motiondannce.train,
-        'voxelpose': voxelpose.train,
-        'lt': voxelpose.train,
-        # 'backbone2d': backbone2d.train,
-        'dbbox': dbbox.train,
-        'posegcn': posegcn.train,
-        'transformer': trans.train,
-        'socialattn': socialattn.train,
+        'voxelpose': pose3d.train,
+        'lt': pose3d.train,
         'pose2d': pose2d.train,
     }
 
@@ -176,13 +164,9 @@ def custom_model_train_cli():
 
 def custom_model_predict_cli():
     _TYPES = {
-        'motiondannce': motiondannce.inference,
-        'posegcn': posegcn.predict,
-        'posegcn-multi': posegcn.predict_multi_animal,
-        'socialattn': socialattn.predict,
         'pose2d': pose2d.predict,
-        'voxelpose': voxelpose.predict,
-        'lt': voxelpose.predict,
+        'voxelpose': pose3d.predict,
+        'lt': pose3d.predict,
     }
 
     parser = argparse.ArgumentParser(
