@@ -1,9 +1,11 @@
 import torch
 import csv, os
 from tqdm import tqdm
+import numpy as np
 
 from dannce.engine.trainer.dannce_trainer import DannceTrainer
 from dannce.engine.data.ops import expected_value_2d, spatial_softmax
+from dannce.engine.data.processing import get_peak_inds
 
 class COMTrainer(DannceTrainer):
     def __init__(self, return_gaussian=True, **kwargs):
@@ -18,6 +20,19 @@ class COMTrainer(DannceTrainer):
         stats_file.close()
 
         self.return_gaussian = return_gaussian
+    
+    def _get_coords(self, pred):
+        pred_coords = []
+        for batch in pred:
+            coords = []
+            for joint in batch:
+                coord = get_peak_inds(joint)[::-1]
+                coords.append(coord)
+            coords = np.stack(coords, axis=0)
+            pred_coords.append(coords)
+        pred_coords = np.stack(pred_coords, axis=0) #[bs, nj, 2]
+
+        return pred_coords
 
     def train(self):
         for epoch in range(self.start_epoch, self.epochs + 1):
@@ -71,7 +86,7 @@ class COMTrainer(DannceTrainer):
             pred = self.model(imgs)
             if isinstance(pred, tuple):
                 pred = pred[0]
-
+            
             if not self.return_gaussian:
                 pred = spatial_softmax(pred)
                 pred = expected_value_2d(pred)
@@ -87,7 +102,13 @@ class COMTrainer(DannceTrainer):
             epoch_loss_dict = self._update_step(epoch_loss_dict, loss_dict)
 
             if len(self.metrics.names) != 0: 
-                metric_dict = self.metrics.evaluate(pred.detach().cpu().numpy(), gt.clone().cpu().numpy())
+                pred_coords = self._get_coords(pred.detach().cpu().numpy())
+                gt_coords = self._get_coords(gt.detach().cpu().numpy()) #[bs, nj, 2]
+
+                pred_coords = np.transpose(pred_coords, (0, 2, 1))
+                gt_coords = np.transpose(gt_coords, (0, 2, 1))
+
+                metric_dict = self.metrics.evaluate(pred_coords, gt_coords)
                 epoch_metric_dict = self._update_step(epoch_metric_dict, metric_dict)
 
         if self.lr_scheduler is not None:
@@ -128,7 +149,13 @@ class COMTrainer(DannceTrainer):
                 epoch_loss_dict = self._update_step(epoch_loss_dict, loss_dict)
 
                 if len(self.metrics.names) != 0: 
-                    metric_dict = self.metrics.evaluate(pred.detach().cpu().numpy(), gt.clone().cpu().numpy())
+                    pred_coords = self._get_coords(pred.detach().cpu().numpy())
+                    gt_coords = self._get_coords(gt.detach().cpu().numpy()) #[bs, nj, 2]
+
+                    pred_coords = np.transpose(pred_coords, (0, 2, 1))
+                    gt_coords = np.transpose(gt_coords, (0, 2, 1))
+
+                    metric_dict = self.metrics.evaluate(pred_coords, gt_coords)
                     epoch_metric_dict = self._update_step(epoch_metric_dict, metric_dict)
         
         if self.lr_scheduler is not None:
