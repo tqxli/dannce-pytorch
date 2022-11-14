@@ -1,0 +1,70 @@
+### basic ###
+io_config: io.yaml
+camnames: ['Camera1', 'Camera2', 'Camera3', 'Camera4', 'Camera5', 'Camera6']
+
+### data ###
+crop_height: [0, 1200]
+crop_width: [0, 1920]
+
+vmin: -120
+vmax: 120
+nvox: 80
+interp: nearest
+
+n_channels_in: 3
+n_channels_out: 22
+new_n_channels_out: 22
+n_views: 6
+
+### train ###
+batch_size: 1
+epochs: 1000
+lr: 0.0001
+train_mode: new
+
+save_period: 1
+data_split_seed: 1024
+
+#lr_scheduler:
+#  type: MultiStepLR
+#  args: 
+#      milestones: []
+
+### posenet architecture ###
+custom_model:
+    name: pose2d
+    type: dlc
+
+    use_gt_bbox: True
+    use_original_image: False
+    crop_size: 800
+    resize: False
+
+    return_gaussian: True
+    heatmap_type: "common"
+    
+    augs: ['hflip', 'vflip']
+
+### loss ###
+metric: ['euclidean_distance']
+loss:
+    BCEWithLogitsLoss:
+        loss_weight: 1.0
+
+### augmentations ###      
+medfilt_window: 30
+rand_view_replace: True
+n_rand_views: 6
+mirror_augmentation: False
+left_keypoints: [1, 7, 8, 9, 10, 15, 16, 17, 18]
+right_keypoints: [2, 11, 12, 13, 14, 19, 20, 21, 22]
+
+augment_hue: False
+augment_brightness: False
+augment_bright_val: 0.01
+
+### predictions ###
+max_num_samples: max
+
+expval: True
+net_type: "compressed_dannce"
