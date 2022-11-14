@@ -187,7 +187,7 @@ class TemporalLoss(BaseLoss):
         if self.method == 'l1':
             loss_temp = torch.abs(diff).mean()
         else:
-            loss_temp = (diff**2).sum(1).sqrt().mean()
+            loss_temp = (diff**2).sum(2).sqrt().mean()
         return self.loss_weight * loss_temp
 
 class BoneVectorLoss(BaseLoss):
