@@ -3,25 +3,39 @@ Adapted from
 https://github.com/facebookresearch/VideoPose3D/blob/main/common/loss.py
 """
 import numpy as np
-import torch
 
 def nanmean_infmean(loss):
+    """
+    Mask nan valued loss values
+    """
     valid = (~np.isnan(loss)) & (~np.isposinf(loss)) & (~np.isneginf(loss))
     num_valid = valid.sum()
     if num_valid == 0:
         return 0
     return loss[valid].sum() / num_valid
 
-def euclidean_distance_3D(predicted, target):
+
+def euclidean_distance(predicted, target):
     """
-    Mean per-joint position error (i.e. mean Euclidean distance),
-    often referred to as "Protocol #1" in many papers.
+    Compute the L2 distance between the predictions and targets.
+
+    Can work with both 3D and 2D.
+    In 3D, this metric is often referred as
+    mean per-joint position error (MPJPE),
+    named "Protocol #1" in many papers.
+
+    In 2D, this is the root-mean-squared errors (RMSE)
+    with respect to pixel coordinates.
+
+    Args:
+        predicted, target (numpy.ndarray): [coord dim (2 or 3), ...]
     """
     assert predicted.shape == target.shape
     assert predicted.shape[0] in [2, 3]
     
     mpjpe = np.linalg.norm((target - predicted), ord=2, axis=0)
     return nanmean_infmean(mpjpe)
+
 
 def p_mpjpe(predicted, target, pmax=None, thresh=None, error=True, scale=False):
     """
@@ -74,11 +88,15 @@ def p_mpjpe(predicted, target, pmax=None, thresh=None, error=True, scale=False):
         predicted_aligned[:,pmax<=thresh,:] = np.nan
 
     if error:
-        return euclidean_distance_3D(predicted_aligned, target)
+        return euclidean_distance(
+            np.transpose(predicted_aligned, (2, 0, 1)),
+            np.transpose(target, (2, 0, 1)),
+        )
     else:
         # return the rotated coords only
         return predicted_aligned
-    
+
+   
 def n_mpjpe(predicted, target):
     """
     Normalized MPJPE (scale only), adapted from:
@@ -89,6 +107,9 @@ def n_mpjpe(predicted, target):
     norm_predicted = np.mean(np.sum(predicted**2, axis=2, keepdims=True), axis=1, keepdims=True)
     norm_target = np.mean(np.sum(target*predicted, axis=2, keepdims=True), axis=1, keepdims=True)
     scale = norm_target / norm_predicted
-    return euclidean_distance_3D(scale * predicted, target)
+    return euclidean_distance(
+        np.transpose(scale * predicted, (2, 0, 1)),
+        np.transpose(target, (2, 0, 1))
+    )
 
 
