@@ -970,7 +970,7 @@ class ImageDataset(torch.utils.data.Dataset):
         num_joints, 
         imdir=None, labeldir=None, images=None, labels=None, 
         grids=None, labels_3d=None, cameras=None,
-        return_Gaussian=True, 
+        return_heatmaps=True, 
         sigma=2,
         image_size=[256, 256],
         heatmap_size=[64, 64],
@@ -983,9 +983,20 @@ class ImageDataset(torch.utils.data.Dataset):
         super(ImageDataset, self).__init__()
         self.images = images
         self.labels = labels
+
+        self.grids = grids
+        self.labels_3d = labels_3d
+        self.return_3d = (grids is not None) and (labels_3d is not None)
+
+        self.cameras = cameras
+        self.return_cameras = (cameras is not None)
+
+
         indices = np.arange(labels.shape[0])
-        indices = indices.reshape(-1, return_chunk_size, 6)
-        indices = np.transpose(indices, (0, 2, 1)).reshape(-1, return_chunk_size)
+        if not self.return_3d:
+            indices = indices.reshape(-1, return_chunk_size, 6)
+            indices = np.transpose(indices, (0, 2, 1))
+        indices = indices.reshape(-1, return_chunk_size)
         self.indices = indices
 
         self.read_frommem = (self.images is not None)
@@ -999,7 +1010,7 @@ class ImageDataset(torch.utils.data.Dataset):
             assert len(self.imlist) == len(self.annot)
 
         self.num_joints = num_joints
-        self.return_Gaussian = return_Gaussian
+        self.return_heatmaps = return_heatmaps
         if heatmap_type == "gaussian":
             self.heatmap_generator = self._generate_Gaussian_target 
         else:
@@ -1009,13 +1020,6 @@ class ImageDataset(torch.utils.data.Dataset):
         self.image_size = np.array(image_size)
         self.heatmap_size = np.array(heatmap_size)
         self.ds_fac = ds_fac #image_size[0] // heatmap_size[0]
-
-        self.grids = grids
-        self.labels_3d = labels_3d
-        self.return_3d = (grids is not None) and (labels_3d is not None)
-
-        self.cameras = cameras
-        self.return_cameras = (cameras is not None)
 
         self.train = train
         self.augs = augs
@@ -1163,7 +1167,7 @@ class ImageDataset(torch.utils.data.Dataset):
                 heatmap_size = (h//self.ds_fac, w//self.ds_fac)
 
                 targets = labels
-                if self.return_Gaussian:
+                if self.return_heatmaps:
                     if not self.return_3d:
                         targets = self.heatmap_generator(
                             targets.numpy(),

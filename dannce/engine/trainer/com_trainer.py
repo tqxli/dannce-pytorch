@@ -8,7 +8,7 @@ from dannce.engine.data.ops import expected_value_2d, spatial_softmax
 from dannce.engine.data.processing import get_peak_inds
 
 class COMTrainer(DannceTrainer):
-    def __init__(self, return_gaussian=True, **kwargs):
+    def __init__(self, return_heatmaps=True, **kwargs):
         super().__init__(dannce=False, **kwargs)
 
         stats_file = open(os.path.join(self.params["com_train_dir"], "training.csv"), 'w', newline='')
@@ -19,7 +19,7 @@ class COMTrainer(DannceTrainer):
         stats_writer.writerow(["Epoch", *self.train_stats_keys, *self.valid_stats_keys])
         stats_file.close()
 
-        self.return_gaussian = return_gaussian
+        self.return_heatmaps = return_heatmaps
     
     def _get_coords(self, pred):
         pred_coords = []
@@ -87,7 +87,7 @@ class COMTrainer(DannceTrainer):
             if isinstance(pred, tuple):
                 pred = pred[0]
             
-            if not self.return_gaussian:
+            if not self.return_heatmaps:
                 pred = spatial_softmax(pred)
                 pred = expected_value_2d(pred)
                 pred = pred.permute(0, 2, 1)
@@ -137,7 +137,7 @@ class COMTrainer(DannceTrainer):
                 if isinstance(pred, tuple):
                     pred = pred[0]
 
-                if not self.return_gaussian:
+                if not self.return_heatmaps:
                     pred = spatial_softmax(pred)
                     pred = expected_value_2d(pred)
                     pred = pred.permute(0, 2, 1)

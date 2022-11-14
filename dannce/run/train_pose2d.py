@@ -1,70 +1,101 @@
-from tkinter import N
-import dannce.config as config
-from dannce.engine.data import ops
-from dannce.engine.models.pose2d.sleap import SLEAPUNet
-from dannce.engine.models.pose2d import pose_net
-from dannce.engine.models.pose2d.dlc import DLC
-from dannce.run_utils import *
-from dannce.engine.logging.logger import setup_logging, get_logger
-from dannce.engine.trainer.com_trainer import COMTrainer
-from dannce.engine.data.dataset import RAT7MImageDataset
-from dannce.engine.data.ops import expected_value_2d, spatial_softmax
-
 import scipy.io as sio
 from tqdm import tqdm
 
-def load_data2d_into_mem(params, logger, partition, n_cams, generator, image_size=512, train=True):
+import dannce.config as config
+from dannce.engine.logging.logger import setup_logging, get_logger
+from dannce.run_utils import *
+from dannce.engine.data import ops
+from dannce.engine.data.ops import expected_value_2d, spatial_softmax
+
+from dannce.engine.models.pose2d.sleap import SLEAPUNet
+from dannce.engine.models.pose2d import pose_net
+from dannce.engine.models.pose2d.dlc import DLC
+
+from dannce.engine.trainer.com_trainer import COMTrainer
+from dannce.engine.data.dataset import RAT7MImageDataset
+
+
+def load_data2d_into_mem(params, logger, partition, n_cams, generator, train=True):
+    """
+    Load training & validation data into memory.
+    """
     n_samples = len(partition["train_sampleIDs"]) if train else len(partition["valid_sampleIDs"]) 
     message = "Loading training data into memory" if train else "Loading validation data into memory"
+    logger.info(message)
 
-    # initialize
-    # (n_samples, n_cams, params["chan_num"], image_size, image_size)
-    X = []
+    # initialization
+    X = [] # as a list to accomodate DLC variable sized inputs
     y = torch.empty((n_samples, n_cams, 2, params["n_channels_out"]), dtype=torch.float32)
     
     # load data from generator
     for i in tqdm(range(n_samples)):
-        # print(i, end='\r')
         rr = generator.__getitem__(i)
         X += rr[0][0][0]
         y[i] = rr[1][1]
     
-    # X = X.reshape(-1, *X.shape[2:]) 
     y = y.reshape(-1, *y.shape[2:]) #[n_samples*n_cams, 2, n_joints]
     return X, y
 
 
 def configure_dataset(custom_params):
-    model_type = custom_params.get("type", "SLEAP")
-    DLC_flag = (model_type == "dlc")
-    use_gt_bbox = custom_params.get("use_gt_bbox", True)
-    return_Gaussian=custom_params.get("return_gaussian", True)
-    use_original_image = custom_params.get("use_original_image", False)
-
-    if use_original_image:
-        image_params = {
-            "resize": False,
-            "crop": False,
-            "resize_to_nearest": False,
-            "image_size": 1152 # placeholder
-        }
-    else:
-        image_params = {
-            "resize": False if DLC_flag else True,
-            "crop_size": custom_params.get("crop_size", 512),
-            "image_size": custom_params.get("resize_size", 256),
-            "use_gt_bbox": use_gt_bbox,
-            "resize_to_nearest": DLC_flag
-        }
-
-    if DLC_flag:
-        heatmap_size = [image_params["image_size"]//8, image_params["image_size"]//8]
-        ds_fac = 8
-    else:
-        heatmap_size = [image_params["image_size"]//4, image_params["image_size"]//4]
-        ds_fac = 4
+    """
+    Configure dataset preprocessing parameters.
+    Args:
+        crop (bool): whether to crop the original images using bounding boxes.
+        use_gt_bbox (bool): only effective if crop == True. 
+            If True, use the ground truth 2D bbox for cropping.
+            Otherwise, use an approximate square bbox around the subject's COM,
+            with dimension `crop_size`.
+        crop_size (int): Default is 512.
     
-    return image_params, heatmap_size, ds_fac, return_Gaussian
+        resize (bool): whether to resize the images.
+        resize_size (int): the image dimension after resizing if resize == True.
+            Default is 256.
+        resize_to_nearest (int): further resize the images' dimensions to be
+            disivible by 16. Default is True.
+
+        use_original_image (bool): no cropping & resizing will be done.
+            Use originally sized image inputs for training.
+        
+        return_heatmaps (bool): 
+            If True, the model is optimized directly against pre-generated heatmap
+            targets using MSE/BCE/... loss.
+            Otherwise, soft argmax is performed on the outputted heatmaps
+            to enable integral regression. No target heatmaps will be generated.
+        
+        ds_fac (int): downsample ratio between input and outputted heatmaps.
+            Architecture dependent.
+    """
+
+    model_type = custom_params.get("type", "SLEAP")
+    assert model_type in ['dlc', 'posenet', 'sleap'], "unrecognized 2D architecture"
+
+    return_heatmaps = custom_params.get("return_heatmaps", True)
+
+    use_original_image = custom_params.get("use_original_image", False)
+    image_params = {
+        "crop": custom_params.get("crop", True),
+        "crop_size": custom_params.get("crop_size", 512),
+        "use_gt_bbox": custom_params.get("use_gt_bbox", True),
+        "resize": custom_params.get("resize", True),
+        "image_size": custom_params.get("resize_size", 256),
+        "resize_to_nearest": custom_params.get("resize_to_nearest", False),
+    }
+
+    # specify each method's configurations
+    if use_original_image:
+        image_params["resize"] = False
+        image_params["crop"] = False
+    elif model_type == "dlc":
+        image_params["resize"] = False
+        image_params["resize_to_nearest"] = True
+
+    # determine heatmap dimension
+    ds_fac = 8 if model_type == "dlc" else 4
+    heatmap_size = [image_params["image_size"] // ds_fac] * 2
+    
+    return image_params, heatmap_size, ds_fac, return_heatmaps
+
 
 def batched_collate_fn(batch):
     X = torch.cat([item[0] for item in batch], dim=0)
@@ -77,6 +108,9 @@ def collate_fn(batch):
     return X, y
 
 def build_model(params, logger=None, train=True):
+    """
+    Build 2D pose estimation model
+    """
     model_type = params["custom_model"].get("type", "SLEAP")
     if model_type == "SLEAP":
         model = SLEAPUNet(params["n_channels_in"], params["n_channels_out"])
@@ -103,6 +137,7 @@ def build_model(params, logger=None, train=True):
     return model
 
 def train(params):
+    # set up basic configurations for training
     params, base_params = config.setup_train(params)[:2]
     custom_params = params["custom_model"]
 
@@ -113,34 +148,40 @@ def train(params):
     setup_logging(params["dannce_train_dir"])
     logger = get_logger("training.log", verbosity=2) 
     
+    # set up gpu devices (currently, only single gpu training is supported)
     assert torch.cuda.is_available(), "No available GPU device."
     params["gpu_id"] = [0]
     device = torch.device("cuda")
     logger.info("***Use {} GPU for training.***".format(params["gpu_id"]))
 
-    # fix random seed if specified
+    # fix random seed if specified (default: None)
     if params["random_seed"] is not None:
         set_random_seed(params["random_seed"])
         logger.info("***Fix random seed as {}***".format(params["random_seed"]))
 
+    # make model
     model = build_model(params, logger)
 
+    # make optimizer
     model_params = [p for p in model.parameters() if p.requires_grad]
     if "optimizer" in params.keys():
         optimizer_class = getattr(torch.optim, params["optimizer"])
         optimizer = optimizer_class(model_params, lr=params["lr"])
     else:
         optimizer = torch.optim.Adam(model_params, eps=1e-7)
+    
+    # make lr scheduler, if specified
     lr_scheduler = None
     if params["lr_scheduler"] is not None:
         lr_scheduler_class = getattr(torch.optim.lr_scheduler, params["lr_scheduler"]["type"])
         lr_scheduler = lr_scheduler_class(optimizer=optimizer, **params["lr_scheduler"]["args"], verbose=True)
-        logger.info("Using learning rate scheduler.")
+        logger.info("Using {} with initial lr {}".format(params["lr_scheduler"]["type"], params["lr"]))
 
     model = model.to(device)
     logger.info(model)
     logger.info("COMPLETE\n")
 
+    # prepare data for training
     if params["dataset"] == "rat7m":
         dataset_train = RAT7MImageDataset(train=True, downsample=1)
         dataset_valid = RAT7MImageDataset(train=False, downsample=800)
@@ -167,7 +208,6 @@ def train(params):
         # Setup additional variables for later use
         n_cams = len(camnames[0])
         dannce_train_dir = params["dannce_train_dir"]
-        outmode = "coordinates" if params["expval"] else "3dprob"
         tifdirs = []  # Training from single images not yet supported in this demo
 
         vid_exps = np.arange(num_experiments)
@@ -179,6 +219,7 @@ def train(params):
             samples, params, dannce_train_dir, num_experiments, 
             temporal_chunks=temporal_chunks)
 
+        # enable frame extraction from multi-view video recordings
         genfunc = generator.MultiviewImageGenerator
 
         base_params = {
@@ -193,11 +234,11 @@ def train(params):
         }
 
         valid_params = {**base_params, **spec_params}
-        image_params, heatmap_size, ds_fac, return_Gaussian = configure_dataset(custom_params)
+        image_params, heatmap_size, ds_fac, return_heatmaps = configure_dataset(custom_params)
 
-        # workaround:
-        # must use the same bounding box for neighboring cropped 2D images
-        # otherwise temporal loss does not make sense
+        # temporary workaround:
+        # if crop inputs, must use the same bounding box for neighboring cropped 2D images
+        # otherwise 2D temporal loss does not make sense
         if params["use_temporal"]:
             chunk_keys = ["train_chunks", "valid_chunks"]
             sample_keys = ["train_sampleIDs", "valid_sampleIDs"]
@@ -222,6 +263,7 @@ def train(params):
                             com3d_dict[samp_new] = com3d_dict[labeled_samp]
                         else:
                             datadict[samp] = datadict[labeled_samp]
+
         train_gen_params = {
             "list_IDs": partition["train_sampleIDs"],
             "labels": datadict,
@@ -244,11 +286,11 @@ def train(params):
         valid_generator = genfunc(**valid_gen_params, **valid_params, **image_params)
         
         # load everything into memory
-        X_train, y_train = load_data2d_into_mem(params, logger, partition, n_cams, train_generator, train=True, image_size=image_params["image_size"])
-        X_valid, y_valid = load_data2d_into_mem(params, logger, partition, n_cams, valid_generator, train=False, image_size=image_params["image_size"])
+        X_train, y_train = load_data2d_into_mem(params, logger, partition, n_cams, train_generator, train=True)
+        X_valid, y_valid = load_data2d_into_mem(params, logger, partition, n_cams, valid_generator, train=False)
 
         args_common = {   
-            "return_Gaussian": return_Gaussian,         
+            "return_heatmaps": return_heatmaps,         
             "num_joints": params["n_channels_out"],
             "image_size": [image_params["image_size"]]*2,
             "heatmap_size": heatmap_size,
@@ -270,7 +312,8 @@ def train(params):
             train=False,
             **args_common
         )
-    # sample = dataset_valid[0]
+
+    # set up data loaders
     if params["use_temporal"]:
         valid_batch_size = params["batch_size"] // params["temporal_chunk_size"]
     else:
@@ -287,7 +330,8 @@ def train(params):
     )
 
     params["com_train_dir"] = params["dannce_train_dir"]
-    # set up trainer
+
+    # create trainer and start
     trainer_class = COMTrainer
     trainer = trainer_class(
         params=params,
@@ -298,7 +342,7 @@ def train(params):
         device=device,
         logger=logger,
         lr_scheduler=lr_scheduler,
-        return_gaussian=return_Gaussian
+        return_heatmaps=return_heatmaps
     )
 
     trainer.train()
@@ -314,11 +358,11 @@ def predict(params):
     n_cams = len(params["camnames"])
     custom_params = params["custom_model"]
 
-    # used for getting access to ground truth labels
+    # used for getting access to ground truth 2D labels
     params["return_full2d"] = True
 
     if params["dataset"] == "rat7m":    
-        # inference over the withheld animal (subject 5)
+        # do inference over the withheld animal (subject 5)
         dataset_valid = RAT7MImageDataset(train=False, downsample=1) #s5-d1: 10445, s5-d2: 14091
         cameras = dataset_valid.cameras
         expname = 5
@@ -434,7 +478,7 @@ def predict(params):
                     com2d = ops.distortPoints(com2d, K, np.squeeze(cam["RDistort"]), np.squeeze(cam["TDistort"]), "cpu")
                     datadict[k]["data"][camname] = com2d.numpy()
 
-        # TODO: Remove tifdirs arguments, which are deprecated
+        # tifdirs arguments (deprecated)
         tifdirs = []
 
         # Generators
@@ -449,7 +493,7 @@ def predict(params):
             "tifdirs": tifdirs
         }
 
-        image_params, heatmap_size, ds_fac, return_Gaussian = configure_dataset(custom_params)
+        image_params, heatmap_size, ds_fac, return_heatmaps = configure_dataset(custom_params)
         dataset_valid = genfunc(
             **valid_gen_params,
             **valid_params,
@@ -494,7 +538,7 @@ def predict(params):
         # pred = model(batch.to(device))
         # pred = pred.detach().cpu()
 
-        if return_Gaussian:
+        if return_heatmaps:
             pred = [out.numpy()[0] for out in pred]
             n_joints = pred[0].shape[0]
         else:
@@ -527,7 +571,7 @@ def predict(params):
             # ori_inds = []
             for n_joint in range(n_joints):
                 # take the absolute maximum
-                if return_Gaussian:
+                if return_heatmaps:
                     ind = (
                         np.array(processing.get_peak_inds(np.squeeze(pred[n_cam][n_joint])))
                     )
