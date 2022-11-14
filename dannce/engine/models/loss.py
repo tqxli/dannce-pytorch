@@ -173,7 +173,7 @@ class ConsistencyLoss(BaseLoss):
         return self.loss_weight * loss_temp
 
 class TemporalLoss(BaseLoss):
-    def __init__(self, temporal_chunk_size, method="l1", downsample=1, **kwargs):
+    def __init__(self, temporal_chunk_size, method="l1", **kwargs):
         super().__init__(**kwargs)
 
         self.temporal_chunk_size = temporal_chunk_size
