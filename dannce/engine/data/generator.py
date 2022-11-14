@@ -1182,6 +1182,9 @@ class MultiviewImageGenerator(DataGenerator_3Dconv):
         self.use_gt_bbox = use_gt_bbox
         self.resize_to_nearest = resize_to_nearest
 
+        self.means = np.array([123.68, 116.779, 103.939])
+        self.means = self.means[np.newaxis, np.newaxis, :]
+
     def _get_camera_objs(self):
         self.camera_objs = {}
         for experimentID in self.camera_params.keys():
@@ -1432,6 +1435,7 @@ class MultiviewImageGenerator(DataGenerator_3Dconv):
             for r in results:
                 im = r[0]
                 im = processing._preprocess_numpy_input(im)
+                # im = processing.center_by_mean(im, self.means)
                 im = torch.from_numpy(im).permute(2, 0, 1).cpu().float()
                 ims.append(im)
             # ims = [torch.from_numpy(r[0].astype(np.uint8)).permute(2, 0, 1).cpu().float() for r in results]

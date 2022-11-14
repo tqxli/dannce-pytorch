@@ -1953,3 +1953,6 @@ def _preprocess_numpy_input(x, data_format="channels_last", mode="torch"):
             x[..., 1] /= std[1]
             x[..., 2] /= std[2]
     return x 
+
+def center_by_mean(x, means):
+    return x - means
