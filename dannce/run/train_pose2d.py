@@ -583,8 +583,8 @@ def predict(params):
                 
                 # scale back to the original image scale
                 # this is in ij
-                ind[0] = (ind[0] - heatmap_shape[0]//2) * scales[0]
-                ind[1] = (ind[1] - heatmap_shape[1]//2) * scales[1]
+                ind[0] = (ind[0] - heatmap_shape[0]/2) * scales[0]
+                ind[1] = (ind[1] - heatmap_shape[1]/2) * scales[1]
                 ind[0] = ind[0] + center_real[1]
                 ind[1] = ind[1] + center_real[0]
                 # convert to xy
