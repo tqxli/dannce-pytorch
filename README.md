@@ -4,7 +4,9 @@
 - 2022/08: Major codebase refactoring, full features converted to PyTorch. Notice this is not a stable release; please refer to the original Tensorflow version if necessary.
 - 2022/06: Check out our latest paper presented at CVPR 2022 CV4Animals Workshop
  
-   [**Improved Markerless 3D Animal Pose Estimation Using Temporal Semi-Supervision**](https://drive.google.com/file/d/1lZcrXlazErthSkPJtR6g1DLhFo1HmwXU/view?usp=sharing) Tianqing Li, Kyle S. Severson, Fan Wang and Timothy W. Dunn, 2022.
+   [**Improved Markerless 3D Animal Pose Estimation Using Temporal Semi-Supervision**](https://drive.google.com/file/d/1lZcrXlazErthSkPJtR6g1DLhFo1HmwXU/view?usp=sharing) Tianqing Li, Kyle S. Severson, Fan Wang and Timothy W. Dunn, 2022. 
+
+   Please check out the branch `official_temporal_release` for more details.
 - 2021/04: Our paper [**Geometric deep learning enables 3D kinematic profiling across species and environments**](https://www.nature.com/articles/s41592-021-01106-6) is in press in Nature Methods.
 
 ## Overview
