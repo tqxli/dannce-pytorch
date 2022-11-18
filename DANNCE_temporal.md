@@ -13,6 +13,7 @@ We have also included custom PyTorch implementations for state-of-the-art animal
 * Learnable Triangulation of Human Pose (Iskakov et al. 2019)
 
 ## Dataset downloads
+The public link to access the dataset will be updated soon. For now, please contact tianqing.li@duke.edu if you are interested in using the dataset.
 
 
 ## Basic Usage
