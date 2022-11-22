@@ -13,7 +13,11 @@ We have also included custom PyTorch implementations for state-of-the-art animal
 * Learnable Triangulation of Human Pose (Iskakov et al. 2019)
 
 ## Dataset downloads
-The public link to access the dataset will be updated soon. For now, please contact tianqing.li@duke.edu if you are interested in using the dataset.
+The mouse dataset can be downloaded from [this linked DOI](https://research.repository.duke.edu/concern/datasets/jh343t22z?locale=en). 
+
+For usage, please cite:
+
+Li, T., Severson, K. S., Wang, F., Dunn, T. W. (2022). Data from: Improved 3D markerless mouse pose estimation using temporal semi-supervision. Duke Research Data Repository. https://doi.org/10.7924/r4hq43h4c
 
 
 ## Basic Usage
