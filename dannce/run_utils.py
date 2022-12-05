@@ -11,9 +11,8 @@ import torch
 
 from dannce.engine.data import serve_data_DANNCE, dataset, generator, processing
 from dannce.engine.models.segmentation import get_instance_segmentation_model
-from dannce.engine.data.processing import _DEFAULT_SEG_MODEL, mask_coords_outside_volume
+from dannce.engine.data.processing import _DEFAULT_SEG_MODEL
 
-import imageio
 from tqdm import tqdm
 
 def set_random_seed(seed: int):
@@ -396,6 +395,36 @@ def make_rat7m(
     return train_dataloader, valid_dataloader, len(camnames[0])
 
 
+def sample_COM_augmentation(
+    datadict, datadict_3d, com3d_dict, partition,
+    aug_radius=20, iters=2
+):
+    train_samples = list(partition["train_sampleIDs"])
+    valid_samples = list(partition["valid_sampleIDs"])
+    train_samples_new = []
+    for iter in range(iters):
+        pbar = tqdm(train_samples)
+        for sample in pbar:
+            # Only augment training samples
+            if sample not in train_samples:
+                continue
+
+            com3d_new = deepcopy(com3d_dict[sample])
+            com_aug = aug_radius * 2 * np.random.rand(len(com3d_new)) - aug_radius
+            com3d_new += com_aug
+            # Embed the used COM augmentation in sampleID?
+            # sample_new = sample+"-aug{}".format('_'.join(str(coord) for coord in com_aug))
+            sample_new = sample+"-comaug{}".format(iter)
+            train_samples_new.append(sample_new)
+            com3d_dict[sample_new] = com3d_new
+            datadict_3d[sample_new] = datadict_3d[sample]
+            datadict[sample_new] = datadict[sample]
+    
+    partition["train_sampleIDs"] = np.array(sorted(train_samples + train_samples_new))
+    samples = np.array(sorted(train_samples + train_samples_new + valid_samples))
+    return samples, datadict, datadict_3d, com3d_dict, partition
+            
+
 def _make_data_npy(
         params, base_params, shared_args, shared_args_train, shared_args_valid,
         datadict, datadict_3d, com3d_dict, 
@@ -414,6 +443,12 @@ def _make_data_npy(
         npydir, missing_npydir, missing_samples = rat7m_npy
         missing_samples = np.array(sorted(missing_samples))
     else:
+        # Populate with COM augmented samples if needed
+        if params["COM_augmentation"]:
+            samples, datadict, datadict_3d, com3d_dict, partition = sample_COM_augmentation(
+                datadict, datadict_3d, com3d_dict, partition,
+            )
+
         # Examine through experiments for missing npy data files
         npydir, missing_npydir, missing_samples = serve_data_DANNCE.examine_npy_training(params, samples)
 

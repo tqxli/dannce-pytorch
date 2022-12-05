@@ -123,7 +123,10 @@ _param_defaults_dannce = {
     "form_batch": False,
     "form_bs": None,
     ## unsupervised training
-    "unlabeled_fraction": None
+    "unlabeled_fraction": None,
+    ## error fixing
+    "replace_view": None,
+    "COM_augmentation": False
 }
 _param_defaults_com = {
     "dsmode": "nn",
