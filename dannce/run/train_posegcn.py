@@ -309,6 +309,17 @@ def predict(params):
                     print(f"Replace view {view} with {alternative}")
 
             vols = vols.reshape(vols.shape[0], -1, *vols.shape[3:])
+        
+        if isinstance(params["replace_view"], int) and params["replace_view"] <= params["n_views"]:
+            vols = vols.reshape(vols.shape[0], -1, 3, *vols.shape[2:]) #[B, 6, 3, H, W, D]
+            for batch in range(vols.shape[0]):
+                alternative_view = np.random.choice(
+                    np.delete(np.arange(params["n_views"]), params["replace_view"]-1)
+                )
+                # alternative_view = 2
+                assert alternative_view != params["replace_view"]-1
+                vols[batch, params["replace_view"]-1] = vols[batch, alternative_view]
+            vols = vols.reshape(vols.shape[0], -1, *vols.shape[3:])
 
         model_inputs = [vols.to(device)]
         grid_centers = torch.from_numpy(ims[0][1]).to(device)

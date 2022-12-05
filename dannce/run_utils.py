@@ -194,7 +194,7 @@ def make_dataset(
     logger.info("***TRAIN:VALIDATION = {}:{}***".format(len(train_generator), len(valid_generator)))
     train_dataloader, valid_dataloader = serve_data_DANNCE.setup_dataloaders(train_generator, valid_generator, params)
      
-    return train_dataloader, valid_dataloader, len(camnames[0])
+    return train_dataloader, valid_dataloader, params["n_views"] #len(camnames[0])
 
 def _convert_rat7m_to_label3d(annot_dict, all_exps):
     camnames = annot_dict["camera_names"]
@@ -772,7 +772,7 @@ def make_dataset_inference(params, valid_params):
     cameras, datadict, params = serve_data_DANNCE.prepend_experiment(
         params, datadict, num_experiments, camnames, cameras, dannce_prediction=True
     )
-
+    camnames = {0: ['0_Camera1', '0_Camera2', '0_Camera3', '0_Camera4', '0_Camera6']}
     samples = np.array(samples)
 
     # Initialize video dictionary. paths to videos only.

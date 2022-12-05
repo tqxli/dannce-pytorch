@@ -543,8 +543,10 @@ def setup_train(params):
         "augment_continuous_rotation": False,
         "mirror_augmentation": False,
         "shuffle": False,
-        "replace": False,
-        "n_rand_views": params["n_rand_views"] if cam3_train else None,
+        "replace": params["allow_valid_replace"],
+        # "replace": False,
+        "n_rand_views": params["n_rand_views"] if params["allow_valid_replace"] or cam3_train else None,
+        # "n_rand_views": params["n_rand_views"] if cam3_train else None,
         "random": True if cam3_train else False,
     }
 

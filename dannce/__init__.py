@@ -125,6 +125,7 @@ _param_defaults_dannce = {
     ## unsupervised training
     "unlabeled_fraction": None,
     ## error fixing
+    "allow_valid_replace": False,
     "replace_view": None,
     "COM_augmentation": False
 }
