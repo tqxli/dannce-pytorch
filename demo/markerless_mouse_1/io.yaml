@@ -13,7 +13,7 @@ dannce_predict_dir: ./DANNCE/predict_results/
 
 # During prediction, will look for the last epoch weights saved to ./DANNCE/train_results/. To load in a different weights file, add the path here
 # Note that this must be a FULL MODEL file, not just weights.
-dannce_predict_model: ./DANNCE/weights/dannce-c-r7m-demo.pth
+dannce_predict_model: ./DANNCE/weights/demo-mouse.pth
 
 exp:
     - label3d_file: './label3d_dannce.mat'

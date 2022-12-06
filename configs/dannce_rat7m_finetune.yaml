@@ -31,7 +31,7 @@ augment_bright_val: 0.01
 # architecture options:
 # "dannce"
 # "compressed_dannce" (a channel-compressed version of the original dannce encoder-decoder)
-net_type: "dannce" 
+net_type: "compressed_dannce" 
 n_channels_in: 3
 n_channels_out: 22 # number of output channels
 

@@ -39,6 +39,7 @@ cd dannce-pytorch
 `pip install -e .`
 
 ## Running demo
+### Getting predictions
 To test your DANNCE installation and familiarize yourself with DANNCE file and configuration formatting, run DANNCE predictions for `markerless_mouse_1`. Because the videos and checkpoints are too large to host on GitHub, run the following commands from the base `dannce` repository to download necessary files and place them in each associated location:
 
 For markerless_mouse_1: 
@@ -56,9 +57,7 @@ unzip vids2.zip -d vids2;
 mv vids2/* demo/markerless_mouse_2/videos/; 
 rm -r vids2 vids2.zip 
 ``` 
-
-For the checkpoint, download from [this link](https://duke.box.com/s/tlpw8phcf09f0oqh5m2wa6vnvuwxb2gi) and place in `demo/markerless_mouse_1/DANNCE/weights`.
-
+For the checkpoint, download from [this link](https://duke.box.com/s/56gks6bexaixrra20m717ifaakxur2jd) and place in `demo/markerless_mouse_1/DANNCE/weights`.
 Once the files are downloaded and placed, run: 
 ```
 cd demo/markerless_mouse_1/; 
@@ -69,15 +68,17 @@ This demo will inference over 1000 frames of mouse data and save the results to:
 ```
 demo/markerless_mouse_1/DANNCE/predict_results/save_data_AVG0.mat
 ```
-
+### Training
 To train a new model FROM SCRATCH with the demo data, run
 ```
 dannce-train ../../configs/dannce_mouse_config.yaml
 ```
 
-To finetune a previous checkpoint, run
+We also support finetuning from a previous model. One may try by first downloading the RAT7M pretrained model from [this link](https://duke.box.com/s/tlpw8phcf09f0oqh5m2wa6vnvuwxb2gi) and place in `demo/markerless_mouse_1/DANNCE/weights` as well. Then run
 ```
-dannce-train ../../configs/dannce_mouse_config.yaml --train-mode finetune --epochs 100
+dannce-train ../../configs/dannce_rat7m_finetune.yaml --train-mode finetune --epochs 100
 ```
+
+Notice that this RAT7M pretrained model is with `compressed_dannce`, a channel-compressed version of the original dannce encoder-decoder architecture to save memory footprint.
 
 To work with a larger dataset, you may turn on `--use-npy True` to pre-generate the volumes to disk.

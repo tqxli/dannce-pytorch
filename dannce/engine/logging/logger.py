@@ -55,5 +55,6 @@ def get_logger(verbosity=2):
     msg_verbosity = 'verbosity option {} is invalid. Valid options are {}.'.format(verbosity, log_levels.keys())
     assert verbosity in log_levels, msg_verbosity
     logger = logging.getLogger()
+    logger.addHandler(logging.StreamHandler())
     logger.setLevel(log_levels[verbosity])
     return logger
