@@ -306,6 +306,13 @@ def initialize_train(params, n_cams, device, logger):
         model = initialize_model(params, n_cams, device)
 
         state_dict = checkpoints["state_dict"]
+
+
+        # ckpt_channel_num = state_dict["encoder_decoder.encoder_res1.block.0.weight"].shape[0]
+        # if ckpt_channel_num != params["n_views"]*params["chan_num"]:
+        #     state_dict.pop("encoder_decoder.encoder_res1.block.0.weight", None)
+        #     state_dict.pop("encoder_decoder.encoder_res1.block.0.bias", None)
+
         # replace final output layer if do not match with the checkpoint
         # try:
         ckpt_channel_num = state_dict["output_layer.weight"].shape[0]
