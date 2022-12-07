@@ -34,11 +34,12 @@ class COMTrainer(DannceTrainer):
             # validation
             valid_stats= self._valid_epoch(epoch)
 
-            for k in self.stats_keys:
-                stats.append(valid_stats[k])
-                    
-            result_msg = result_msg \
-                + "".join(f"val_{k}: {val:.6f} " for k, val in valid_stats.items()) 
+            if len(valid_stats) != 0:
+                for k in self.stats_keys:
+                    stats.append(valid_stats[k])
+                        
+                result_msg = result_msg \
+                    + "".join(f"val_{k}: {val:.6f} " for k, val in valid_stats.items()) 
             self.logger.info(result_msg)
 
             # write stats to csv
