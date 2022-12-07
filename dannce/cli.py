@@ -81,28 +81,28 @@ def sbatch_dannce_train_cli():
     os.system(cmd)
 
 
-# def sbatch_com_predict_cli():
-#     """CLI to submit com predition through sbatch using the slurm config specified in the base config."""
-#     base_config = parse_sbatch()
-#     slurm_config = load_params(load_params(base_config)["slurm_config"])
-#     cmd = 'sbatch %s --wrap="%s com-predict %s"' % (
-#         slurm_config["com_predict"],
-#         slurm_config["setup"],
-#         base_config,
-#     )
-#     os.system(cmd)
+def sbatch_com_predict_cli():
+    """CLI to submit com predition through sbatch using the slurm config specified in the base config."""
+    base_config = parse_sbatch()
+    slurm_config = load_params(load_params(base_config)["slurm_config"])
+    cmd = 'sbatch %s --wrap="%s com-predict %s"' % (
+        slurm_config["com_predict"],
+        slurm_config["setup"],
+        base_config,
+    )
+    os.system(cmd)
 
 
-# def sbatch_com_train_cli():
-#     """CLI to submit com training through sbatch using the slurm config specified in the base config."""
-#     base_config = parse_sbatch()
-#     slurm_config = load_params(load_params(base_config)["slurm_config"])
-#     cmd = 'sbatch %s --wrap="%s com-train %s"' % (
-#         slurm_config["com_train"],
-#         slurm_config["setup"],
-#         base_config,
-#     )
-#     os.system(cmd)
+def sbatch_com_train_cli():
+    """CLI to submit com training through sbatch using the slurm config specified in the base config."""
+    base_config = parse_sbatch()
+    slurm_config = load_params(load_params(base_config)["slurm_config"])
+    cmd = 'sbatch %s --wrap="%s com-train %s"' % (
+        slurm_config["com_train"],
+        slurm_config["setup"],
+        base_config,
+    )
+    os.system(cmd)
 
 
 def com_predict_cli():
@@ -152,6 +152,7 @@ def dannce_train_cli():
     params = build_clarg_params(args, dannce_net=True, prediction=False)
     dannce_train(params)
 
+
 def custom_model_train_cli():
     _TYPES = {
         'motiondannce': motiondannce.train,
@@ -173,6 +174,7 @@ def custom_model_train_cli():
     params = build_clarg_params(args, dannce_net=True, prediction=False)
     _TYPES[params["custom_model"]["name"]](params)
 
+
 def custom_model_predict_cli():
     _TYPES = {
         'motiondannce': motiondannce.inference,
@@ -193,6 +195,7 @@ def custom_model_predict_cli():
     params = build_clarg_params(args, dannce_net=True, prediction=True)
 
     _TYPES[params["custom_model"]["name"]](params)
+
 
 def build_clarg_params(
     args: argparse.Namespace, dannce_net: bool, prediction: bool
