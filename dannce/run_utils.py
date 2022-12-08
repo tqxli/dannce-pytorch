@@ -772,7 +772,7 @@ def make_dataset_inference(params, valid_params):
     cameras, datadict, params = serve_data_DANNCE.prepend_experiment(
         params, datadict, num_experiments, camnames, cameras, dannce_prediction=True
     )
-    camnames = {0: ['0_Camera1', '0_Camera2', '0_Camera3', '0_Camera4', '0_Camera6']}
+    # camnames = {0: ['0_Camera1', '0_Camera2', '0_Camera3', '0_Camera4', '0_Camera6']}
     samples = np.array(samples)
 
     # Initialize video dictionary. paths to videos only.
