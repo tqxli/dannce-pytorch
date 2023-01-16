@@ -20,18 +20,18 @@ _DEFAULT_SEG_MODEL = '../weights/maskrcnn.pth'
 
 # from dannce.engine.data.processing import _DEFAULT_VIDDIR, _DEFAULT_VIDDIR_SIL, _DEFAULT_COMSTRING, _DEFAULT_COMFILENAME
 
-def grab_predict_label3d_file(defaultdir="", index=0):
+def grab_predict_label3d_file(defaultdir="", index=0, key=''):
     """
     Finds the paths to the training experiment yaml files.
     """
     def_ep = os.path.join(".", defaultdir)
     label3d_files = os.listdir(def_ep)
     label3d_files = [
-        os.path.join(def_ep, f) for f in label3d_files if "dannce.mat" in f
+        os.path.join(def_ep, f) for f in label3d_files if "dannce.mat" in f and key in f
     ]
-    #label3d_files.sort()
+
     label3d_files = sorted(label3d_files)
-    # breakpoint()
+
     if len(label3d_files) == 0:
         raise Exception("Did not find any *dannce.mat file in {}".format(def_ep))
     print("Using the following *dannce.mat files: {}".format(label3d_files[index]))

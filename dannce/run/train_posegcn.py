@@ -194,7 +194,11 @@ def predict(params):
     print("Initializing Network...")
     # first stage: pose generator
     params["use_features"] = custom_model_params.get("use_features", False)    
-    pose_generator = initialize_model(params, len(camnames[0]), "cpu")   
+    pose_generator = initialize_model(
+        params, 
+        params["n_views"], # len(camnames[0]), 
+        "cpu"
+    )   
 
     # second stage: pose refiner
     model_class = getattr(gcn_nets, custom_model_params.get("model", "PoseGCN"))
@@ -320,6 +324,13 @@ def predict(params):
                 assert alternative_view != params["replace_view"]-1
                 vols[batch, params["replace_view"]-1] = vols[batch, alternative_view]
             vols = vols.reshape(vols.shape[0], -1, *vols.shape[3:])
+        
+        if isinstance(params["remove_view"], int):
+            vols = vols.reshape(vols.shape[0], -1, 3, *vols.shape[2:]) #[B, 6, 3, H, W, D]
+            views = np.arange(params["n_views"]+1)
+            views = np.delete(views, params["remove_view"]-1)
+            vols = vols[:, views]
+            vols = vols.reshape(vols.shape[0], -1, *vols.shape[3:]) 
 
         model_inputs = [vols.to(device)]
         grid_centers = torch.from_numpy(ims[0][1]).to(device)

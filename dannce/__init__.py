@@ -127,6 +127,7 @@ _param_defaults_dannce = {
     ## error fixing
     "allow_valid_replace": False,
     "replace_view": None,
+    "remove_view": None,
     "COM_augmentation": False
 }
 _param_defaults_com = {
