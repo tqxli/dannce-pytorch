@@ -74,7 +74,7 @@ To train a new model FROM SCRATCH with the demo data, run
 dannce-train ../../configs/dannce_mouse_config.yaml
 ```
 
-We also support finetuning from a previous model. One may try by first downloading the RAT7M pretrained model from [this link](https://duke.box.com/s/tlpw8phcf09f0oqh5m2wa6vnvuwxb2gi) and place in `demo/markerless_mouse_1/DANNCE/weights` as well. Then run
+We also support finetuning from a previous model. One may try by first downloading the RAT7M pretrained model from [this link](https://duke.box.com/shared/static/71wxs2jqmacqy66zvfbjywh0lj6fnjxj.pth) and place in `demo/markerless_mouse_1/DANNCE/weights` as well. Then run
 ```
 dannce-train ../../configs/dannce_rat7m_finetune.yaml --train-mode finetune --epochs 100
 ```
